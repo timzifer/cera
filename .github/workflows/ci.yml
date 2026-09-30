@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: [go.mod, stable]
+        exclude:
+          - os: macos-latest
+            go: stable
+          - os: windows-latest
+            go: stable
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ matrix.go == 'go.mod' && 'go.mod' || '' }}
+          go-version: ${{ matrix.go == 'stable' && 'stable' || '' }}
+      - name: Test
+        if: runner.os != 'Linux'
+        run: go test ./...
+      - name: Test (race, coverage)
+        if: runner.os == 'Linux'
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: Coverage
+        if: runner.os == 'Linux' && matrix.go == 'go.mod'
+        run: go tool cover -func=coverage.out | tail -1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+  cross:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build without cgo for every target
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          for t in linux/amd64 linux/arm64 linux/arm linux/386 linux/riscv64 linux/ppc64le linux/s390x \
+                   darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 freebsd/amd64 js/wasm wasip1/wasm; do
+            echo "::group::$t"
+            GOOS=${t%/*} GOARCH=${t#*/} go build ./... || exit 1
+            echo "::endgroup::"
+          done
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Fuzz the interpreter
+        run: go test -run '^$' -fuzz FuzzContent -fuzztime 60s .
+      - name: Keep crashers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers
+          path: testdata/fuzz
+
+  # Pinned corpus (pdf.js feature files, arXiv papers, synthetic technical
+  # drawings): every page must render without panic, hang or deadline.
+  corpus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/cache@v4
+        with:
+          path: testdata/corpus
+          key: corpus-${{ hashFiles('internal/corpus/manifest.json') }}
+      - name: Fetch corpus (SHA-256 verified)
+        run: go run ./cmd/corpus fetch -dir testdata/corpus
+      - name: Write synthetic drawings
+        run: go run ./cmd/corpus scenes -dir testdata/corpus
+      - name: Render at 150 dpi
+        run: go run ./cmd/corpus run -dir testdata/corpus -dpi 150 -runs 3 -timeout 60s -out report
+      - name: Summary
+        if: always()
+        run: test -f report/report.md && cat report/report.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-report
+          path: report
+
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Benchmarks
+        run: |
+          go test -run '^$' -bench . -benchmem -count 5 . | tee bench.txt
+          { echo '```'; cat bench.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench
+          path: bench.txt
+
+  # The single required status check for main (see .github/rulesets).
+  ci-ok:
+    if: always()
+    needs: [lint, test, cross, fuzz, corpus, bench]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All jobs passed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: exit 1
+      - run: echo ok

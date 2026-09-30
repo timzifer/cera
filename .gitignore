@@ -30,3 +30,12 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# corpus and reports (fetched or generated, never committed)
+/testdata/*/
+!/testdata/fuzz/
+/ext/
+/report/
+/corpus
+/cera
+/*.png

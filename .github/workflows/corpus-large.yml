@@ -1,0 +1,71 @@
+name: Large corpora
+
+# Robustness against large external corpora: no panic, no hang, no deadline
+# overrun on any page. Too slow for every pull request, so it runs weekly and
+# on demand. The unsafe SafeDocs corpus (fuzzer output) only runs on demand.
+
+on:
+  schedule:
+    - cron: "17 3 * * 0" # Sundays 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      sources:
+        description: "JSON list of sources (see: go run ./cmd/corpus sources)"
+        default: '["pdfjs","borb","verapdf","horrors","pdf20","qpdf","ccmain"]'
+      sample:
+        description: "PDFs sampled from one zip shard (ccmain, unsafe)"
+        default: "1000"
+      seed:
+        description: "Seed for shard and sample (empty = day of year)"
+        default: ""
+      pages:
+        description: "Pages per document (0 = all)"
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  robustness:
+    strategy:
+      fail-fast: false
+      matrix:
+        source: ${{ fromJSON(github.event.inputs.sources || '["pdfjs","borb","verapdf","horrors","pdf20","qpdf","ccmain"]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build -o corpus ./cmd/corpus
+      - name: Get ${{ matrix.source }}
+        run: |
+          seed="${{ github.event.inputs.seed }}"
+          ./corpus get -source "${{ matrix.source }}" -dir "ext/${{ matrix.source }}" \
+            -sample "${{ github.event.inputs.sample || '1000' }}" ${seed:+-seed "$seed"}
+      - name: Render (robustness only)
+        run: |
+          ./corpus run -dir "ext/${{ matrix.source }}" -runs 0 -dpi 72 -timeout 30s \
+            -pages "${{ github.event.inputs.pages || '3' }}" -fail-open=false -out report 2> render.log
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## ${{ matrix.source }}"
+            grep -c '^ok' render.log | sed 's/^/rendered pages: /' || true
+            grep -c '^skip' render.log | sed 's/^/files the reader rejects: /' || true
+            echo
+            echo '```'
+            grep '^FAIL' render.log | head -100 || true
+            echo '```'
+            test -f report/report.md && sed -n '/^## Summary/,/^## Pages/p' report/report.md | sed '$d'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report-${{ matrix.source }}
+          path: |
+            report
+            render.log
