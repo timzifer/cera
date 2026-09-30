@@ -25,6 +25,7 @@ const (
 	dlClipPath
 	dlClipRect
 	dlPopClip
+	dlGlyphs
 )
 
 // dlItem is one recorded operation.
@@ -35,7 +36,8 @@ type dlItem struct {
 	color color.RGBA
 	m     Matrix
 	// verbs and points are ranges of the list's path storage; for a stroke
-	// style is an index into styles.
+	// style is an index into styles. For glyphs, v0:v1 is a range of glyphs
+	// and style an index into fonts.
 	v0, v1, p0, p1 int32
 	style          int32
 	rect           Rect // dlClipRect
@@ -59,6 +61,8 @@ type displayList struct {
 	points []stilus.Point
 	styles []dlStyle
 	dashes []float64
+	glyphs []Glyph
+	fonts  []*Font
 
 	// Recording state: the boxes of the open clips, and how many clips
 	// are open inside one that is empty (whose content is dropped).
@@ -98,6 +102,10 @@ func (l *displayList) reset(bounds image.Rectangle) {
 	l.points = l.points[:0]
 	l.styles = l.styles[:0]
 	l.dashes = l.dashes[:0]
+	clear(l.glyphs) // outlines and fonts belong to a document
+	l.glyphs = l.glyphs[:0]
+	clear(l.fonts)
+	l.fonts = l.fonts[:0]
 	l.clips = append(l.clips[:0], bounds)
 	l.dead = 0
 	l.bounds = bounds
@@ -158,6 +166,38 @@ func (l *displayList) StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Pain
 	it := dlItem{op: dlStroke, color: paint.Color, m: m, bbox: bb, style: l.style(st)}
 	l.addPath(&it, p)
 	l.items = append(l.items, it)
+}
+
+func (l *displayList) FillGlyphs(run *GlyphRun, paint *Paint) {
+	if l.dead > 0 || (paint.Color.A == 0 && paint.Shader == nil) {
+		return
+	}
+	var bb image.Rectangle
+	g0 := len(l.glyphs)
+	for i := range run.Glyphs {
+		g := &run.Glyphs[i]
+		if g.Outline == nil {
+			continue
+		}
+		gb := deviceBox(g.Outline, g.M, 1).Intersect(l.clipBox())
+		if gb.Empty() {
+			continue
+		}
+		bb = bb.Union(gb)
+		l.glyphs = append(l.glyphs, *g)
+	}
+	if bb.Empty() {
+		return
+	}
+	f := len(l.fonts) - 1
+	if f < 0 || l.fonts[f] != run.Font {
+		l.fonts = append(l.fonts, run.Font)
+		f++
+	}
+	l.items = append(l.items, dlItem{
+		op: dlGlyphs, color: paint.Color, bbox: bb,
+		v0: int32(g0), v1: int32(len(l.glyphs)), style: int32(f),
+	})
 }
 
 // style returns the index of st in the list, reusing the last one if equal.
@@ -301,6 +341,7 @@ type drawState struct {
 	path  Path
 	style StrokeStyle
 	paint Paint
+	run   GlyphRun
 }
 
 // drawBand replays the items of band b that touch r onto dev.
@@ -351,6 +392,10 @@ func (l *displayList) drawItem(dev Device, ds *drawState, it *dlItem) {
 		dev.ClipRect(it.rect, it.m)
 	case dlPopClip:
 		dev.PopClip()
+	case dlGlyphs:
+		ds.run = GlyphRun{Font: l.fonts[it.style], Glyphs: l.glyphs[it.v0:it.v1:it.v1]}
+		ds.paint.Color = it.color
+		dev.FillGlyphs(&ds.run, &ds.paint)
 	}
 }
 

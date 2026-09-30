@@ -26,6 +26,11 @@ type gstate struct {
 
 	style StrokeStyle
 
+	text textState
+	// uncolored is set inside a Type 3 glyph declared with d1: its colour
+	// operators are ignored, it paints in the colour that showed it.
+	uncolored bool
+
 	// clips counts the device clips pushed while this state was current,
 	// so that Q can pop them.
 	clips int
@@ -46,7 +51,9 @@ type interp struct {
 	cur, start stilus.Point
 	hasCur     bool
 	clip       int8 // pending W/W*: -1 none, else the fill rule
-	inText     bool
+
+	text textObject
+	td   TextDevice // dev, if it wants the text
 
 	paint Paint
 
@@ -60,19 +67,20 @@ func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
 		doc: doc, dev: dev, st: st, lim: lim,
 		stack: in.stack[:0], path: in.path, clip: -1,
 		scanners: in.scanners, dashes: in.dashes[:0], dashBuf: in.dashBuf,
+		text: in.text.keep(),
 	}
 	in.path.Reset()
+	in.td, _ = dev.(TextDevice)
 }
 
 // release drops references to the document so pooled workers do not keep
 // it alive.
 func (in *interp) release() {
-	for i := range in.stack {
-		in.stack[i] = gstate{}
-	}
+	clear(in.stack[:cap(in.stack)]) // popped states hold fonts too
 	in.stack = in.stack[:0]
-	in.doc, in.dev, in.st, in.lim = nil, nil, nil, nil
+	in.doc, in.dev, in.st, in.lim, in.td = nil, nil, nil, nil, nil
 	in.gs = gstate{}
+	in.text = in.text.keep()
 }
 
 func (in *interp) initState(ctm Matrix) {
@@ -81,6 +89,7 @@ func (in *interp) initState(ctm Matrix) {
 		fillCS: spaceGray, strokeCS: spaceGray,
 		fillAlpha: 1, strokeAlp: 1,
 		style: StrokeStyle{Width: 1, MiterLimit: 10},
+		text:  textState{scale: 1},
 	}
 }
 
@@ -289,10 +298,43 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 		in.clip = int8(EvenOdd)
 
 	// Colour.
+	case "CS", "cs", "SC", "SCN", "sc", "scn", "G", "g", "RG", "rg", "K", "k":
+		if !in.gs.uncolored {
+			in.color(sc, op, res)
+		}
+
+	// External objects.
+	case "Do":
+		in.xobject(in.lookup(res, "XObject", sc, sc.Last()), res, depth)
+	case "BI":
+		in.st.unsupported("inline-image")
+	case "sh":
+		in.st.unsupported("shading")
+
+	// Text.
+	case "BT", "ET", "Tc", "Tw", "Tz", "TL", "Tf", "Tr", "Ts", "Td", "TD", "Tm", "T*",
+		"Tj", "TJ", "'", "\"", "d0", "d1":
+		in.textOp(sc, op, res, depth)
+
+	// Marked content and compatibility.
+	case "BDC":
+		if sc.Len() >= 1 && sc.NameIs(sc.Arg(0), "OC") {
+			in.st.unsupported("optional-content")
+		}
+	case "BMC", "EMC", "MP", "DP", "BX", "EX":
+	default:
+		bad()
+	}
+}
+
+// color runs the colour operators.
+func (in *interp) color(sc *content.Scanner, op []byte, res reader.Dict) {
+	var v [4]float64
+	switch string(op) {
 	case "CS", "cs":
 		cs := in.colorSpaceOperand(sc, res)
 		if cs == nil {
-			bad()
+			in.st.Errors++
 			return
 		}
 		if op[0] == 'C' {
@@ -306,7 +348,7 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 		in.setColor(sc, in.gs.strokeCS, in.gs.stroke[:])
 	case "sc", "scn":
 		in.setColor(sc, in.gs.fillCS, in.gs.fill[:])
-	case "G", "g", "RG", "rg", "K", "k":
+	default: // G g RG rg K k
 		cs := spaceGray
 		switch op[0] {
 		case 'R', 'r':
@@ -315,7 +357,7 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 			cs = spaceCMYK
 		}
 		if !sc.Nums(v[:cs.n]) {
-			bad()
+			in.st.Errors++
 			return
 		}
 		if op[0] >= 'a' {
@@ -325,32 +367,6 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 			in.gs.strokeCS = cs
 			copy(in.gs.stroke[:], v[:cs.n])
 		}
-
-	// External objects.
-	case "Do":
-		in.xobject(in.lookup(res, "XObject", sc, sc.Last()), res, depth)
-	case "BI":
-		in.st.unsupported("inline-image")
-	case "sh":
-		in.st.unsupported("shading")
-
-	// Text (M4).
-	case "BT":
-		in.inText = true
-	case "ET":
-		in.inText = false
-	case "Tj", "TJ", "'", "\"":
-		in.st.unsupported("text")
-	case "Tc", "Tw", "Tz", "TL", "Tf", "Tr", "Ts", "Td", "TD", "Tm", "T*", "d0", "d1":
-
-	// Marked content and compatibility.
-	case "BDC":
-		if sc.Len() >= 1 && sc.NameIs(sc.Arg(0), "OC") {
-			in.st.unsupported("optional-content")
-		}
-	case "BMC", "EMC", "MP", "DP", "BX", "EX":
-	default:
-		bad()
 	}
 }
 

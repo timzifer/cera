@@ -15,6 +15,9 @@ import (
 // scale only draw its display list and may run concurrently.
 type Document struct {
 	r *reader.Document
+
+	fontMu sync.Mutex
+	fonts  map[reader.Ref]*Font // loaded fonts, by reference
 }
 
 // Open parses a PDF file. Damaged cross-reference tables, wrong stream

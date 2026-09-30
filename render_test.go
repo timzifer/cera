@@ -194,11 +194,12 @@ func TestBrokenContentDoesNotStop(t *testing.T) {
 
 func TestUnsupportedIsCounted(t *testing.T) {
 	c := "BT /F1 12 Tf (Hi) Tj ET /Sh sh"
-	_, st, err := renderPage(t, buildPDF([]string{c}, ""), 0, RenderOptions{})
+	// Symbol is not embedded, and no stand-in has its glyphs.
+	_, st, err := renderPage(t, textPDF(c, "<< /Type /Font /Subtype /Type1 /BaseFont /Symbol >>"), 0, RenderOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Unsupported["text"] != 1 || st.Unsupported["shading"] != 1 {
+	if st.Unsupported["font-missing"] != 1 || st.Unsupported["shading"] != 1 {
 		t.Errorf("unsupported %v", st.Unsupported)
 	}
 }
@@ -271,11 +272,14 @@ func FuzzContent(f *testing.F) {
 		"[3 1] 0 d 5 w 1 J 1 j 0 0 m 50 80 l 90 0 l h S",
 		"0 0 100 100 re W* n 1e30 1e30 m -1e30 0 l f",
 		"q q q Q Q Q Q W n",
+		"BT /F1 12 Tf 10 50 Td (Hello) Tj [(W) -120 (orld)] TJ T* 2 Tc (x) ' 1 2 (y) \" ET",
+		"BT 7 Tr /F1 40 Tf 3 Tz 5 Ts 0 1 -1 0 50 0 Tm <0041> Tj ET 0 0 200 100 re f",
+		"BT 1 Tr 2 w /F1 1e9 Tf (A) Tj 5 Tr 0 0 0 0 0 0 Tm (B) Tj ET",
 	} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, c string) {
-		doc, err := Open(buildPDF([]string{c}, ""))
+		doc, err := Open(textPDF(c, helvetica))
 		if err != nil {
 			return
 		}
