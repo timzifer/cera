@@ -272,6 +272,10 @@ func (in *interp) flushText() {
 		in.td.ShowText(run, ts.mode)
 	}
 	mode := ts.mode
+	if mode != TextInvisible && mode != TextClip && in.transparent() {
+		in.beginObject(in.runBox(), identity)
+		defer in.dev.EndGroup()
+	}
 	if mode == TextFill || mode == TextFillStroke || mode == TextFillClip || mode == TextFillStrokeClip {
 		if in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
 			in.st.Glyphs += len(run.Glyphs)
@@ -299,6 +303,31 @@ func (in *interp) flushText() {
 		}
 	}
 	run.Font = nil
+}
+
+// runBox returns the device box of the glyphs of the run, stroked or not.
+func (in *interp) runBox() Rect {
+	tx := &in.text
+	pad := 1.0
+	if m := in.gs.text.mode; m == TextStroke || m == TextFillStroke || m == TextStrokeClip || m == TextFillStrokeClip {
+		pad += in.strokePad() * sigmaMax(in.gs.ctm)
+	}
+	var b Rect
+	first := true
+	for i := range tx.run.Glyphs {
+		g := &tx.run.Glyphs[i]
+		if g.Outline == nil {
+			continue
+		}
+		r := deviceBox(g.Outline, g.M, pad)
+		gb := Rect{float64(r.Min.X), float64(r.Min.Y), float64(r.Max.X), float64(r.Max.Y)}
+		if first {
+			b, first = gb, false
+			continue
+		}
+		b = Rect{min(b.X0, gb.X0), min(b.Y0, gb.Y0), max(b.X1, gb.X1), max(b.Y1, gb.Y1)}
+	}
+	return b
 }
 
 // appendTransformed appends p transformed by m to dst.

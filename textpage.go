@@ -80,6 +80,10 @@ func (*textDevice) ClipRect(Rect, Matrix)                          {}
 func (*textDevice) PopClip()                                       {}
 func (*textDevice) FillGlyphs(*GlyphRun, *Paint)                   {}
 func (*textDevice) DrawImage(*Image, Matrix, *Paint)               {}
+func (*textDevice) BeginGroup(Rect, Matrix, *Group)                {}
+func (*textDevice) EndGroup()                                      {}
+func (*textDevice) BeginMask(Rect, Matrix, *SoftMask)              {}
+func (*textDevice) EndMask()                                       {}
 
 func (d *textDevice) ShowText(run *GlyphRun, mode TextMode) {
 	f := run.Font

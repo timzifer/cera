@@ -48,6 +48,15 @@
 // device resolution, so an image drawn small costs what its device pixels
 // cost, not what its samples do.
 //
+// # Transparency
+//
+// Transparency groups and soft masks reach a device as BeginGroup/EndGroup
+// and BeginMask/EndMask; an object painted with a blend mode or a soft
+// mask arrives as a group of its own. The raster device draws a group into
+// a layer covering only what the group can touch in the band being drawn
+// and composites it through the clips around it. The display list drops
+// the groups that need no layer, which are most of them.
+//
 // # Robustness
 //
 // Broken content is skipped, not fatal: unknown or malformed operators are

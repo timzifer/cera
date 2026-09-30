@@ -27,6 +27,11 @@ const (
 	dlPopClip
 	dlGlyphs
 	dlImage
+	dlBeginGroup
+	dlEndGroup
+	dlBeginMask
+	dlEndMask
+	dlNop // a group found not to need a layer
 )
 
 // dlItem is one recorded operation.
@@ -38,13 +43,15 @@ type dlItem struct {
 	m     Matrix
 	// verbs and points are ranges of the list's path storage; for a stroke
 	// style is an index into styles. For glyphs, v0:v1 is a range of glyphs
-	// and style an index into fonts.
+	// and style an index into fonts; for an image an index into images,
+	// for a group into groups and for a mask into masks.
 	v0, v1, p0, p1 int32
 	style          int32
-	rect           Rect // dlClipRect
+	rect           Rect // dlClipRect, dlBeginGroup, dlBeginMask
 	// bbox is the device-space area the item can touch, within the clips
 	// around it. A clip and its PopClip share the clip's box, so a band or
-	// region that skips one skips the other and everything in between.
+	// region that skips one skips the other and everything in between;
+	// so do groups and masks, and a mask and the group it masks.
 	bbox image.Rectangle
 }
 
@@ -65,11 +72,17 @@ type displayList struct {
 	glyphs []Glyph
 	fonts  []*Font
 	images []*Image
+	groups []Group
+	masks  []SoftMask
 
-	// Recording state: the boxes of the open clips, and how many clips
-	// are open inside one that is empty (whose content is dropped).
+	// Recording state: the boxes of the open clips, groups and masks, and
+	// how many are open inside one that is empty (whose content is
+	// dropped); the open groups and masks.
 	clips []image.Rectangle
 	dead  int
+	open  []dlGroup
+	// maskAt is the first item of the last mask recorded.
+	maskAt int32
 
 	// bounds is the page in device pixels; bandH the height of a band.
 	bounds image.Rectangle
@@ -110,8 +123,12 @@ func (l *displayList) reset(bounds image.Rectangle) {
 	l.fonts = l.fonts[:0]
 	clear(l.images)
 	l.images = l.images[:0]
+	clear(l.masks) // transfer tables
+	l.masks = l.masks[:0]
+	l.groups = l.groups[:0]
 	l.clips = append(l.clips[:0], bounds)
 	l.dead = 0
+	l.open = l.open[:0]
 	l.bounds = bounds
 	l.bandStart = l.bandStart[:0]
 	l.bandItems = l.bandItems[:0]
@@ -156,14 +173,7 @@ func (l *displayList) StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Pain
 	if l.dead > 0 || len(p.Points) == 0 || paint.Color.A == 0 {
 		return
 	}
-	// The widest the outline can reach beyond the path: half the device
-	// width (at least one pixel is drawn), times the miter or square-cap
-	// extension, plus antialiasing.
-	pad := max(st.Width*sigmaMax(m), 1) / 2 * max(st.MiterLimit, 1.5)
-	if !(pad < 1<<30) {
-		pad = 1 << 30
-	}
-	bb := deviceBox(p, m, pad+2).Intersect(l.clipBox())
+	bb := strokeBox(p, m, st).Intersect(l.clipBox())
 	if bb.Empty() {
 		return
 	}
@@ -218,6 +228,18 @@ func (l *displayList) DrawImage(img *Image, m Matrix, paint *Paint) {
 		i++
 	}
 	l.items = append(l.items, dlItem{op: dlImage, color: paint.Color, m: m, bbox: bb, style: int32(i)})
+}
+
+// strokeBox returns the device pixels a stroke of p can touch.
+func strokeBox(p *Path, m Matrix, st *StrokeStyle) image.Rectangle {
+	// The widest the outline can reach beyond the path: half the device
+	// width (at least one pixel is drawn), times the miter or square-cap
+	// extension, plus antialiasing.
+	pad := max(st.Width*sigmaMax(m), 1) / 2 * max(st.MiterLimit, 1.5)
+	if !(pad < 1<<30) {
+		pad = 1 << 30
+	}
+	return deviceBox(p, m, pad+2)
 }
 
 // style returns the index of st in the list, reusing the last one if equal.
@@ -286,7 +308,7 @@ func (l *displayList) PopClip() {
 		l.dead--
 		return
 	}
-	if len(l.clips) <= 1 {
+	if len(l.clips) <= 1 || (len(l.open) > 0 && l.open[len(l.open)-1].depth == len(l.clips)) {
 		return // unbalanced; the interpreter does not do this
 	}
 	bb := l.clipBox()
@@ -294,10 +316,172 @@ func (l *displayList) PopClip() {
 	l.items = append(l.items, dlItem{op: dlPopClip, bbox: bb})
 }
 
-// finish closes the clips left open and builds the band index.
+// dlGroup is an open group or mask while recording.
+type dlGroup struct {
+	at       int32 // its begin item
+	first    int32 // first item that belongs to it, its mask's if masked
+	mask     bool
+	knockout bool
+	depth    int // len(clips) with its box pushed
+	// blends says that content drawn directly into the group (not inside
+	// a group of its own) has a blend mode other than Normal.
+	blends bool
+}
+
+// rectBox returns the device box of r under m within the clip.
+func (l *displayList) rectBox(r Rect, m Matrix) image.Rectangle {
+	corners := [2]stilus.Point{{X: float32(r.X0), Y: float32(r.Y0)}, {X: float32(r.X1), Y: float32(r.Y1)}}
+	return deviceBoxPoints(corners[:], m, 1).Intersect(l.clipBox())
+}
+
+func (l *displayList) BeginMask(r Rect, m Matrix, sm *SoftMask) {
+	bb := l.rectBox(r, m)
+	if l.dead > 0 || bb.Empty() {
+		l.dead++
+		return
+	}
+	l.maskAt = int32(len(l.items))
+	l.masks = append(l.masks, *sm)
+	l.items = append(l.items, dlItem{op: dlBeginMask, rect: r, m: m, bbox: bb, style: int32(len(l.masks) - 1)})
+	l.clips = append(l.clips, bb)
+	l.open = append(l.open, dlGroup{at: l.maskAt, first: l.maskAt, mask: true, depth: len(l.clips)})
+}
+
+func (l *displayList) EndMask() {
+	if l.dead > 0 {
+		l.dead--
+		return
+	}
+	n := len(l.open)
+	if n == 0 || !l.open[n-1].mask {
+		return // unbalanced; the interpreter does not do this
+	}
+	l.open = l.open[:n-1]
+	bb := l.clipBox()
+	l.clips = l.clips[:len(l.clips)-1]
+	l.items = append(l.items, dlItem{op: dlEndMask, bbox: bb})
+}
+
+func (l *displayList) BeginGroup(r Rect, m Matrix, g *Group) {
+	bb := l.rectBox(r, m)
+	if l.dead > 0 || bb.Empty() {
+		l.dead++
+		return
+	}
+	at := int32(len(l.items))
+	first := at
+	if g.Masked && l.maskAt < at && l.items[l.maskAt].op == dlBeginMask {
+		first = l.maskAt
+	}
+	l.groups = append(l.groups, *g)
+	l.items = append(l.items, dlItem{op: dlBeginGroup, rect: r, m: m, bbox: bb, style: int32(len(l.groups) - 1)})
+	l.clips = append(l.clips, bb)
+	l.open = append(l.open, dlGroup{at: at, first: first, knockout: g.Knockout, depth: len(l.clips)})
+}
+
+// EndGroup closes a group. A group that draws nothing is dropped with its
+// mask. A group that composites like its content drawn directly (Normal,
+// opaque, no mask, no knockout, and non-isolated or without blend modes
+// inside, and not an object of a knockout group) needs no layer: its begin
+// and end become no-ops; so does a group of one object that is Normal
+// without mask, whose opacity then goes to the object. A non-isolated
+// group without blend modes inside composites like an isolated one, which
+// is cheaper to draw.
+func (l *displayList) EndGroup() {
+	if l.dead > 0 {
+		l.dead--
+		return
+	}
+	n := len(l.open)
+	if n == 0 || l.open[n-1].mask {
+		return // unbalanced
+	}
+	o := l.open[n-1]
+	l.open = l.open[:n-1]
+	bb := l.clipBox()
+	l.clips = l.clips[:len(l.clips)-1]
+	begin := &l.items[o.at]
+	g := &l.groups[begin.style]
+	if int(o.at) == len(l.items)-1 {
+		l.items = l.items[:o.first]
+		return
+	}
+	var parent *dlGroup
+	if n >= 2 {
+		parent = &l.open[n-2]
+	}
+	inKnockout := parent != nil && parent.knockout
+	trivial := g.Blend == BlendNormal && g.Alpha == 255 && !g.Masked && !g.Knockout && !inKnockout
+	flatten := trivial && (!g.Isolated || !o.blends)
+	if !g.Isolated && !flatten {
+		switch {
+		case !o.blends:
+			g.Isolated = true
+		case g.Blend != BlendNormal || inKnockout:
+			l.stats.unsupported("non-isolated-blend") // approximated
+		}
+	}
+	// What the parent sees drawn into it.
+	if parent != nil {
+		p := parent
+		if flatten {
+			p.blends = p.blends || o.blends
+		} else {
+			p.blends = p.blends || g.Blend != BlendNormal
+		}
+	}
+	if !flatten && g.Blend == BlendNormal && !g.Masked && !g.Knockout {
+		// One object in a group composites like the object at the
+		// group's opacity.
+		if it := l.single(o.at + 1); it != nil {
+			it.color = scaleColor(it.color, g.Alpha)
+			flatten = true
+		}
+	}
+	if flatten {
+		begin.op = dlNop
+		return
+	}
+	l.items = append(l.items, dlItem{op: dlEndGroup, bbox: bb})
+}
+
+// single returns the one item that paints among the items from i on,
+// which may also clip, or nil.
+func (l *displayList) single(i int32) *dlItem {
+	var one *dlItem
+	for k := i; int(k) < len(l.items); k++ {
+		switch it := &l.items[k]; it.op {
+		case dlClipPath, dlClipRect, dlPopClip, dlNop:
+		case dlFill, dlStroke, dlGlyphs, dlImage:
+			if one != nil {
+				return nil
+			}
+			one = it
+		default:
+			return nil
+		}
+	}
+	return one
+}
+
+// scaleColor multiplies a premultiplied colour by a/255.
+func scaleColor(c color.RGBA, a uint8) color.RGBA {
+	k := uint32(a)
+	return color.RGBA{mulByte(c.R, k), mulByte(c.G, k), mulByte(c.B, k), mulByte(c.A, k)}
+}
+
+// finish closes the clips, groups and masks left open and builds the band
+// index.
 func (l *displayList) finish() {
 	for len(l.clips) > 1 || l.dead > 0 {
-		l.PopClip()
+		switch {
+		case l.dead > 0 || len(l.open) == 0 || l.open[len(l.open)-1].depth != len(l.clips):
+			l.PopClip()
+		case l.open[len(l.open)-1].mask:
+			l.EndMask()
+		default:
+			l.EndGroup()
+		}
 	}
 	h := l.bounds.Dy()
 	l.bandH = bandHeight(h)
@@ -306,6 +490,9 @@ func (l *displayList) finish() {
 	clear(l.bandStart)
 	// Count, then fill (CSR layout).
 	for i := range l.items {
+		if l.items[i].op == dlNop {
+			continue
+		}
 		b0, b1 := l.bandRange(l.items[i].bbox)
 		for b := b0; b < b1; b++ {
 			l.bandStart[b+1]++
@@ -318,6 +505,9 @@ func (l *displayList) finish() {
 	l.bandItems = slices.Grow(l.bandItems[:0], total)[:total]
 	l.bandFill = append(l.bandFill[:0], l.bandStart[:nb]...)
 	for i := range l.items {
+		if l.items[i].op == dlNop {
+			continue
+		}
 		b0, b1 := l.bandRange(l.items[i].bbox)
 		for b := b0; b < b1; b++ {
 			l.bandItems[l.bandFill[b]] = int32(i)
@@ -419,6 +609,14 @@ func (l *displayList) drawItem(dev Device, ds *drawState, it *dlItem) {
 	case dlImage:
 		ds.paint.Color = it.color
 		dev.DrawImage(l.images[it.style], it.m, &ds.paint)
+	case dlBeginGroup:
+		dev.BeginGroup(it.rect, it.m, &l.groups[it.style])
+	case dlEndGroup:
+		dev.EndGroup()
+	case dlBeginMask:
+		dev.BeginMask(it.rect, it.m, &l.masks[it.style])
+	case dlEndMask:
+		dev.EndMask()
 	}
 }
 

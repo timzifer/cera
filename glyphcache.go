@@ -92,6 +92,25 @@ type glyphCache struct {
 // FillGlyphs draws the glyphs of run through the glyph cache, or as paths
 // when they are large or the paint is not a solid colour.
 func (d *RasterDevice) FillGlyphs(run *GlyphRun, paint *Paint) {
+	d.t.inked(paint.Color.A)
+	if !d.t.knockout {
+		d.fillGlyphs(run, paint)
+		return
+	}
+	var bb image.Rectangle
+	for i := range run.Glyphs {
+		if g := &run.Glyphs[i]; g.Outline != nil {
+			bb = bb.Union(deviceBox(g.Outline, g.M, 1))
+		}
+	}
+	box := d.koBegin(bb)
+	d.fillGlyphs(run, paint)
+	d.koShape()
+	d.fillGlyphs(run, &opaque)
+	d.koEnd(box)
+}
+
+func (d *RasterDevice) fillGlyphs(run *GlyphRun, paint *Paint) {
 	clip := d.C.Clip()
 	if clip.Empty() {
 		return
