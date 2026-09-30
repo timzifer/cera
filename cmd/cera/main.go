@@ -85,8 +85,8 @@ func run(in string, dpi float64, page int, out, password string, transparent boo
 			fmt.Fprintf(os.Stderr, "page %d: %v\n", n, err)
 		}
 		if verbose {
-			fmt.Fprintf(os.Stderr, "page %d: %v, %d ops, %d fills, %d strokes, %d clips, %d content errors",
-				n, elapsed.Round(10*time.Microsecond), st.Ops, st.Fills, st.Strokes, st.Clips, st.Errors)
+			fmt.Fprintf(os.Stderr, "page %d: %v, %d ops, %d fills, %d strokes, %d clips, %d glyphs, %d content errors",
+				n, elapsed.Round(10*time.Microsecond), st.Ops, st.Fills, st.Strokes, st.Clips, st.Glyphs, st.Errors)
 			for _, k := range st.UnsupportedKeys() {
 				fmt.Fprintf(os.Stderr, ", %s×%d", k, st.Unsupported[k])
 			}

@@ -46,8 +46,9 @@ type Stats struct {
 	Fills   int
 	Strokes int
 	Clips   int
+	Glyphs  int // glyphs filled, and Type 3 glyphs run
 	// Unsupported counts features that were skipped or approximated, keyed
-	// by feature ("text", "image", "shading", ...).
+	// by feature ("image", "shading", "font-missing", ...).
 	Unsupported map[string]int
 	// Errors counts recoverable problems: malformed operators, missing
 	// resources, content that did not decode.
@@ -229,7 +230,7 @@ func (p *Page) list(scale float64, lim *limit) (dl *displayList, reused bool) {
 				dl.panic = &PanicError{Value: v, Stack: debug.Stack()}
 			}
 		}()
-		p.record(in, dl, scale, lim)
+		dl.complete = p.record(in, dl, &dl.stats, scale, lim)
 	}()
 	if in != nil {
 		in.release()
@@ -249,12 +250,12 @@ func (p *Page) list(scale float64, lim *limit) (dl *displayList, reused bool) {
 	return dl, false
 }
 
-// record interprets the page into dl.
-func (p *Page) record(in *interp, dl *displayList, scale float64, lim *limit) {
-	st := &dl.stats
+// record interprets the page into dev at scale and reports whether it got
+// to the end.
+func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, lim *limit) bool {
 	base := p.deviceMatrix(scale)
-	dl.ClipRect(p.Box, base)
-	in.reset(p.doc, dl, st, lim)
+	dev.ClipRect(p.Box, base)
+	in.reset(p.doc, dev, st, lim)
 	res := p.doc.dict(p.dict["Resources"])
 	dec, derr := p.doc.r.PageContentDecoded(p.index + 1)
 	switch {
@@ -266,7 +267,35 @@ func (p *Page) record(in *interp, dl *displayList, scale float64, lim *limit) {
 		}
 		in.run(dec.Data, res, base, 0)
 	}
-	dl.complete = in.err == nil
+	return in.err == nil
+}
+
+// Run interprets the page into dev, without a display list: device space
+// is the page at scale pixels per point, as for Render. It is how devices
+// other than the raster one (text extraction, hit testing) see a page. The
+// page's box is the outermost clip. st, when non-nil, receives the
+// statistics. The error is ErrDeadline when ctx ends first, or a
+// *PanicError.
+func (p *Page) Run(ctx context.Context, dev Device, scale float64, st *Stats) (err error) {
+	defer recoverPanic(&err)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if st == nil {
+		st = new(Stats)
+	} else {
+		st.set(&Stats{})
+	}
+	lim := &limit{ctx: ctx}
+	in := recorders.Get().(*interp)
+	ok := p.record(in, dev, st, normScale(scale), lim)
+	dev.PopClip()
+	in.release()
+	recorders.Put(in)
+	if !ok {
+		return ErrDeadline
+	}
+	return nil
 }
 
 // done ends a render's use of dl.
@@ -355,6 +384,8 @@ func (j *job) work(whole bool) {
 			j.lim.hit.Store(true) // stop the other workers
 		} else {
 			pt.canvas.Reset(noImage, noImage.Rect) // do not keep dst alive
+			putGlyphCache(pt.dev.glyphs)
+			pt.dev.glyphs = nil
 			painters.Put(pt)
 		}
 		if !whole {
@@ -365,6 +396,7 @@ func (j *job) work(whole bool) {
 		pt.canvas = stilus.NewCanvas(noImage)
 		pt.dev.C = pt.canvas
 	}
+	pt.dev.glyphs = getGlyphCache()
 	if whole {
 		j.paint(pt, -1, j.region)
 		return

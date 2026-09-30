@@ -6,7 +6,9 @@
 //     filters, repair, encryption);
 //   - interpretation: this package scans content streams without
 //     allocating per operand and turns their operators into calls on a
-//     Device (graphics state, paths, clips, colours, forms);
+//     Device (graphics state, paths, clips, colours, forms, text), with
+//     fonts read by github.com/go-pdfkit/pdffont and
+//     github.com/go-opentype/opentype;
 //   - a display list: what a page draws at one scale, with device-space
 //     boxes and a band index, so a page is interpreted once and only the
 //     visible part is drawn, by several cores;
@@ -26,6 +28,15 @@
 // a viewport), and only that part is drawn. The page keeps its display list
 // for the next render at the same scale until Page.Release; bands of the
 // page are drawn by RenderOptions.Workers goroutines (all cores by default).
+//
+// # Text
+//
+// Filled text reaches a device as GlyphRuns (Device.FillGlyphs): glyph
+// outlines in em units with their device matrices. The raster device keeps
+// a coverage mask per glyph, size and subpixel position. Page.Run drives
+// any Device without a display list, and a device implementing TextDevice
+// also receives the text shown in every render mode; Page.Text extracts
+// the characters of a page with their boxes.
 //
 // # Robustness
 //
