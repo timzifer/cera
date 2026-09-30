@@ -84,12 +84,16 @@ jobs:
           go-version-file: go.mod
       - name: Fuzz the interpreter
         run: go test -run '^$' -fuzz FuzzContent -fuzztime 60s .
+      - name: Fuzz the content scanner
+        run: go test -run '^$' -fuzz FuzzScan -fuzztime 30s ./internal/content
       - name: Keep crashers
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crashers
-          path: testdata/fuzz
+          path: |
+            testdata/fuzz
+            internal/content/testdata/fuzz
 
   # Pinned corpus (pdf.js feature files, arXiv papers, synthetic technical
   # drawings): every page must render without panic, hang or deadline.
@@ -128,7 +132,7 @@ jobs:
           go-version-file: go.mod
       - name: Benchmarks
         run: |
-          go test -run '^$' -bench . -benchmem -count 5 . | tee bench.txt
+          go test -run '^$' -bench . -benchmem -count 5 . ./internal/content | tee bench.txt
           { echo '```'; cat bench.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:

@@ -1,12 +1,12 @@
 package cera
 
 import (
-	"context"
 	"math"
-	"time"
 
 	"github.com/go-pdfkit/reader"
 	"github.com/timzifer/stilus"
+
+	"github.com/timzifer/cera/internal/content"
 )
 
 // Interpreter limits (spec, "Robustheit und Sicherheit").
@@ -33,12 +33,11 @@ type gstate struct {
 
 // interp executes content streams against a Device.
 type interp struct {
-	doc      *Document
-	dev      Device
-	st       *Stats
-	ctx      context.Context
-	deadline time.Time
-	err      error
+	doc *Document
+	dev Device
+	st  *Stats
+	lim *limit
+	err error
 
 	gs    gstate
 	stack []gstate
@@ -50,15 +49,17 @@ type interp struct {
 	inText     bool
 
 	paint Paint
+
+	scanners []*content.Scanner // one per form depth
+	dashes   []float64          // dash patterns of this page, append-only
+	dashBuf  []float64
 }
 
-func (in *interp) reset(doc *Document, dev Device, st *Stats, ctx context.Context, deadline time.Time) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
 	*in = interp{
-		doc: doc, dev: dev, st: st, ctx: ctx, deadline: deadline,
+		doc: doc, dev: dev, st: st, lim: lim,
 		stack: in.stack[:0], path: in.path, clip: -1,
+		scanners: in.scanners, dashes: in.dashes[:0], dashBuf: in.dashBuf,
 	}
 	in.path.Reset()
 }
@@ -70,7 +71,7 @@ func (in *interp) release() {
 		in.stack[i] = gstate{}
 	}
 	in.stack = in.stack[:0]
-	in.doc, in.dev, in.st, in.ctx = nil, nil, nil, nil
+	in.doc, in.dev, in.st, in.lim = nil, nil, nil, nil
 	in.gs = gstate{}
 }
 
@@ -95,7 +96,11 @@ func (in *interp) run(data []byte, res reader.Dict, ctm Matrix, depth int) {
 
 // exec interprets one content stream in the current state.
 func (in *interp) exec(data []byte, res reader.Dict, depth int) {
-	sc := reader.NewContentScanner(data)
+	for len(in.scanners) <= depth {
+		in.scanners = append(in.scanners, new(content.Scanner))
+	}
+	sc := in.scanners[depth]
+	sc.Reset(data)
 	for in.err == nil {
 		op, ok := sc.Next()
 		if !ok {
@@ -103,45 +108,39 @@ func (in *interp) exec(data []byte, res reader.Dict, depth int) {
 		}
 		in.st.Ops++
 		if in.st.Ops%checkEvery == 0 && in.expired() {
-			return
+			break
 		}
-		in.do(op, res, depth)
+		in.do(sc, op, res, depth)
 	}
-	if sc.Err() != nil {
-		in.st.Errors++
-	}
+	in.st.Errors += sc.Errors()
+	sc.Reset(nil)
 }
 
 func (in *interp) expired() bool {
-	if in.ctx.Err() != nil || (!in.deadline.IsZero() && time.Now().After(in.deadline)) {
+	if in.lim.expired() {
 		in.err = ErrDeadline
 		return true
 	}
 	return false
 }
 
-// nums reads n numeric operands into v; ok is false if the operator has
-// the wrong operands.
-func nums(ops []reader.Object, v []float64) bool {
-	if len(ops) < len(v) {
-		return false
+// lookup returns the resolved entry of the resource category cat named by
+// the operand name.
+func (in *interp) lookup(res reader.Dict, cat reader.Name, sc *content.Scanner, name *content.Operand) reader.Object {
+	if name == nil || name.Kind != content.Name {
+		return nil
 	}
-	ops = ops[len(ops)-len(v):]
-	for i, o := range ops {
-		f, ok := reader.ToFloat(o)
-		if !ok || math.IsNaN(f) || math.IsInf(f, 0) {
-			return false
-		}
-		v[i] = f
+	sub := in.doc.dict(res[cat])
+	if sub == nil {
+		return nil
 	}
-	return true
+	return in.doc.resolve(sub[reader.Name(sc.Text(name))])
 }
 
-func (in *interp) do(op reader.Operation, res reader.Dict, depth int) {
+func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int) {
 	var v [6]float64
-	a := op.Operands
 	bad := func() { in.st.Errors++ }
-	switch op.Operator {
+	switch string(op) {
 	// Graphics state.
 	case "q":
 		if len(in.stack) >= maxStateDepth {
@@ -153,90 +152,92 @@ func (in *interp) do(op reader.Operation, res reader.Dict, depth int) {
 	case "Q":
 		in.restore()
 	case "cm":
-		if !nums(a, v[:6]) {
+		if !sc.Nums(v[:6]) {
 			bad()
 			return
 		}
 		in.gs.ctm = Matrix(v).Mul(in.gs.ctm)
 	case "w":
-		if !nums(a, v[:1]) {
+		if !sc.Nums(v[:1]) {
 			bad()
 			return
 		}
 		in.gs.style.Width = math.Abs(v[0])
 	case "J":
-		if !nums(a, v[:1]) {
+		if !sc.Nums(v[:1]) {
 			bad()
 			return
 		}
 		in.gs.style.Cap = stilus.Cap(min(max(int(v[0]), 0), 2))
 	case "j":
-		if !nums(a, v[:1]) {
+		if !sc.Nums(v[:1]) {
 			bad()
 			return
 		}
 		in.gs.style.Join = stilus.Join(min(max(int(v[0]), 0), 2))
 	case "M":
-		if !nums(a, v[:1]) {
+		if !sc.Nums(v[:1]) {
 			bad()
 			return
 		}
 		in.gs.style.MiterLimit = v[0]
 	case "d":
-		if len(a) < 2 {
+		arr, phase := sc.FromEnd(1), sc.FromEnd(0)
+		if arr == nil || arr.Kind != content.Array || phase.Kind != content.Number {
 			bad()
 			return
 		}
-		arr, _ := reader.ToArray(a[0])
-		phase, _ := reader.ToFloat(a[1])
-		in.setDash(arr, phase)
+		in.dashBuf = in.dashBuf[:0]
+		ok := true
+		sc.Elems(arr, func(e *content.Operand) bool {
+			ok = e.Kind == content.Number
+			in.dashBuf = append(in.dashBuf, e.Num)
+			return ok
+		})
+		if !ok {
+			in.dashBuf = in.dashBuf[:0]
+		}
+		in.setDash(in.dashBuf, phase.Num)
 	case "gs":
-		if len(a) < 1 {
-			bad()
-			return
-		}
-		n, _ := reader.ToName(a[0])
-		in.extGState(in.doc.dict(in.doc.dict(res["ExtGState"])[n]))
+		d, _ := reader.ToDict(in.lookup(res, "ExtGState", sc, sc.Last()))
+		in.extGState(d)
 	case "ri", "i":
 
 	// Path construction.
 	case "m":
-		if !nums(a, v[:2]) {
+		if !sc.Nums(v[:2]) {
 			bad()
 			return
 		}
 		in.moveTo(v[0], v[1])
 	case "l":
-		if !nums(a, v[:2]) {
+		if !sc.Nums(v[:2]) {
 			bad()
 			return
 		}
 		in.lineTo(v[0], v[1])
 	case "c":
-		if !nums(a, v[:6]) {
+		if !sc.Nums(v[:6]) {
 			bad()
 			return
 		}
 		in.curveTo(v[0], v[1], v[2], v[3], v[4], v[5])
 	case "v":
-		if !nums(a, v[:4]) {
+		if !sc.Nums(v[:4]) {
 			bad()
 			return
 		}
 		in.curveTo(float64(in.cur.X), float64(in.cur.Y), v[0], v[1], v[2], v[3])
 	case "y":
-		if !nums(a, v[:4]) {
+		if !sc.Nums(v[:4]) {
 			bad()
 			return
 		}
 		in.curveTo(v[0], v[1], v[2], v[3], v[2], v[3])
 	case "h":
-		if in.hasCur {
-			in.path.Close()
-			in.cur = in.start
-		}
+		in.closePath()
 	case "re":
-		if !nums(a, v[:4]) {
+		if !sc.Nums(v[:4]) {
 			bad()
 			return
 		}
@@ -289,19 +290,12 @@ func (in *interp) do(op reader.Operation, res reader.Dict, depth int) {
 
 	// Colour.
 	case "CS", "cs":
-		if len(a) < 1 {
-			bad()
-			return
-		}
-		cs, approx := in.doc.colorSpace(a[0], res, 0)
+		cs := in.colorSpaceOperand(sc, res)
 		if cs == nil {
 			bad()
 			return
 		}
-		if approx != "" {
-			in.st.unsupported(approx)
-		}
-		if op.Operator == "CS" {
+		if op[0] == 'C' {
 			in.gs.strokeCS = cs
 			cs.initial(in.gs.stroke[:])
 		} else {
@@ -309,22 +303,22 @@ func (in *interp) do(op reader.Operation, res reader.Dict, depth int) {
 			cs.initial(in.gs.fill[:])
 		}
 	case "SC", "SCN":
-		in.setColor(in.gs.strokeCS, in.gs.stroke[:], a)
+		in.setColor(sc, in.gs.strokeCS, in.gs.stroke[:])
 	case "sc", "scn":
-		in.setColor(in.gs.fillCS, in.gs.fill[:], a)
+		in.setColor(sc, in.gs.fillCS, in.gs.fill[:])
 	case "G", "g", "RG", "rg", "K", "k":
 		cs := spaceGray
-		switch op.Operator[0] {
+		switch op[0] {
 		case 'R', 'r':
 			cs = spaceRGB
 		case 'K', 'k':
 			cs = spaceCMYK
 		}
-		if !nums(a, v[:cs.n]) {
+		if !sc.Nums(v[:cs.n]) {
 			bad()
 			return
 		}
-		if op.Operator[0] >= 'a' {
+		if op[0] >= 'a' {
 			in.gs.fillCS = cs
 			copy(in.gs.fill[:], v[:cs.n])
 		} else {
@@ -334,12 +328,7 @@ func (in *interp) do(op reader.Operation, res reader.Dict, depth int) {
 
 	// External objects.
 	case "Do":
-		if len(a) < 1 {
-			bad()
-			return
-		}
-		n, _ := reader.ToName(a[0])
-		in.xobject(n, res, depth)
+		in.xobject(in.lookup(res, "XObject", sc, sc.Last()), res, depth)
 	case "BI":
 		in.st.unsupported("inline-image")
 	case "sh":
@@ -356,15 +345,37 @@ func (in *interp) do(op reader.Operation, res reader.Dict, depth int) {
 
 	// Marked content and compatibility.
 	case "BDC":
-		if len(a) >= 1 {
-			if n, _ := reader.ToName(a[0]); n == "OC" {
-				in.st.unsupported("optional-content")
-			}
+		if sc.Len() >= 1 && sc.NameIs(sc.Arg(0), "OC") {
+			in.st.unsupported("optional-content")
 		}
 	case "BMC", "EMC", "MP", "DP", "BX", "EX":
 	default:
 		bad()
 	}
+}
+
+// colorSpaceOperand resolves the colour space named by the last operand.
+// The device spaces are recognised without touching the resources.
+func (in *interp) colorSpaceOperand(sc *content.Scanner, res reader.Dict) *colorSpace {
+	o := sc.Last()
+	if o == nil || o.Kind != content.Name {
+		return nil
+	}
+	switch string(sc.Text(o)) {
+	case "DeviceGray", "G", "CalGray":
+		return spaceGray
+	case "DeviceRGB", "RGB", "CalRGB":
+		return spaceRGB
+	case "DeviceCMYK", "CMYK":
+		return spaceCMYK
+	case "Pattern":
+		return spacePattern
+	}
+	cs, approx := in.doc.colorSpace(reader.Name(sc.Text(o)), res, 0)
+	if approx != "" {
+		in.st.unsupported(approx)
+	}
+	return cs
 }
 
 func (in *interp) restore() {
@@ -459,37 +470,36 @@ func (in *interp) setPaint(cs *colorSpace, v []float64, alpha float64) bool {
 	return in.paint.Color.A != 0
 }
 
-func (in *interp) setColor(cs *colorSpace, dst []float64, a []reader.Object) {
+func (in *interp) setColor(sc *content.Scanner, cs *colorSpace, dst []float64) {
 	if cs.kind == csPattern {
 		return // the pattern name is resolved when patterns land (M7)
 	}
 	var v [maxComps]float64
-	if !nums(a, v[:cs.n]) {
+	if !sc.Nums(v[:cs.n]) {
 		in.st.Errors++
 		return
 	}
 	copy(dst, v[:cs.n])
 }
 
-func (in *interp) setDash(arr reader.Array, phase float64) {
+// setDash sets the dash pattern from arr, which the caller may reuse.
+func (in *interp) setDash(arr []float64, phase float64) {
 	in.gs.style.Dash, in.gs.style.DashPhase = nil, 0
-	if len(arr) == 0 {
-		return
-	}
-	dash := make([]float64, 0, len(arr))
 	var sum float64
-	for _, o := range arr {
-		f, ok := reader.ToFloat(o)
-		if !ok || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+	for _, f := range arr {
+		if f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
 			return
 		}
-		dash = append(dash, f)
 		sum += f
 	}
-	if sum == 0 {
+	if !(sum > 0) || math.IsInf(sum, 0) {
 		return
 	}
-	in.gs.style.Dash = dash
+	// Saved states share dash patterns, so the arena (reset per page) is
+	// only ever appended to.
+	n := len(in.dashes)
+	in.dashes = append(in.dashes, arr...)
+	in.gs.style.Dash = in.dashes[n:len(in.dashes):len(in.dashes)]
 	if !math.IsNaN(phase) && !math.IsInf(phase, 0) {
 		in.gs.style.DashPhase = phase
 	}
@@ -516,7 +526,16 @@ func (in *interp) extGState(d reader.Dict) {
 	if a, ok := reader.ToArray(doc.resolve(d["D"])); ok && len(a) == 2 {
 		arr, _ := reader.ToArray(doc.resolve(a[0]))
 		phase, _ := doc.num(a[1])
-		in.setDash(arr, phase)
+		in.dashBuf = in.dashBuf[:0]
+		for _, o := range arr {
+			f, ok := doc.num(o)
+			if !ok {
+				in.dashBuf = in.dashBuf[:0]
+				break
+			}
+			in.dashBuf = append(in.dashBuf, f)
+		}
+		in.setDash(in.dashBuf, phase)
 	}
 	if v, ok := doc.num(d["CA"]); ok {
 		in.gs.strokeAlp = clamp01(v)
@@ -538,9 +557,9 @@ func (in *interp) extGState(d reader.Dict) {
 	}
 }
 
-func (in *interp) xobject(name reader.Name, res reader.Dict, depth int) {
+func (in *interp) xobject(o reader.Object, res reader.Dict, depth int) {
 	doc := in.doc
-	s, ok := reader.ToStream(doc.resolve(doc.dict(res["XObject"])[name]))
+	s, ok := reader.ToStream(o)
 	if !ok {
 		in.st.Errors++
 		return
