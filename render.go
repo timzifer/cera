@@ -48,6 +48,7 @@ type Stats struct {
 	Clips   int
 	Glyphs  int // glyphs filled, and Type 3 glyphs run
 	Images  int // images drawn, inline images and stencil masks included
+	Groups  int // transparency groups and soft masks, of forms and objects
 	// Unsupported counts features that were skipped or approximated, keyed
 	// by feature ("shading", "font-missing", "image-filter", ...).
 	Unsupported map[string]int
@@ -384,7 +385,7 @@ func (j *job) work(whole bool) {
 			j.report(&PanicError{Value: v, Stack: debug.Stack()})
 			j.lim.hit.Store(true) // stop the other workers
 		} else {
-			pt.canvas.Reset(noImage, noImage.Rect) // do not keep dst alive
+			pt.dev.Reset(noImage, noImage.Rect) // do not keep dst alive
 			putGlyphCache(pt.dev.glyphs)
 			pt.dev.glyphs = nil
 			painters.Put(pt)
@@ -413,14 +414,14 @@ func (j *job) work(whole bool) {
 
 // paint draws r, band b of the list or the whole region if b < 0.
 func (j *job) paint(pt *painter, b int, r image.Rectangle) {
-	pt.canvas.Reset(j.dst, r)
+	pt.dev.Reset(j.dst, r)
 	var ok bool
 	if b < 0 {
 		ok = j.l.drawAll(&pt.dev, &pt.ds, r, j.lim)
 	} else {
 		ok = j.l.drawBand(&pt.dev, &pt.ds, b, r, j.lim)
 	}
-	if err := pt.canvas.Err(); err != nil {
+	if err := pt.dev.Err(); err != nil {
 		j.report(err)
 	} else if !ok {
 		j.report(ErrDeadline)

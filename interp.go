@@ -25,6 +25,9 @@ type gstate struct {
 	fillCS, strokeCS     *colorSpace
 	fill, stroke         [maxComps]float64
 	fillAlpha, strokeAlp float64
+	// blend and smask composite what is painted (see group.go).
+	blend BlendMode
+	smask *softMask
 
 	style StrokeStyle
 
@@ -59,9 +62,13 @@ type interp struct {
 
 	paint Paint
 
-	scanners []*content.Scanner // one per form depth
-	dashes   []float64          // dash patterns of this page, append-only
-	dashBuf  []float64
+	scanners  []*content.Scanner // one per form depth
+	depth     int                // of the content stream running
+	objs      []objState         // saved while soft masks are drawn
+	masks     int                // soft masks drawn
+	maskDepth int                // soft masks being drawn
+	dashes    []float64          // dash patterns of this page, append-only
+	dashBuf   []float64
 }
 
 func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
@@ -69,7 +76,7 @@ func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
 		doc: doc, dev: dev, st: st, lim: lim,
 		stack: in.stack[:0], path: in.path, clip: -1,
 		scanners: in.scanners, dashes: in.dashes[:0], dashBuf: in.dashBuf,
-		text: in.text.keep(),
+		text: in.text.keep(), objs: in.objs[:0],
 	}
 	in.path.Reset()
 	in.td, _ = dev.(TextDevice)
@@ -112,6 +119,8 @@ func (in *interp) exec(data []byte, res reader.Dict, depth int) {
 	}
 	sc := in.scanners[depth]
 	sc.Reset(data)
+	outer := in.depth
+	in.depth = depth
 	for in.err == nil {
 		op, ok := sc.Next()
 		if !ok {
@@ -125,6 +134,7 @@ func (in *interp) exec(data []byte, res reader.Dict, depth int) {
 	}
 	in.st.Errors += sc.Errors()
 	sc.Reset(nil)
+	in.depth = outer
 }
 
 func (in *interp) expired() bool {
@@ -220,7 +230,7 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 		in.setDash(in.dashBuf, phase.Num)
 	case "gs":
 		d, _ := reader.ToDict(in.lookup(res, "ExtGState", sc, sc.Last()))
-		in.extGState(d)
+		in.extGState(d, res)
 	case "ri", "i":
 
 	// Path construction.
@@ -475,6 +485,10 @@ func (in *interp) fillPath(rule FillRule) {
 		return
 	}
 	in.st.Fills++
+	if in.transparent() {
+		in.beginObject(in.pathBox(0), in.gs.ctm)
+		defer in.dev.EndGroup()
+	}
 	in.dev.FillPath(&in.path, in.gs.ctm, rule, &in.paint)
 }
 
@@ -483,6 +497,10 @@ func (in *interp) strokePath() {
 		return
 	}
 	in.st.Strokes++
+	if in.transparent() {
+		in.beginObject(in.pathBox(in.strokePad()), in.gs.ctm)
+		defer in.dev.EndGroup()
+	}
 	in.dev.StrokePath(&in.path, in.gs.ctm, &in.gs.style, &in.paint)
 }
 
@@ -532,7 +550,7 @@ func (in *interp) setDash(arr []float64, phase float64) {
 	}
 }
 
-func (in *interp) extGState(d reader.Dict) {
+func (in *interp) extGState(d reader.Dict, res reader.Dict) {
 	if d == nil {
 		in.st.Errors++
 		return
@@ -570,17 +588,18 @@ func (in *interp) extGState(d reader.Dict) {
 	if v, ok := doc.num(d["ca"]); ok {
 		in.gs.fillAlpha = clamp01(v)
 	}
-	if n, ok := doc.name(d["BM"]); ok && n != "Normal" && n != "Compatible" {
-		in.st.unsupported("blend-mode")
-	} else if a, ok := reader.ToArray(doc.resolve(d["BM"])); ok && len(a) > 0 {
-		if n, _ := doc.name(a[0]); n != "Normal" && n != "Compatible" {
+	if o, ok := d["BM"]; ok {
+		bm, known := doc.blendMode(o)
+		if !known {
 			in.st.unsupported("blend-mode")
 		}
+		in.gs.blend = bm
 	}
-	if sm, ok := d["SMask"]; ok {
-		if n, ok := doc.name(sm); !ok || n != "None" {
-			in.st.unsupported("soft-mask")
-		}
+	if o, ok := d["SMask"]; ok {
+		in.gs.smask = in.softMask(o, res)
+	}
+	if doc.boolean(d["AIS"]) {
+		in.st.unsupported("alpha-is-shape")
 	}
 }
 
@@ -605,53 +624,64 @@ func (in *interp) xobject(o reader.Object, res reader.Dict, depth int) {
 	}
 }
 
-// form runs a form XObject (PDF 2.0, 8.10) inside q … Q.
+// form runs a form XObject (PDF 2.0, 8.10) inside q … Q. A transparency
+// group, or any form painted with a blend mode or soft mask, is drawn as a
+// group.
 func (in *interp) form(s *reader.Stream, parent reader.Dict, depth int) {
-	if depth >= maxFormDepth || len(in.stack) >= maxStateDepth {
+	if depth >= maxFormDepth || len(in.stack)+1 >= maxStateDepth {
 		in.st.Errors++
 		return
 	}
 	doc := in.doc
-	if g := doc.dict(s.Dict["Group"]); g != nil {
-		if n, _ := doc.name(g["S"]); n == "Transparency" {
-			in.st.unsupported("transparency-group")
+	var g Group
+	isGroup := false
+	if gd := doc.dict(s.Dict["Group"]); gd != nil {
+		if n, _ := doc.name(gd["S"]); n == "Transparency" {
+			isGroup = true
+			g.Isolated, g.Knockout = doc.boolean(gd["I"]), doc.boolean(gd["K"])
 		}
 	}
-	res := doc.dict(s.Dict["Resources"])
-	if res == nil {
-		res = parent
-	}
-	dec := doc.r.DecodeStreamRecovering(s)
-	if dec.Recovered {
-		in.st.Errors++
-	}
+	grouped := isGroup || in.transparent()
 
+	// A form starts with a new path and ends with its own states unwound.
 	in.stack = append(in.stack, in.gs)
 	in.gs.clips = 0
 	base := len(in.stack)
-	if a, ok := reader.ToArray(doc.resolve(s.Dict["Matrix"])); ok && len(a) == 6 {
-		var m Matrix
-		valid := true
-		for i, o := range a {
-			m[i], ok = doc.num(o)
-			valid = valid && ok
-		}
-		if valid {
-			in.gs.ctm = m.Mul(in.gs.ctm)
-		}
+	if !grouped {
+		in.runForm(s, parent, depth+1)
+		in.unwind(base)
+		in.restore()
+		return
 	}
-	if bbox, ok := doc.rect(s.Dict["BBox"]); ok {
-		in.dev.ClipRect(bbox, in.gs.ctm)
-		in.gs.clips++
+	g.Blend, g.Alpha = in.gs.blend, 255
+	if isGroup {
+		g.Alpha = unit8(in.gs.fillAlpha)
 	}
-	// A form starts with a new path and ends with its own states unwound.
-	in.path.Reset()
-	in.hasCur, in.clip = false, -1
-	in.exec(dec.Data, res, depth+1)
+	// The group is bounded by the BBox, which formSpace clips to; its
+	// content runs in a state of its own, so that its clips are popped
+	// before the group ends.
+	bbox, ok := in.formSpace(s)
+	if !ok {
+		bbox = Rect{-1 << 20, -1 << 20, 1 << 20, 1 << 20}
+	}
+	if in.gs.smask != nil {
+		in.drawSoftMask(bbox, in.gs.ctm)
+		g.Masked = true
+	}
+	in.st.Groups++
+	in.dev.BeginGroup(bbox, in.gs.ctm, &g)
+	in.stack = append(in.stack, in.gs)
+	in.gs.clips = 0
+	in.gs.blend, in.gs.smask = BlendNormal, nil
+	if isGroup {
+		in.gs.fillAlpha, in.gs.strokeAlp = 1, 1
+	}
+	in.formContent(s, parent, depth+1)
+	in.unwind(base + 1)
+	in.restore()
+	in.dev.EndGroup()
 	in.unwind(base)
 	in.restore()
-	in.path.Reset()
-	in.hasCur, in.clip = false, -1
 }
 
 // drawImage paints a decoded image in the unit square of user space: a
@@ -684,6 +714,10 @@ func (in *interp) drawImage(r *imageResult) {
 		in.paint = Paint{Color: color.RGBA{A: a}}
 	}
 	in.st.Images++
+	if in.transparent() {
+		in.beginObject(Rect{0, 0, 1, 1}, in.gs.ctm)
+		defer in.dev.EndGroup()
+	}
 	in.dev.DrawImage(img, in.gs.ctm, &in.paint)
 }
 

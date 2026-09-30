@@ -247,6 +247,19 @@ func toUnit(w, h int) Matrix {
 // in paint, any other image in its own colours with the constant alpha
 // paint.Color.A.
 func (d *RasterDevice) DrawImage(img *Image, m Matrix, paint *Paint) {
+	d.t.inked(paint.Color.A)
+	if !d.t.knockout {
+		d.drawImage(img, m, paint)
+		return
+	}
+	box := d.koBegin(deviceBoxPoints(unitSquare[:], m, 1))
+	d.drawImage(img, m, paint)
+	d.koShape()
+	d.drawImage(img, m, &opaque)
+	d.koEnd(box)
+}
+
+func (d *RasterDevice) drawImage(img *Image, m Matrix, paint *Paint) {
 	if d.C.Clip().Empty() {
 		return
 	}

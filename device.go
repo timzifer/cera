@@ -1,6 +1,11 @@
 package cera
 
-import "github.com/timzifer/stilus"
+import (
+	"image"
+	"image/color"
+
+	"github.com/timzifer/stilus"
+)
 
 // Geometry types are shared with the rasterizer core, so paths flow from the
 // interpreter to stilus without conversion.
@@ -41,8 +46,15 @@ const (
 // Images arrive as DrawImage with m mapping the image's unit square to
 // device space.
 //
-// The set grows with the milestones of the spec: BeginGroup/EndGroup and
-// soft masks (M6), FillShading (M7).
+// Transparency arrives as groups: what is drawn between BeginGroup and
+// EndGroup is composited as one, with the group's blend mode, opacity and,
+// for a masked group, the soft mask drawn between the BeginMask and
+// EndMask just before it. Objects painted with a blend mode or a soft mask
+// in the graphics state come as groups of their own. Clips, groups and
+// masks nest: a clip pushed inside a group or mask is popped inside it.
+// The rectangle r under m bounds what a group or mask covers.
+//
+// The set grows with the milestones of the spec: FillShading (M7).
 type Device interface {
 	FillPath(p *Path, m Matrix, rule FillRule, paint *Paint)
 	StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Paint)
@@ -55,6 +67,77 @@ type Device interface {
 	// stencil (img.Stencil) paints paint through its shape; any other
 	// image paints its own colours with the constant alpha paint.Color.A.
 	DrawImage(img *Image, m Matrix, paint *Paint)
+	// BeginGroup starts a transparency group; EndGroup composites it.
+	BeginGroup(r Rect, m Matrix, g *Group)
+	EndGroup()
+	// BeginMask starts drawing a soft mask; EndMask ends it. The mask
+	// applies to the group begun next, which has Masked set.
+	BeginMask(r Rect, m Matrix, sm *SoftMask)
+	EndMask()
+}
+
+// BlendMode is a PDF blend mode (PDF 2.0, 11.3.5).
+type BlendMode uint8
+
+// Blend modes.
+const (
+	BlendNormal BlendMode = iota
+	BlendMultiply
+	BlendScreen
+	BlendOverlay
+	BlendDarken
+	BlendLighten
+	BlendColorDodge
+	BlendColorBurn
+	BlendHardLight
+	BlendSoftLight
+	BlendDifference
+	BlendExclusion
+	BlendHue
+	BlendSaturation
+	BlendColor
+	BlendLuminosity
+)
+
+var blendNames = [...]string{
+	"Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "ColorDodge", "ColorBurn",
+	"HardLight", "SoftLight", "Difference", "Exclusion", "Hue", "Saturation", "Color", "Luminosity",
+}
+
+func (b BlendMode) String() string {
+	if int(b) < len(blendNames) {
+		return blendNames[b]
+	}
+	return "BlendMode(?)"
+}
+
+// Group describes a transparency group (PDF 2.0, 11.4).
+type Group struct {
+	// Isolated groups start from a transparent backdrop; non-isolated ones
+	// see what is below them.
+	Isolated bool
+	// Knockout groups composite each object against the group's initial
+	// backdrop instead of the objects before it.
+	Knockout bool
+	// Blend composites the group onto its backdrop.
+	Blend BlendMode
+	// Alpha is the group's constant opacity (255 is opaque).
+	Alpha uint8
+	// Masked composites the group through the soft mask drawn just before.
+	Masked bool
+}
+
+// SoftMask describes a soft mask (PDF 2.0, 11.6.5.2). Its values come from
+// the group drawn between BeginMask and EndMask.
+type SoftMask struct {
+	// Luminosity takes the mask from the luminosity of the group drawn on
+	// Backdrop; otherwise it is the group's alpha.
+	Luminosity bool
+	// Backdrop is the opaque colour a luminosity mask group is drawn on,
+	// and the mask's value outside the group.
+	Backdrop color.RGBA
+	// Transfer maps mask values; nil is the identity.
+	Transfer *[256]uint8
 }
 
 // TextDevice is implemented by devices that want to know the text a page
@@ -109,26 +192,69 @@ type GlyphRun struct {
 // RasterDevice draws onto an *image.RGBA through a stilus.Canvas. Glyphs
 // small enough are rasterized once per size and subpixel position into a
 // cache of coverage masks kept by the device. Images are sampled from the
-// mip level that fits the device resolution.
+// mip level that fits the device resolution. Groups and soft masks are
+// drawn into layers of their own (see Reset).
 type RasterDevice struct {
 	C *stilus.Canvas
 
 	glyphs *glyphCache // allocated on first use
 	img    imageDraw
+	t      layers
+}
+
+// Reset targets the device, and its canvas, at region of dst. Groups need
+// it: a device whose canvas was targeted directly draws their content
+// without compositing it and does not draw soft masks.
+func (d *RasterDevice) Reset(dst *image.RGBA, region image.Rectangle) {
+	d.t.reset(dst, region)
+	d.C.Reset(dst, region)
+}
+
+// Err returns the first error of the canvas since Reset.
+func (d *RasterDevice) Err() error {
+	if d.t.err != nil {
+		return d.t.err
+	}
+	return d.C.Err()
 }
 
 func (d *RasterDevice) FillPath(p *Path, m Matrix, rule FillRule, paint *Paint) {
+	d.t.inked(paint.Color.A)
+	if !d.t.knockout {
+		d.C.Fill(p, m, rule, paint)
+		return
+	}
+	box := d.koBegin(deviceBox(p, m, 1))
 	d.C.Fill(p, m, rule, paint)
+	d.koShape()
+	d.C.Fill(p, m, rule, &opaque)
+	d.koEnd(box)
 }
 
 func (d *RasterDevice) StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Paint) {
+	d.t.inked(paint.Color.A)
+	if !d.t.knockout {
+		d.C.Stroke(p, m, st, paint)
+		return
+	}
+	box := d.koBegin(strokeBox(p, m, st))
 	d.C.Stroke(p, m, st, paint)
+	d.koShape()
+	d.C.Stroke(p, m, st, &opaque)
+	d.koEnd(box)
 }
 
-func (d *RasterDevice) ClipPath(p *Path, m Matrix, rule FillRule) { d.C.ClipPath(p, m, rule) }
+func (d *RasterDevice) ClipPath(p *Path, m Matrix, rule FillRule) {
+	d.t.pushClip(p, Rect{}, m, rule, false)
+	d.C.ClipPath(p, m, rule)
+}
 
 func (d *RasterDevice) ClipRect(r Rect, m Matrix) {
+	d.t.pushClip(nil, r, m, 0, true)
 	d.C.ClipRect(stilus.Rect{X0: r.X0, Y0: r.Y0, X1: r.X1, Y1: r.Y1}, m)
 }
 
-func (d *RasterDevice) PopClip() { d.C.PopClip() }
+func (d *RasterDevice) PopClip() {
+	d.t.popClip()
+	d.C.PopClip()
+}
