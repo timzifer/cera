@@ -14,17 +14,17 @@ cera is where the pieces come together:
 | layer | source | status |
 |---|---|---|
 | file reader: xref, objects, filters, encryption, repair | [go-pdfkit/reader](https://github.com/go-pdfkit/reader) (BSD-3) | used as is |
-| content interpreter, graphics state | cera | paths, clips, colour spaces, ExtGState, form XObjects |
-| display list, bands, workers | cera | next (M3) |
+| content scanner, interpreter, graphics state | cera | zero-allocation scanner; paths, clips, colour spaces, ExtGState, form XObjects |
+| display list, bands, workers | cera | display list per page and scale, band index, parallel bands (M3) |
 | rasterizer, stroker, clip, compositing | [timzifer/stilus](https://github.com/timzifer/stilus) (MIT) | used as is |
 | fonts, images, shadings, transparency | [timzifer/render](https://github.com/timzifer/render) fork of go-pdfkit/render (BSD-3), go-opentype, go-images | to be ported (M4–M7) |
 
 The [stilus integration in the go-pdfkit/render fork](https://github.com/timzifer/render/tree/codex/stilus-renderer)
 was the M2 spike of the plan: same interpreter, stilus instead of go-gfx,
 9.9× less time summed over the corpus and 0 errors. cera builds the part that
-spike could not change: its own interpreter feeding a device interface (and
-soon a display list), so that parsing happens once per page, only the visible
-region is drawn, and all cores are used.
+spike could not change: its own interpreter feeding a device interface and a
+display list, so that parsing happens once per page, only the visible region
+is drawn, and all cores are used.
 
 ## Use
 
@@ -38,13 +38,25 @@ err = page.Render(ctx, dst, cera.RenderOptions{
 	Background: color.RGBA{255, 255, 255, 255},
 	Deadline:   time.Now().Add(time.Second), // partial image + ErrDeadline
 	Stats:      &st,                         // ops, fills, unsupported features
+	Workers:    0,                           // goroutines per page; 0 = all cores
 })
+page.Release() // drop the cached display list when the page leaves the view
 ```
 
 `dst` may be any sub-rectangle of the page (a tile or viewport): only that
 region is drawn. `RenderOptions.Region` narrows it further. Errors in the
 content never stop a page; a non-nil error means a partial image
 (`ErrDeadline`, a rasterizer budget, or a recovered `*PanicError`).
+
+The first render of a page at a scale interprets its content into a display
+list: every path with its transform, paint and device-space box (clipped by
+the clips around it), and a band index of about 16 horizontal bands. Later
+renders at that scale (other tiles, a scrolled viewport, another thread)
+skip parsing and draw only the items that touch their region. One worker
+draws the region in one pass; several take bands from a shared counter, each
+with its own pooled stilus canvas, so steady-state rendering allocates
+nothing per page but its deadline. Content under an empty clip and paths
+outside the page are dropped while recording.
 
 ```sh
 go run ./cmd/cera -dpi 150 -v -o 'page-%d.png' input.pdf
@@ -73,7 +85,7 @@ Milestones follow the spec *PDF-Renderer für Go (Testballon)*.
 | ✓ | M0 harness and corpus | stilus/harness, pinned corpus, PDFium reference |
 | ✓ | M1 rasterizer core | stilus |
 | ✓ | M2 spike in a go-pdfkit fork | timzifer/render `codex/stilus-renderer` |
-| ▶ | M3 display list, region, parallelism | own interpreter (started), streaming content scanner without per-operand allocations, display list with band index, workers |
+| ✓ | M3 display list, region, parallelism | own interpreter, streaming content scanner without per-operand allocations, display list with band index, parallel bands |
 | | M4 text | glyph cache, Type 3, render modes, TextDevice |
 | | M5 images | mipmaps, masks, 1-bit path, image cache |
 | | M6 transparency | groups, knockout, blend modes, soft masks |
@@ -113,9 +125,13 @@ go run ./cmd/corpus run -dir testdata/borb -runs 0 -pages 3 -fail-open=false
 Customer drawings stay local: pass their directory as another `-dir`
 (comma-separated); they are reported as category `local`.
 
+`-workers` sets the goroutines per page (default 1, the single-core figure
+of the spec; 0 = all cores). Every page is timed twice per run: a first
+render (interpret and draw) and a render again with its display list cached.
+
 Accuracy against PDFium (WebAssembly, no cgo) is measured by the
 [stilus harness](https://github.com/timzifer/stilus/tree/main/harness); a cera
-engine for it comes with M3.
+engine for it is still to be added there.
 
 ## Repository setup
 

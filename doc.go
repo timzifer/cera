@@ -1,11 +1,15 @@
 // Package cera renders PDF pages to raster images in pure Go.
 //
-// cera joins three layers:
+// cera joins four layers:
 //
 //   - parsing: github.com/go-pdfkit/reader (objects, cross-references,
-//     filters, repair, encryption, content-stream tokenising);
-//   - interpretation: this package turns content-stream operators into
-//     calls on a Device (graphics state, paths, clips, colours, forms);
+//     filters, repair, encryption);
+//   - interpretation: this package scans content streams without
+//     allocating per operand and turns their operators into calls on a
+//     Device (graphics state, paths, clips, colours, forms);
+//   - a display list: what a page draws at one scale, with device-space
+//     boxes and a band index, so a page is interpreted once and only the
+//     visible part is drawn, by several cores;
 //   - rasterization: github.com/timzifer/stilus, a sparse CPU rasterizer
 //     whose cost per path is edge length plus covered spans.
 //
@@ -19,7 +23,9 @@
 // The destination belongs to the caller and can be reused; rasterizer
 // buffers live in pooled workers, so steady-state rendering does not
 // allocate page-sized memory. dst may cover only part of the page (a tile or
-// a viewport), and only that part is drawn.
+// a viewport), and only that part is drawn. The page keeps its display list
+// for the next render at the same scale until Page.Release; bands of the
+// page are drawn by RenderOptions.Workers goroutines (all cores by default).
 //
 // # Robustness
 //

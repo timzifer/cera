@@ -1,9 +1,7 @@
 package cera
 
 import (
-	"context"
 	"math"
-	"time"
 
 	"github.com/go-pdfkit/reader"
 	"github.com/timzifer/stilus"
@@ -35,12 +33,11 @@ type gstate struct {
 
 // interp executes content streams against a Device.
 type interp struct {
-	doc      *Document
-	dev      Device
-	st       *Stats
-	ctx      context.Context
-	deadline time.Time
-	err      error
+	doc *Document
+	dev Device
+	st  *Stats
+	lim *limit
+	err error
 
 	gs    gstate
 	stack []gstate
@@ -58,12 +55,9 @@ type interp struct {
 	dashBuf  []float64
 }
 
-func (in *interp) reset(doc *Document, dev Device, st *Stats, ctx context.Context, deadline time.Time) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
 	*in = interp{
-		doc: doc, dev: dev, st: st, ctx: ctx, deadline: deadline,
+		doc: doc, dev: dev, st: st, lim: lim,
 		stack: in.stack[:0], path: in.path, clip: -1,
 		scanners: in.scanners, dashes: in.dashes[:0], dashBuf: in.dashBuf,
 	}
@@ -77,7 +71,7 @@ func (in *interp) release() {
 		in.stack[i] = gstate{}
 	}
 	in.stack = in.stack[:0]
-	in.doc, in.dev, in.st, in.ctx = nil, nil, nil, nil
+	in.doc, in.dev, in.st, in.lim = nil, nil, nil, nil
 	in.gs = gstate{}
 }
 
@@ -123,7 +117,7 @@ func (in *interp) exec(data []byte, res reader.Dict, depth int) {
 }
 
 func (in *interp) expired() bool {
-	if in.ctx.Err() != nil || (!in.deadline.IsZero() && time.Now().After(in.deadline)) {
+	if in.lim.expired() {
 		in.err = ErrDeadline
 		return true
 	}

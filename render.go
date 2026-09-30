@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"maps"
 	"math"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/timzifer/stilus"
@@ -30,6 +33,11 @@ type RenderOptions struct {
 	Deadline time.Time
 	// Stats, when non-nil, receives what rendering did.
 	Stats *Stats
+	// Workers is the number of goroutines drawing the page, each taking
+	// horizontal bands of it: 0 means GOMAXPROCS, 1 draws on the calling
+	// goroutine in one pass. Antialiasing may round differently by one
+	// level where bands meet.
+	Workers int
 }
 
 // Stats describes what rendering a page did.
@@ -44,6 +52,24 @@ type Stats struct {
 	// Errors counts recoverable problems: malformed operators, missing
 	// resources, content that did not decode.
 	Errors int
+	// Reused reports that the page was not interpreted again: its display
+	// list from an earlier render at the same scale was drawn. The other
+	// fields are those of the render that recorded it.
+	Reused bool
+}
+
+// set copies src into s, reusing s's map.
+func (s *Stats) set(src *Stats) {
+	um := s.Unsupported
+	*s = *src
+	clear(um)
+	if len(src.Unsupported) > 0 {
+		if um == nil {
+			um = make(map[string]int, len(src.Unsupported))
+		}
+		maps.Copy(um, src.Unsupported)
+	}
+	s.Unsupported = um
 }
 
 // UnsupportedKeys returns the keys of s.Unsupported in sorted order.
@@ -98,58 +124,137 @@ func normScale(s float64) float64 {
 	return s
 }
 
-// worker is the per-goroutine state of a render: canvas, interpreter and
-// their buffers. Workers are pooled, so steady-state rendering reuses them.
-type worker struct {
-	canvas *stilus.Canvas
-	dev    RasterDevice
-	in     interp
+// limit is the deadline of one render, shared by its goroutines.
+type limit struct {
+	ctx      context.Context
+	deadline time.Time
+	hit      atomic.Bool
 }
 
-var workers = sync.Pool{New: func() any { return new(worker) }}
+func (l *limit) expired() bool {
+	if l.hit.Load() {
+		return true
+	}
+	if l.ctx.Err() != nil || (!l.deadline.IsZero() && time.Now().After(l.deadline)) {
+		l.hit.Store(true)
+		return true
+	}
+	return false
+}
+
+// painter draws display-list bands; painters are pooled, so steady-state
+// rendering reuses their canvases.
+type painter struct {
+	canvas *stilus.Canvas
+	dev    RasterDevice
+	ds     drawState
+}
+
+// noImage is what idle painters point at.
+var noImage = image.NewRGBA(image.Rectangle{})
+
+var painters = sync.Pool{New: func() any { return new(painter) }}
+
+// recorders are pooled interpreters.
+var recorders = sync.Pool{New: func() any { return new(interp) }}
 
 // Render draws the page into dst, whose pixel coordinates are device pixels
 // of the whole page at opt.Scale (see Bounds). dst belongs to the caller and
 // can be reused across calls, so rendering does not allocate a page image.
 //
+// The page is interpreted into a display list once per scale; later renders
+// at the same scale (other tiles, a scrolled viewport) only draw. Release
+// frees the list. Bands of the page are drawn by opt.Workers goroutines.
+//
 // Broken content does not stop rendering. A non-nil error means the page
 // was drawn partially: ErrDeadline, a rasterizer budget, or a *PanicError.
 func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (err error) {
+	defer recoverPanic(&err)
 	region := dst.Bounds()
 	if !opt.Region.Empty() {
 		region = region.Intersect(opt.Region)
 	}
 	fillRegion(dst, region, opt.Background)
-	if region.Empty() {
-		return nil
-	}
-
-	w := workers.Get().(*worker)
-	if w.canvas == nil {
-		w.canvas = stilus.NewCanvas(dst)
-		w.dev.C = w.canvas
-	}
-	w.canvas.Reset(dst, region)
 	st := opt.Stats
 	if st == nil {
 		st = new(Stats)
 	}
-	*st = Stats{}
-	defer func() {
-		if v := recover(); v != nil {
-			err = &PanicError{Value: v, Stack: debug.Stack()}
-			// A worker that panicked may hold inconsistent state.
-			return
-		}
-		w.in.release()
-		workers.Put(w)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lim := &limit{ctx: ctx, deadline: opt.Deadline}
+	scale := normScale(opt.Scale)
+
+	dl, reused := p.list(scale, lim)
+	defer p.done(dl)
+	st.set(&dl.stats)
+	st.Reused = reused
+	switch {
+	case dl.panic != nil:
+		err = dl.panic
+	case !dl.complete:
+		err = ErrDeadline
+	}
+	if region.Empty() {
+		return err
+	}
+	if derr := dl.render(dst, region, opt.Workers, lim); derr != nil && err == nil {
+		err = derr
+	}
+	return err
+}
+
+// list returns the display list of the page at scale, recording it unless
+// the cached one fits. The caller must pass it to done.
+func (p *Page) list(scale float64, lim *limit) (dl *displayList, reused bool) {
+	p.mu.Lock()
+	if dl := p.dl; dl != nil && dl.scale == scale {
+		dl.refs++
+		p.mu.Unlock()
+		return dl, true
+	}
+	p.mu.Unlock()
+
+	dl = getList()
+	dl.reset(p.Bounds(scale))
+	dl.scale = scale
+	in := recorders.Get().(*interp)
+	func() {
+		defer func() {
+			if v := recover(); v != nil {
+				// An interpreter that panicked may hold inconsistent state;
+				// its list is incomplete and not cached.
+				in = nil
+				dl.complete = false
+				dl.panic = &PanicError{Value: v, Stack: debug.Stack()}
+			}
+		}()
+		p.record(in, dl, scale, lim)
 	}()
+	if in != nil {
+		in.release()
+		recorders.Put(in)
+	}
+	dl.finish()
 
-	base := p.deviceMatrix(normScale(opt.Scale))
-	w.dev.ClipRect(p.Box, base)
+	p.mu.Lock()
+	dl.refs++
+	if dl.complete {
+		if old := p.dl; old != nil && old.refs == 0 {
+			putList(old)
+		}
+		p.dl = dl
+	}
+	p.mu.Unlock()
+	return dl, false
+}
 
-	in := &w.in
-	in.reset(p.doc, &w.dev, st, ctx, opt.Deadline)
+// record interprets the page into dl.
+func (p *Page) record(in *interp, dl *displayList, scale float64, lim *limit) {
+	st := &dl.stats
+	base := p.deviceMatrix(scale)
+	dl.ClipRect(p.Box, base)
+	in.reset(p.doc, dl, st, lim)
 	res := p.doc.dict(p.dict["Resources"])
 	dec, derr := p.doc.r.PageContentDecoded(p.index + 1)
 	switch {
@@ -161,10 +266,132 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 		}
 		in.run(dec.Data, res, base, 0)
 	}
-	if in.err != nil {
-		return in.err
+	dl.complete = in.err == nil
+}
+
+// done ends a render's use of dl.
+func (p *Page) done(dl *displayList) {
+	p.mu.Lock()
+	dl.refs--
+	if dl.refs == 0 && p.dl != dl {
+		putList(dl)
 	}
-	return w.canvas.Err()
+	p.mu.Unlock()
+}
+
+// Release frees the display list cached by Render. The page stays usable.
+func (p *Page) Release() {
+	p.mu.Lock()
+	if dl := p.dl; dl != nil {
+		p.dl = nil
+		if dl.refs == 0 {
+			putList(dl)
+		}
+	}
+	p.mu.Unlock()
+}
+
+// render draws the part of the list inside region into dst. One worker
+// draws the region in one pass; several share the bands that touch it.
+func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers int, lim *limit) error {
+	b0, b1 := l.bandRange(region)
+	if b0 >= b1 {
+		return nil
+	}
+	if workers <= 0 {
+		workers = runtime.GOMAXPROCS(0)
+	}
+	j := jobs.Get().(*job)
+	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1}
+	if workers = min(workers, b1-b0); workers == 1 {
+		j.work(true)
+	} else {
+		j.next.Store(int32(b0))
+		j.wg.Add(workers)
+		for range workers {
+			go j.work(false)
+		}
+		j.wg.Wait()
+	}
+	err := j.err
+	if err == nil && lim.hit.Load() {
+		err = ErrDeadline
+	}
+	*j = job{}
+	jobs.Put(j)
+	return err
+}
+
+// job is one render of a display list, shared by its workers.
+type job struct {
+	l      *displayList
+	dst    *image.RGBA
+	region image.Rectangle
+	lim    *limit
+	b1     int
+	next   atomic.Int32 // next band to draw
+	wg     sync.WaitGroup
+	mu     sync.Mutex
+	err    error
+}
+
+var jobs = sync.Pool{New: func() any { return new(job) }}
+
+func (j *job) report(err error) {
+	j.mu.Lock()
+	if j.err == nil {
+		j.err = err
+	}
+	j.mu.Unlock()
+}
+
+// work draws the whole region in one pass, or bands until none are left.
+func (j *job) work(whole bool) {
+	pt := painters.Get().(*painter)
+	defer func() {
+		if v := recover(); v != nil {
+			// A painter that panicked may hold inconsistent state.
+			j.report(&PanicError{Value: v, Stack: debug.Stack()})
+			j.lim.hit.Store(true) // stop the other workers
+		} else {
+			pt.canvas.Reset(noImage, noImage.Rect) // do not keep dst alive
+			painters.Put(pt)
+		}
+		if !whole {
+			j.wg.Done()
+		}
+	}()
+	if pt.canvas == nil {
+		pt.canvas = stilus.NewCanvas(noImage)
+		pt.dev.C = pt.canvas
+	}
+	if whole {
+		j.paint(pt, -1, j.region)
+		return
+	}
+	for {
+		b := int(j.next.Add(1)) - 1
+		if b >= j.b1 || j.lim.hit.Load() {
+			return
+		}
+		j.paint(pt, b, j.l.band(b).Intersect(j.region))
+	}
+}
+
+// paint draws r, band b of the list or the whole region if b < 0.
+func (j *job) paint(pt *painter, b int, r image.Rectangle) {
+	pt.canvas.Reset(j.dst, r)
+	var ok bool
+	if b < 0 {
+		ok = j.l.drawAll(&pt.dev, &pt.ds, r, j.lim)
+	} else {
+		ok = j.l.drawBand(&pt.dev, &pt.ds, b, r, j.lim)
+	}
+	if err := pt.canvas.Err(); err != nil {
+		j.report(err)
+	} else if !ok {
+		j.report(ErrDeadline)
+	}
 }
 
 // deviceMatrix maps default user space to device pixels: y down, origin at

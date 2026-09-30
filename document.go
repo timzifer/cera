@@ -3,13 +3,16 @@ package cera
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/go-pdfkit/reader"
 )
 
-// Document is an open PDF file. It is safe to render different pages of one
-// Document from several goroutines only if the underlying reader is; until
-// that is verified (see the roadmap), use one goroutine per Document.
+// Document is an open PDF file. Interpreting a page reads the document, and
+// the underlying reader is not verified to be safe for concurrent use (see
+// the roadmap): render pages of one Document from one goroutine at a time.
+// Once a page has been rendered at a scale, further renders of it at that
+// scale only draw its display list and may run concurrently.
 type Document struct {
 	r *reader.Document
 }
@@ -64,7 +67,8 @@ func (r Rect) Dy() float64 { return r.Y1 - r.Y0 }
 // letter is used when a page has no usable MediaBox.
 var letter = Rect{0, 0, 612, 792}
 
-// Page is one page of a Document.
+// Page is one page of a Document. It caches the display list of its last
+// render; Release frees it.
 type Page struct {
 	doc   *Document
 	index int
@@ -77,6 +81,9 @@ type Page struct {
 	Rotate int
 	// unit is /UserUnit (points per user-space unit), 1 by default.
 	unit float64
+
+	mu sync.Mutex
+	dl *displayList // cached by Render; see Release
 }
 
 // Index returns the 0-based page number.

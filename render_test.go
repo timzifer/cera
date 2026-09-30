@@ -219,7 +219,8 @@ func diff(a, b color.RGBA) int {
 	return d
 }
 
-func BenchmarkRenderHatch(b *testing.B) {
+// hatchPage is 2000 hairlines across a 200×100 pt page.
+func hatchPage(b *testing.B) *Page {
 	var c strings.Builder
 	c.WriteString("0 G 0.3 w\n")
 	for i := range 2000 {
@@ -230,13 +231,36 @@ func BenchmarkRenderHatch(b *testing.B) {
 		b.Fatal(err)
 	}
 	p, _ := doc.Page(0)
-	dst := image.NewRGBA(p.Bounds(150.0 / 72))
-	opt := RenderOptions{Scale: 150.0 / 72, Background: white}
-	b.ReportAllocs()
-	for b.Loop() {
-		if err := p.Render(context.Background(), dst, opt); err != nil {
-			b.Fatal(err)
-		}
+	return p
+}
+
+// BenchmarkRenderHatch measures a first render (interpret and draw) and a
+// repeated one (draw the cached display list), on one core and on all.
+func BenchmarkRenderHatch(b *testing.B) {
+	for _, bc := range []struct {
+		name    string
+		release bool
+		workers int
+	}{
+		{"first/serial", true, 1},
+		{"first/parallel", true, 0},
+		{"again/serial", false, 1},
+		{"again/parallel", false, 0},
+	} {
+		b.Run(bc.name, func(b *testing.B) {
+			p := hatchPage(b)
+			dst := image.NewRGBA(p.Bounds(150.0 / 72))
+			opt := RenderOptions{Scale: 150.0 / 72, Background: white, Workers: bc.workers}
+			b.ReportAllocs()
+			for b.Loop() {
+				if bc.release {
+					p.Release()
+				}
+				if err := p.Render(context.Background(), dst, opt); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
@@ -260,10 +284,13 @@ func FuzzContent(f *testing.F) {
 			return
 		}
 		dst := image.NewRGBA(p.Bounds(0.5))
-		err = p.Render(context.Background(), dst, RenderOptions{Scale: 0.5, Deadline: time.Now().Add(2 * time.Second)})
-		var pe *PanicError
-		if errors.As(err, &pe) {
-			t.Fatalf("%v\n%s", pe.Value, pe.Stack)
+		// Serial, then from the cached display list with bands in parallel.
+		for _, workers := range []int{1, 3} {
+			err = p.Render(context.Background(), dst, RenderOptions{Scale: 0.5, Workers: workers, Deadline: time.Now().Add(2 * time.Second)})
+			var pe *PanicError
+			if errors.As(err, &pe) {
+				t.Fatalf("%v\n%s", pe.Value, pe.Stack)
+			}
 		}
 	})
 }

@@ -110,6 +110,7 @@ type result struct {
 	w, h           int
 	min, median    time.Duration
 	allocs         uint64
+	again          time.Duration // median render with the display list cached
 	bytes          uint64
 	stats          cera.Stats
 	err            error
@@ -132,6 +133,7 @@ func run(args []string) error {
 	match := fl.String("match", "", "only files whose path contains this")
 	out := fl.String("out", "", "directory for report.md and results.csv (default: report to stdout)")
 	images := fl.String("images", "", "directory to write every rendered page as PNG")
+	workers := fl.Int("workers", 1, "goroutines drawing one page (0 = all cores)")
 	fl.Parse(args)
 
 	cats := corpus.Categories()
@@ -165,7 +167,7 @@ func run(args []string) error {
 		return fmt.Errorf("no PDFs in %s (run fetch and scenes first)", *dirs)
 	}
 
-	cfg := runConfig{scale: *dpi / 72, runs: *runs, pages: *pages, timeout: *timeout, images: *images}
+	cfg := runConfig{scale: *dpi / 72, runs: *runs, pages: *pages, timeout: *timeout, images: *images, workers: *workers}
 	var results []result
 	for _, f := range files {
 		rs, err := cfg.file(f.path, f.rel, f.cat)
@@ -205,7 +207,7 @@ func run(args []string) error {
 			return err
 		}
 	}
-	writeReport(w, results, *dpi, *runs)
+	writeReport(w, results, *dpi, *runs, *workers)
 
 	var fatal, unopened int
 	for i := range results {
@@ -231,6 +233,7 @@ type runConfig struct {
 	pages   int
 	timeout time.Duration
 	images  string
+	workers int
 }
 
 // file renders one document. A watchdog bounds the whole file (opening
@@ -297,6 +300,7 @@ func (c runConfig) render(data []byte, rel, cat string) ([]result, error) {
 		render := func(st *cera.Stats) error {
 			return p.Render(context.Background(), dst, cera.RenderOptions{
 				Scale: c.scale, Background: paper, Stats: st, Deadline: time.Now().Add(c.timeout),
+				Workers: c.workers,
 			})
 		}
 		// Warm-up render: fills caches and pools, reports stats and errors.
@@ -304,9 +308,13 @@ func (c runConfig) render(data []byte, rel, cat string) ([]result, error) {
 		r.err = render(&r.stats)
 		r.min, r.median = time.Since(t0), time.Since(t0)
 		if !r.fatal() && c.runs > 0 {
-			var times []time.Duration
+			// A first render interprets the page into a display list; a
+			// render again at the same scale (another tile, a scrolled
+			// viewport) only draws it. Both are timed.
+			var times, again []time.Duration
 			var m0, m1 runtime.MemStats
 			for k := range c.runs {
+				p.Release()
 				if k == 0 {
 					runtime.ReadMemStats(&m0)
 				}
@@ -318,10 +326,16 @@ func (c runConfig) render(data []byte, rel, cat string) ([]result, error) {
 					r.allocs = m1.Mallocs - m0.Mallocs
 					r.bytes = m1.TotalAlloc - m0.TotalAlloc
 				}
+				t0 = time.Now()
+				_ = render(nil)
+				again = append(again, time.Since(t0))
 			}
 			slices.Sort(times)
+			slices.Sort(again)
 			r.min, r.median = times[0], times[len(times)/2]
+			r.again = again[len(again)/2]
 		}
+		p.Release()
 		if c.images != "" {
 			name := fmt.Sprintf("%s-p%d.png", strings.ReplaceAll(rel, "/", "_"), i+1)
 			if err := writePNG(filepath.Join(c.images, name), dst); err != nil {
@@ -346,13 +360,17 @@ func errString(err error) string {
 	return err.Error()
 }
 
-func writeReport(w io.Writer, rs []result, dpi float64, runs int) {
-	fmt.Fprintf(w, "# cera corpus report\n\n%s · %.0f dpi · %d timed runs/page after warm-up · %s/%s, %d CPUs · %s\n\n",
-		time.Now().UTC().Format("2006-01-02 15:04 MST"), dpi, runs, runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.Version())
+func writeReport(w io.Writer, rs []result, dpi float64, runs, workers int) {
+	ws := fmt.Sprintf("%d workers", workers)
+	if workers <= 0 {
+		ws = "all cores"
+	}
+	fmt.Fprintf(w, "# cera corpus report\n\n%s · %.0f dpi · %d timed runs/page after warm-up · %s · %s/%s, %d CPUs · %s\n\n",
+		time.Now().UTC().Format("2006-01-02 15:04 MST"), dpi, runs, ws, runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.Version())
 
 	type agg struct {
 		pages, fatal, errs int
-		times              []float64
+		times, again       []float64
 		allocs             []float64
 	}
 	byCat := map[string]*agg{}
@@ -374,6 +392,7 @@ func writeReport(w io.Writer, rs []result, dpi float64, runs int) {
 				a.errs++
 			}
 			a.times = append(a.times, ms(r.median))
+			a.again = append(a.again, ms(r.again))
 			a.allocs = append(a.allocs, float64(r.allocs))
 		}
 		for k, v := range r.stats.Unsupported {
@@ -394,9 +413,9 @@ func writeReport(w io.Writer, rs []result, dpi float64, runs int) {
 		}
 		return
 	}
-	fmt.Fprintf(w, "## Summary\n\n| category | pages | failed | partial | median ms/page | total ms | median allocs/page |\n|---|---:|---:|---:|---:|---:|---:|\n")
+	fmt.Fprintf(w, "## Summary\n\n| category | pages | failed | partial | median ms/page | total ms | total ms again (cached) | median allocs/page |\n|---|---:|---:|---:|---:|---:|---:|---:|\n")
 	row := func(name string, a *agg) {
-		fmt.Fprintf(w, "| %s | %d | %d | %d | %.1f | %.0f | %.0f |\n", name, a.pages, a.fatal, a.errs, med(a.times), sum(a.times), med(a.allocs))
+		fmt.Fprintf(w, "| %s | %d | %d | %d | %.1f | %.0f | %.0f | %.0f |\n", name, a.pages, a.fatal, a.errs, med(a.times), sum(a.times), sum(a.again), med(a.allocs))
 	}
 	row("**all**", all)
 	cats := make([]string, 0, len(byCat))
@@ -420,7 +439,7 @@ func writeReport(w io.Writer, rs []result, dpi float64, runs int) {
 		}
 	}
 
-	fmt.Fprintf(w, "\n## Pages\n\n| file | page | size | ms (min) | ms (median) | allocs | ops | content errors | note |\n|---|---:|---|---:|---:|---:|---:|---:|---|\n")
+	fmt.Fprintf(w, "\n## Pages\n\n| file | page | size | ms (min) | ms (median) | ms again | allocs | ops | content errors | note |\n|---|---:|---|---:|---:|---:|---:|---:|---:|---|\n")
 	for i := range rs {
 		r := &rs[i]
 		note := errString(r.err)
@@ -432,8 +451,8 @@ func writeReport(w io.Writer, rs []result, dpi float64, runs int) {
 		if r.page < 0 {
 			page = "–"
 		}
-		fmt.Fprintf(w, "| %s | %s | %d×%d | %.1f | %.1f | %d | %d | %d | %s |\n",
-			r.file, page, r.w, r.h, ms(r.min), ms(r.median), r.allocs, r.stats.Ops, r.stats.Errors, note)
+		fmt.Fprintf(w, "| %s | %s | %d×%d | %.1f | %.1f | %.1f | %d | %d | %d | %s |\n",
+			r.file, page, r.w, r.h, ms(r.min), ms(r.median), ms(r.again), r.allocs, r.stats.Ops, r.stats.Errors, note)
 	}
 }
 
@@ -444,7 +463,7 @@ func writeCSV(path string, rs []result) error {
 	}
 	defer f.Close()
 	cw := csv.NewWriter(f)
-	cw.Write([]string{"file", "category", "page", "width", "height", "min_ms", "median_ms", "allocs", "alloc_bytes", "ops", "fills", "strokes", "clips", "content_errors", "unsupported", "error"})
+	cw.Write([]string{"file", "category", "page", "width", "height", "min_ms", "median_ms", "again_ms", "allocs", "alloc_bytes", "ops", "fills", "strokes", "clips", "content_errors", "unsupported", "error"})
 	for i := range rs {
 		r := &rs[i]
 		var unsup []string
@@ -453,7 +472,7 @@ func writeCSV(path string, rs []result) error {
 		}
 		cw.Write([]string{
 			r.file, r.category, strconv.Itoa(r.page), strconv.Itoa(r.w), strconv.Itoa(r.h),
-			fmt.Sprintf("%.3f", ms(r.min)), fmt.Sprintf("%.3f", ms(r.median)),
+			fmt.Sprintf("%.3f", ms(r.min)), fmt.Sprintf("%.3f", ms(r.median)), fmt.Sprintf("%.3f", ms(r.again)),
 			strconv.FormatUint(r.allocs, 10), strconv.FormatUint(r.bytes, 10),
 			strconv.Itoa(r.stats.Ops), strconv.Itoa(r.stats.Fills), strconv.Itoa(r.stats.Strokes), strconv.Itoa(r.stats.Clips),
 			strconv.Itoa(r.stats.Errors), strings.Join(unsup, " "), errString(r.err),
