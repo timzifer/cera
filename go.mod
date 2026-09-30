@@ -3,9 +3,17 @@ module github.com/timzifer/cera
 go 1.26.4
 
 require (
+	github.com/go-images/jpeg v0.2.0
+	github.com/go-images/jpeg2000 v0.13.2
 	github.com/go-opentype/fonts v0.10.0
 	github.com/go-opentype/opentype v0.13.0
 	github.com/go-pdfkit/pdffont v0.3.1
 	github.com/go-pdfkit/reader v0.6.0
+	github.com/tannevaled/gobig2 v0.2.0
 	github.com/timzifer/stilus v0.0.0-20260930091613-3a16d92c14fd
+)
+
+require (
+	github.com/ajroetker/go-highway v0.0.12 // indirect
+	golang.org/x/sys v0.41.0 // indirect
 )

@@ -84,6 +84,8 @@ jobs:
           go-version-file: go.mod
       - name: Fuzz the interpreter
         run: go test -run '^$' -fuzz FuzzContent -fuzztime 60s .
+      - name: Fuzz images
+        run: go test -run '^$' -fuzz FuzzImage -fuzztime 30s .
       - name: Fuzz the content scanner
         run: go test -run '^$' -fuzz FuzzScan -fuzztime 30s ./internal/content
       - name: Keep crashers

@@ -1,6 +1,8 @@
 package cera
 
 import (
+	"bytes"
+	"image/color"
 	"math"
 
 	"github.com/go-pdfkit/reader"
@@ -144,6 +146,15 @@ func (in *interp) lookup(res reader.Dict, cat reader.Name, sc *content.Scanner, 
 		return nil
 	}
 	return in.doc.resolve(sub[reader.Name(sc.Text(name))])
+}
+
+// lookupRef is lookup without resolving the entry, so that the reference
+// can serve as a cache key.
+func (in *interp) lookupRef(res reader.Dict, cat reader.Name, sc *content.Scanner, name *content.Operand) reader.Object {
+	if name == nil || name.Kind != content.Name {
+		return nil
+	}
+	return in.doc.dict(res[cat])[reader.Name(sc.Text(name))]
 }
 
 func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int) {
@@ -305,9 +316,9 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 
 	// External objects.
 	case "Do":
-		in.xobject(in.lookup(res, "XObject", sc, sc.Last()), res, depth)
+		in.xobject(in.lookupRef(res, "XObject", sc, sc.Last()), res, depth)
 	case "BI":
-		in.st.unsupported("inline-image")
+		in.inlineImage(sc, res)
 	case "sh":
 		in.st.unsupported("shading")
 
@@ -575,7 +586,8 @@ func (in *interp) extGState(d reader.Dict) {
 
 func (in *interp) xobject(o reader.Object, res reader.Dict, depth int) {
 	doc := in.doc
-	s, ok := reader.ToStream(o)
+	ref, _ := o.(reader.Ref)
+	s, ok := reader.ToStream(doc.resolve(o))
 	if !ok {
 		in.st.Errors++
 		return
@@ -583,7 +595,8 @@ func (in *interp) xobject(o reader.Object, res reader.Dict, depth int) {
 	sub, _ := doc.name(s.Dict["Subtype"])
 	switch sub {
 	case "Image":
-		in.st.unsupported("image")
+		r := doc.image(ref, s, res)
+		in.drawImage(&r)
 	case "Form":
 		in.form(s, res, depth)
 	case "PS":
@@ -639,4 +652,93 @@ func (in *interp) form(s *reader.Stream, parent reader.Dict, depth int) {
 	in.restore()
 	in.path.Reset()
 	in.hasCur, in.clip = false, -1
+}
+
+// drawImage paints a decoded image in the unit square of user space: a
+// stencil in the fill colour, other images with the fill alpha.
+func (in *interp) drawImage(r *imageResult) {
+	if r.approx != "" {
+		in.st.unsupported(r.approx)
+	}
+	if r.recovered {
+		in.st.Errors++
+	}
+	img := r.img
+	if img == nil {
+		if r.unsupported != "" {
+			in.st.unsupported(r.unsupported)
+		} else {
+			in.st.Errors++
+		}
+		return
+	}
+	if img.Stencil {
+		if !in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
+			return
+		}
+	} else {
+		a := unit8(in.gs.fillAlpha)
+		if a == 0 {
+			return
+		}
+		in.paint = Paint{Color: color.RGBA{A: a}}
+	}
+	in.st.Images++
+	in.dev.DrawImage(img, in.gs.ctm, &in.paint)
+}
+
+// inlineImage draws the inline image of a BI operation. Inline images
+// are small and not cached.
+func (in *interp) inlineImage(sc *content.Scanner, res reader.Dict) {
+	op, data := sc.Image()
+	if op == nil {
+		in.st.Errors++
+		return
+	}
+	d, _ := operandObject(sc, op).(reader.Dict)
+	d = (&reader.InlineImage{Dict: d}).Expanded()
+	r := in.doc.decodeImage(d, data, res)
+	in.drawImage(&r)
+}
+
+// operandObject converts an operand to a reader object (for inline image
+// dictionaries; it allocates).
+func operandObject(sc *content.Scanner, o *content.Operand) reader.Object {
+	switch o.Kind {
+	case content.Number:
+		if o.Int && math.Abs(o.Num) < 1<<53 {
+			return reader.Integer(int64(o.Num))
+		}
+		return reader.Real(o.Num)
+	case content.Name:
+		return reader.Name(sc.Text(o))
+	case content.String, content.HexString:
+		return reader.String(bytes.Clone(sc.Text(o)))
+	case content.Bool:
+		return reader.Bool(o.Num != 0)
+	case content.Array:
+		var a reader.Array
+		sc.Elems(o, func(e *content.Operand) bool {
+			a = append(a, operandObject(sc, e))
+			return true
+		})
+		return a
+	case content.Dict:
+		d := reader.Dict{}
+		var key *content.Operand
+		sc.Elems(o, func(e *content.Operand) bool {
+			if key == nil {
+				key = e
+				return true
+			}
+			if key.Kind == content.Name {
+				k := reader.Name(sc.Text(key)) // before Text is called again
+				d[k] = operandObject(sc, e)
+			}
+			key = nil
+			return true
+		})
+		return d
+	}
+	return reader.Null{}
 }

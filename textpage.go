@@ -79,6 +79,7 @@ func (*textDevice) ClipPath(*Path, Matrix, FillRule)               {}
 func (*textDevice) ClipRect(Rect, Matrix)                          {}
 func (*textDevice) PopClip()                                       {}
 func (*textDevice) FillGlyphs(*GlyphRun, *Paint)                   {}
+func (*textDevice) DrawImage(*Image, Matrix, *Paint)               {}
 
 func (d *textDevice) ShowText(run *GlyphRun, mode TextMode) {
 	f := run.Font

@@ -1,6 +1,7 @@
 package cera
 
 import (
+	"container/list"
 	"fmt"
 	"math"
 	"sync"
@@ -18,6 +19,13 @@ type Document struct {
 
 	fontMu sync.Mutex
 	fonts  map[reader.Ref]*Font // loaded fonts, by reference
+
+	// Decoded images by reference, least recently used last, bounded by
+	// imageCacheBytes.
+	imgMu    sync.Mutex
+	imgs     map[reader.Ref]*list.Element
+	imgLRU   list.List
+	imgBytes int
 }
 
 // Open parses a PDF file. Damaged cross-reference tables, wrong stream
