@@ -38,8 +38,11 @@ const (
 // content streams. A device that wants the text itself, in every render
 // mode including invisible text, implements TextDevice as well.
 //
-// The set grows with the milestones of the spec: DrawImage (M5),
-// BeginGroup/EndGroup and soft masks (M6), FillShading (M7).
+// Images arrive as DrawImage with m mapping the image's unit square to
+// device space.
+//
+// The set grows with the milestones of the spec: BeginGroup/EndGroup and
+// soft masks (M6), FillShading (M7).
 type Device interface {
 	FillPath(p *Path, m Matrix, rule FillRule, paint *Paint)
 	StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Paint)
@@ -48,6 +51,10 @@ type Device interface {
 	PopClip()
 	// FillGlyphs fills the outlines of run (nonzero) with paint.
 	FillGlyphs(run *GlyphRun, paint *Paint)
+	// DrawImage paints img, whose unit square m maps to device space. A
+	// stencil (img.Stencil) paints paint through its shape; any other
+	// image paints its own colours with the constant alpha paint.Color.A.
+	DrawImage(img *Image, m Matrix, paint *Paint)
 }
 
 // TextDevice is implemented by devices that want to know the text a page
@@ -101,11 +108,13 @@ type GlyphRun struct {
 
 // RasterDevice draws onto an *image.RGBA through a stilus.Canvas. Glyphs
 // small enough are rasterized once per size and subpixel position into a
-// cache of coverage masks kept by the device.
+// cache of coverage masks kept by the device. Images are sampled from the
+// mip level that fits the device resolution.
 type RasterDevice struct {
 	C *stilus.Canvas
 
 	glyphs *glyphCache // allocated on first use
+	img    imageDraw
 }
 
 func (d *RasterDevice) FillPath(p *Path, m Matrix, rule FillRule, paint *Paint) {

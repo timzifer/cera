@@ -275,6 +275,8 @@ func FuzzContent(f *testing.F) {
 		"BT /F1 12 Tf 10 50 Td (Hello) Tj [(W) -120 (orld)] TJ T* 2 Tc (x) ' 1 2 (y) \" ET",
 		"BT 7 Tr /F1 40 Tf 3 Tz 5 Ts 0 1 -1 0 50 0 Tm <0041> Tj ET 0 0 200 100 re f",
 		"BT 1 Tr 2 w /F1 1e9 Tf (A) Tj 5 Tr 0 0 0 0 0 0 Tm (B) Tj ET",
+		"q 100 0 0 50 0 0 cm BI /W 2 /H 1 /CS /RGB /BPC 8 ID \xff\x00\x00\x00\x00\xff EI Q",
+		"q 0 20 -30 0 50 0 cm BI /W 9 /H 3 /IM true /D [1 0] /F /AHx ID 00ff00ff00ff> EI Q",
 	} {
 		f.Add(s)
 	}

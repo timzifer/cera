@@ -47,8 +47,9 @@ type Stats struct {
 	Strokes int
 	Clips   int
 	Glyphs  int // glyphs filled, and Type 3 glyphs run
+	Images  int // images drawn, inline images and stencil masks included
 	// Unsupported counts features that were skipped or approximated, keyed
-	// by feature ("image", "shading", "font-missing", ...).
+	// by feature ("shading", "font-missing", "image-filter", ...).
 	Unsupported map[string]int
 	// Errors counts recoverable problems: malformed operators, missing
 	// resources, content that did not decode.

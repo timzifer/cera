@@ -20,7 +20,8 @@ cera is where the pieces come together:
 | fonts: PDF side (encodings, widths, ToUnicode) | [go-pdfkit/pdffont](https://github.com/go-pdfkit/pdffont) (BSD-3) | used as is |
 | fonts: programs (TrueType, CFF, Type 1) and stand-ins | [go-opentype/opentype](https://github.com/go-opentype/opentype), [go-opentype/fonts](https://github.com/go-opentype/fonts) (Arimo, Tinos, Cousine) | used as is |
 | text: glyph selection, glyph cache, Type 3, render modes, TextDevice | cera, glyph rules ported from the M2 spike | M4 |
-| images, shadings, transparency | [timzifer/render](https://github.com/timzifer/render) fork of go-pdfkit/render (BSD-3), go-images | to be ported (M5–M7) |
+| images: samples, masks, mip levels, image cache | cera, decoding rules ported from [timzifer/render](https://github.com/timzifer/render); codecs [go-images/jpeg](https://github.com/go-images/jpeg) (BSD-3), [go-images/jpeg2000](https://github.com/go-images/jpeg2000) and [gobig2](https://github.com/tannevaled/gobig2) (Apache-2.0) | M5 |
+| shadings, transparency | [timzifer/render](https://github.com/timzifer/render) fork of go-pdfkit/render (BSD-3) | to be ported (M6–M7) |
 
 The [stilus integration in the go-pdfkit/render fork](https://github.com/timzifer/render/tree/codex/stilus-renderer)
 was the M2 spike of the plan: same interpreter, stilus instead of go-gfx,
@@ -71,6 +72,18 @@ into a coverage mask and composites it from then on, through the clip
 stack like any fill; glyphs larger than 160 pixels per em are filled as
 paths. Each worker keeps its own cache (4 MB), so drawing takes no locks.
 
+Images are decoded once per document and kept in an image cache
+(256 MB, least recently used out), in the form their samples come in: one
+byte a pixel and a palette for grey, indexed and other one-component
+images, one bit a pixel for faxes, JBIG2 and stencil masks, four bytes only
+for colour. A raster worker draws an image as a fill of its parallelogram
+with a shader that maps every device pixel back into the image, so images
+are clipped and antialiased like paths and a band samples only its own
+rows. An image drawn smaller than its samples is read from a mip level
+(the image averaged over 2^k × 2^k blocks, made on first use) at most twice
+as fine as the device, bilinearly; magnified images are sampled at the
+nearest pixel unless they ask for `/Interpolate`.
+
 `Page.Run` drives any `Device` directly, without a display list; a device
 that also implements `TextDevice` receives every string shown, in every
 render mode. `Page.Text` is built on it.
@@ -87,7 +100,13 @@ CID-keyed) and Type 1 programs, composite fonts (2-byte codes,
 CIDToGIDMap), Type 3 fonts (coloured `d0` and uncoloured `d1` glyphs),
 and stand-ins for fonts a file does not embed: Arimo, Tinos and Cousine,
 metric-compatible with Helvetica, Times and Courier, in the weight and
-slope the font asks for. Paths (all construction and painting operators, nonzero and even-odd),
+slope the font asks for. Images: image XObjects and inline images at 1, 2,
+4, 8 and 16 bits in every colour space below, with `/Decode`, stencil
+masks (`/ImageMask`) in the fill colour, soft masks (`/SMask`), stencil
+masks (`/Mask` stream) and colour keys (`/Mask` array), each at its own
+resolution; JPEG (`DCTDecode`, including Adobe CMYK), JPEG 2000
+(`JPXDecode`, with the alpha a codestream may carry), JBIG2 (with
+`JBIG2Globals`), CCITT fax and every stream filter of the reader. Paths (all construction and painting operators, nonzero and even-odd),
 strokes (width, caps, joins, miter limit, dashes, exact under anisotropic
 transforms), clipping (rectangles free, other shapes as masks), DeviceGray,
 DeviceRGB, DeviceCMYK, CalGray/CalRGB, ICCBased (by channel count), Indexed,
@@ -95,12 +114,14 @@ constant alpha (`CA`, `ca`), form XObjects with `Matrix` and `BBox`, `/Rotate`,
 `/UserUnit`, CropBox.
 
 Not yet, and counted in `Stats.Unsupported` so the corpus report shows what
-matters most: images and inline images, shadings, patterns, soft masks,
+matters most: shadings, patterns, soft masks in the graphics state,
 blend modes, transparency groups, optional content, tint transforms
 (Separation/DeviceN are drawn as grey), Lab; fonts neither embedded nor
 standing in (`font-missing`: Symbol, ZapfDingbats, non-embedded composite
 fonts), vertical writing (`vertical-text`, drawn with default metrics),
-Type 3 glyphs in clipping modes (`type3-clip`).
+Type 3 glyphs in clipping modes (`type3-clip`), `/Matte` of soft masks
+(`smask-matte`, drawn without), image filters the reader does not know
+(`image-filter`), images larger than 256 MB decoded (`image-too-large`).
 
 ## Roadmap
 
@@ -113,7 +134,7 @@ Milestones follow the spec *PDF-Renderer für Go (Testballon)*.
 | ✓ | M2 spike in a go-pdfkit fork | timzifer/render `codex/stilus-renderer` |
 | ✓ | M3 display list, region, parallelism | own interpreter, streaming content scanner without per-operand allocations, display list with band index, parallel bands |
 | ✓ | M4 text | fonts via pdffont and opentype, stand-ins, per-worker glyph mask cache, Type 3, all render modes incl. text clips, TextDevice, `Page.Run`, `Page.Text` |
-| | M5 images | mipmaps, masks, 1-bit path, image cache |
+| ✓ | M5 images | image XObjects and inline images, JPEG/JPEG 2000/JBIG2/CCITT, soft, stencil and colour-key masks at their own resolution, one-bit and palette planes, lazy mip levels with bilinear sampling, per-document image cache |
 | | M6 transparency | groups, knockout, blend modes, soft masks |
 | | M7 shadings and colour | types 1–7, function LUTs, Separation/DeviceN, simplified ICC |
 | | M8 robustness | fuzzing, large corpora, budgets (started: CI below) |

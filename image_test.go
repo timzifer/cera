@@ -1,0 +1,541 @@
+package cera
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"strings"
+	"testing"
+	"time"
+)
+
+// streamObj is an indirect stream object with its /Length.
+func streamObj(dict string, data []byte) string {
+	return fmt.Sprintf("<< %s /Length %d >>\nstream\n%s\nendstream", dict, len(data), data)
+}
+
+// imagePDF is a one-page PDF (200 × 100) whose resources name the objects
+// imgs as /Im0, /Im1, … (objects 100, 101, …).
+func imagePDF(content string, imgs ...string) []byte {
+	var names strings.Builder
+	for i := range imgs {
+		fmt.Fprintf(&names, "/Im%d %d 0 R ", i, 100+i)
+	}
+	return buildPDF([]string{content}, "/Resources << /XObject << "+names.String()+">> >>", imgs...)
+}
+
+func near(a, b color.RGBA, tol int) bool {
+	d := func(x, y uint8) bool { return int(x)-int(y) <= tol && int(y)-int(x) <= tol }
+	return d(a.R, b.R) && d(a.G, b.G) && d(a.B, b.B) && d(a.A, b.A)
+}
+
+func assertNear(t *testing.T, img *image.RGBA, x, y int, want color.RGBA, tol int) {
+	t.Helper()
+	if got := img.RGBAAt(x, y); !near(got, want, tol) {
+		t.Errorf("pixel (%d, %d) = %v, want %v ±%d", x, y, got, want, tol)
+	}
+}
+
+var (
+	red   = rgba(255, 0, 0, 255)
+	green = rgba(0, 255, 0, 255)
+	blue  = rgba(0, 0, 255, 255)
+	black = rgba(0, 0, 0, 255)
+)
+
+func renderImagePage(t *testing.T, data []byte, opt RenderOptions) (*image.RGBA, Stats) {
+	t.Helper()
+	opt.Background = white
+	img, st, err := renderPage(t, data, 0, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return img, st
+}
+
+func TestImageRGB(t *testing.T) {
+	im := streamObj("/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8",
+		[]byte("\xff\x00\x00\x00\xff\x00\x00\x00\xff\xff\xff\xff"))
+	img, st := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q", im), RenderOptions{})
+	if st.Images != 1 || len(st.Unsupported) != 0 || st.Errors != 0 {
+		t.Errorf("stats %+v", st)
+	}
+	// The first row is at the top of the unit square.
+	assertPixel(t, img, 25, 25, red)
+	assertPixel(t, img, 75, 25, green)
+	assertPixel(t, img, 25, 75, blue)
+	assertPixel(t, img, 75, 75, white)
+	assertPixel(t, img, 150, 50, white)
+}
+
+func TestImageOneBitGray(t *testing.T) {
+	// 1 is white, 0 black; a /Decode of [1 0] swaps them.
+	for _, tc := range []struct {
+		decode      string
+		left, right color.RGBA
+	}{{"", white, black}, {"/Decode [1 0]", black, white}} {
+		im := streamObj("/Subtype /Image /Width 8 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 1 "+tc.decode, []byte{0xaa})
+		img, _ := renderImagePage(t, imagePDF("q 80 0 0 10 0 0 cm /Im0 Do Q", im), RenderOptions{})
+		assertPixel(t, img, 5, 95, tc.left)
+		assertPixel(t, img, 15, 95, tc.right)
+	}
+}
+
+func TestImageStencil(t *testing.T) {
+	for _, tc := range []struct {
+		decode      string
+		left, right color.RGBA
+	}{{"", red, white}, {"/Decode [1 0]", white, red}} {
+		im := streamObj("/Subtype /Image /Width 2 /Height 1 /ImageMask true "+tc.decode, []byte{0x40})
+		img, _ := renderImagePage(t, imagePDF("1 0 0 rg q 100 0 0 100 0 0 cm /Im0 Do Q", im), RenderOptions{})
+		assertPixel(t, img, 25, 50, tc.left)
+		assertPixel(t, img, 75, 50, tc.right)
+	}
+	// With the fill alpha.
+	im := streamObj("/Subtype /Image /Width 1 /Height 1 /ImageMask true", []byte{0x00})
+	pdf := buildPDF([]string{"/G gs 0 0 1 rg q 100 0 0 100 0 0 cm /Im0 Do Q"},
+		"/Resources << /XObject << /Im0 100 0 R >> /ExtGState << /G << /ca 0.5 >> >> >>", im)
+	img, _ := renderImagePage(t, pdf, RenderOptions{})
+	assertNear(t, img, 50, 50, rgba(127, 127, 255, 255), 1)
+}
+
+func TestImageIndexed(t *testing.T) {
+	im := streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace [/Indexed /DeviceRGB 1 <ff0000 0000ff>] /BitsPerComponent 4",
+		[]byte{0x01})
+	img, _ := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q", im), RenderOptions{})
+	assertPixel(t, img, 25, 50, red)
+	assertPixel(t, img, 75, 50, blue)
+}
+
+func TestImageCMYKAnd16Bit(t *testing.T) {
+	cmyk := streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceCMYK /BitsPerComponent 8", []byte{0, 255, 255, 0})
+	gray16 := streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 16", []byte{0x80, 0x00})
+	img, _ := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q q 100 0 0 100 100 0 cm /Im1 Do Q", cmyk, gray16), RenderOptions{})
+	assertPixel(t, img, 50, 50, red)
+	assertPixel(t, img, 150, 50, rgba(128, 128, 128, 255))
+}
+
+func TestImageSoftMask(t *testing.T) {
+	im := streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /SMask 101 0 R", []byte{0, 0, 0})
+	sm := streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", []byte{0x80, 0xff})
+	img, _ := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q", im, sm), RenderOptions{})
+	// The mask has its own resolution: half grey, half opaque.
+	assertNear(t, img, 25, 50, rgba(127, 127, 127, 255), 1)
+	assertPixel(t, img, 75, 50, black)
+}
+
+func TestImageStencilMask(t *testing.T) {
+	// A one-pixel blue image shaped by a finer stencil mask: its 0 samples
+	// show the image.
+	im := streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Mask 101 0 R", []byte{0, 0, 255})
+	mask := streamObj("/Subtype /Image /Width 2 /Height 1 /ImageMask true", []byte{0x40})
+	img, _ := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q", im, mask), RenderOptions{})
+	assertPixel(t, img, 25, 50, blue)
+	assertPixel(t, img, 75, 50, white)
+}
+
+func TestImageBrokenMaskIsNotDrawn(t *testing.T) {
+	im := streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /SMask 101 0 R", []byte{0, 0, 0})
+	sm := streamObj("/Subtype /Image /Width 0 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", []byte{0})
+	img, st := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q", im, sm), RenderOptions{})
+	assertPixel(t, img, 50, 50, white)
+	if st.Images != 0 || st.Errors == 0 {
+		t.Errorf("stats %+v", st)
+	}
+}
+
+func TestImageColorKey(t *testing.T) {
+	for _, tc := range []struct {
+		name, dict string
+		data       []byte
+	}{
+		{"rgb", "/ColorSpace /DeviceRGB /BitsPerComponent 8 /Mask [250 255 0 10 0 10]", []byte{255, 0, 0, 0, 255, 0}},
+		{"indexed", "/ColorSpace [/Indexed /DeviceRGB 1 <ff0000 00ff00>] /BitsPerComponent 8 /Mask [0 0]", []byte{0, 1}},
+	} {
+		im := streamObj("/Subtype /Image /Width 2 /Height 1 "+tc.dict, tc.data)
+		img, _ := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q", im), RenderOptions{})
+		if got := img.RGBAAt(25, 50); got != white {
+			t.Errorf("%s: keyed pixel %v, want white", tc.name, got)
+		}
+		if got := img.RGBAAt(75, 50); got != green {
+			t.Errorf("%s: pixel %v, want green", tc.name, got)
+		}
+	}
+}
+
+func TestInlineImage(t *testing.T) {
+	for _, c := range []string{
+		"q 100 0 0 100 0 0 cm BI /W 2 /H 1 /CS /RGB /BPC 8 ID \xff\x00\x00\x00\x00\xff EI Q",
+		"q 100 0 0 100 0 0 cm BI /W 2 /H 1 /CS /RGB /BPC 8 /F /AHx ID ff0000 0000ff> EI Q",
+		"q 100 0 0 100 0 0 cm BI /W 2 /H 1 /CS /I1 /BPC 8 ID \x00\x01 EI Q",
+		"q 100 0 0 100 0 0 cm BI /W 2 /H 1 /CS [/I /RGB 1 <ff0000 0000ff>] /BPC 8 ID \x00\x01 EI Q",
+	} {
+		pdf := buildPDF([]string{c}, "/Resources << /ColorSpace << /I1 [/Indexed /DeviceRGB 1 <ff0000 0000ff>] >> >>")
+		img, st := renderImagePage(t, pdf, RenderOptions{})
+		if st.Images != 1 || st.Errors != 0 {
+			t.Errorf("%q: stats %+v", c, st)
+		}
+		assertPixel(t, img, 25, 50, red)
+		assertPixel(t, img, 75, 50, blue)
+	}
+	// A stencil in the fill colour.
+	img, _ := renderImagePage(t, buildPDF([]string{"0 1 0 rg q 100 0 0 100 0 0 cm BI /W 2 /H 1 /IM true ID \x40 EI Q"}, ""), RenderOptions{})
+	assertPixel(t, img, 25, 50, green)
+	assertPixel(t, img, 75, 50, white)
+}
+
+func jpegBytes(t *testing.T, img image.Image) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	if err := jpeg.Encode(&b, img, &jpeg.Options{Quality: 100}); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+func TestImageJPEG(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	for i := 0; i < len(src.Pix); i += 4 {
+		copy(src.Pix[i:], []byte{200, 60, 30, 255})
+	}
+	gray := image.NewGray(image.Rect(0, 0, 16, 16))
+	for i := range gray.Pix {
+		gray.Pix[i] = 50
+	}
+	rgbJPEG, grayJPEG := jpegBytes(t, src), jpegBytes(t, gray)
+	ims := []string{
+		streamObj("/Subtype /Image /Width 16 /Height 16 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode", rgbJPEG),
+		streamObj("/Subtype /Image /Width 16 /Height 16 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /DCTDecode", grayJPEG),
+		streamObj("/Subtype /Image /Width 16 /Height 16 /ColorSpace /DeviceGray /BitsPerComponent 8 /Decode [1 0] /Filter /DCTDecode", grayJPEG),
+		streamObj("/Subtype /Image /Width 16 /Height 16 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode", []byte("not a jpeg")),
+	}
+	c := "q 50 0 0 50 0 0 cm /Im0 Do Q q 50 0 0 50 50 0 cm /Im1 Do Q q 50 0 0 50 100 0 cm /Im2 Do Q q 50 0 0 50 150 0 cm /Im3 Do Q"
+	img, st := renderImagePage(t, imagePDF(c, ims...), RenderOptions{})
+	assertNear(t, img, 25, 75, rgba(200, 60, 30, 255), 4)
+	assertNear(t, img, 75, 75, rgba(50, 50, 50, 255), 2)
+	assertNear(t, img, 125, 75, rgba(205, 205, 205, 255), 2)
+	assertPixel(t, img, 175, 75, white)
+	if st.Images != 3 || st.Errors != 1 {
+		t.Errorf("stats %+v", st)
+	}
+}
+
+// jbig2Segments is a JBIG2 generic region 16 by 8 whose right half is ink,
+// in the embedded form a /JBIG2Decode stream holds (synthetic; from the
+// tests of github.com/go-gfx/gfx/codec, BSD-3-Clause).
+var jbig2Segments = []byte{
+	0x00, 0x00, 0x00, 0x00, 0x30, 0x00, 0x01, 0x00, 0x00, 0x00, 0x13, 0x00,
+	0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x27, 0x00,
+	0x01, 0x00, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00,
+	0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x03,
+	0xff, 0xfd, 0xff, 0x02, 0xfe, 0xfe, 0xfe, 0x8f, 0x66, 0xff, 0xac,
+}
+
+func TestImageJBIG2(t *testing.T) {
+	gray := streamObj("/Subtype /Image /Width 16 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /JBIG2Decode", jbig2Segments)
+	mask := streamObj("/Subtype /Image /Width 16 /Height 8 /ImageMask true /Filter /JBIG2Decode", jbig2Segments)
+	c := "q 100 0 0 100 0 0 cm /Im0 Do Q 0 0 1 rg q 100 0 0 100 100 0 cm /Im1 Do Q"
+	img, st := renderImagePage(t, imagePDF(c, gray, mask), RenderOptions{})
+	if st.Images != 2 || st.Errors != 0 {
+		t.Errorf("stats %+v", st)
+	}
+	assertPixel(t, img, 25, 50, white)
+	assertPixel(t, img, 75, 50, black)
+	assertPixel(t, img, 125, 50, white)
+	assertPixel(t, img, 175, 50, blue)
+}
+
+func TestImageCCITT(t *testing.T) {
+	// One all-white row of 8 pixels, K = -1 (G4): a pass-less vertical 0
+	// code (1) per row.
+	im := streamObj("/Subtype /Image /Width 8 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns 8 /Rows 1 >>",
+		[]byte{0x80})
+	img, st := renderImagePage(t, imagePDF("0 g 0 0 200 100 re f q 100 0 0 100 0 0 cm /Im0 Do Q", im), RenderOptions{})
+	if st.Images != 1 {
+		t.Fatalf("stats %+v", st)
+	}
+	assertPixel(t, img, 50, 50, white)
+}
+
+// TestImageTransforms checks that every device pixel shows the sample the
+// inverse transform lands in, for mirrored and rotated images.
+func TestImageTransforms(t *testing.T) {
+	// 4 × 2 image, every sample a different colour.
+	var data []byte
+	cols := make([]color.RGBA, 8)
+	for i := range cols {
+		cols[i] = rgba(uint8(30*i), uint8(255-30*i), uint8(100+i*10), 255)
+		data = append(data, cols[i].R, cols[i].G, cols[i].B)
+	}
+	im := streamObj("/Subtype /Image /Width 4 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8", data)
+	for _, m := range []Matrix{
+		{80, 0, 0, 40, 10, 10},
+		{-80, 0, 0, 40, 190, 10},
+		{80, 0, 0, -40, 10, 90},
+		{0, 80, -40, 0, 150, 10},
+		{0, -80, 40, 0, 50, 90},
+	} {
+		c := fmt.Sprintf("q %g %g %g %g %g %g cm /Im0 Do Q", m[0], m[1], m[2], m[3], m[4], m[5])
+		img, _ := renderImagePage(t, imagePDF(c, im), RenderOptions{})
+		// User space (y up, page height 100) of a device pixel centre,
+		// then the unit square.
+		inv, _ := m.Invert()
+		for y := 0; y < 100; y += 3 {
+			for x := 0; x < 200; x += 3 {
+				u, v := inv.Apply(float64(x)+0.5, 100-(float64(y)+0.5))
+				if u < 0.02 || u > 0.98 || v < 0.02 || v > 0.98 {
+					continue // edges are antialiased
+				}
+				// Stay away from sample boundaries too.
+				fu, fv := u*4, (1-v)*2
+				if fu-float64(int(fu)) < 0.05 || fu-float64(int(fu)) > 0.95 || fv-float64(int(fv)) < 0.05 || fv-float64(int(fv)) > 0.95 {
+					continue
+				}
+				want := cols[int(fv)*4+int(fu)]
+				if got := img.RGBAAt(x, y); got != want {
+					t.Fatalf("matrix %v pixel (%d, %d) = %v, want %v", m, x, y, got, want)
+				}
+			}
+		}
+	}
+}
+
+// checker returns a w × h one-bit image of alternating pixels.
+func checker(w, h int) []byte {
+	stride := (w + 7) / 8
+	data := make([]byte, stride*h)
+	for y := range h {
+		for i := range stride {
+			data[y*stride+i] = 0xaa >> (y & 1)
+		}
+	}
+	return data
+}
+
+func TestImageMipmapAverages(t *testing.T) {
+	// A 512 × 512 checkerboard drawn 32 pixels wide: sampled at single
+	// pixels it would alias to black and white; its mip levels are grey.
+	gray := streamObj("/Subtype /Image /Width 512 /Height 512 /ColorSpace /DeviceGray /BitsPerComponent 1", checker(512, 512))
+	mask := streamObj("/Subtype /Image /Width 512 /Height 512 /ImageMask true", checker(512, 512))
+	rgbData := make([]byte, 3*300*300)
+	for y := range 300 {
+		for x := range 300 {
+			if (x+y)&1 == 0 {
+				copy(rgbData[3*(y*300+x):], []byte{255, 0, 0})
+			} else {
+				copy(rgbData[3*(y*300+x):], []byte{0, 0, 255})
+			}
+		}
+	}
+	rgb := streamObj("/Subtype /Image /Width 300 /Height 300 /ColorSpace /DeviceRGB /BitsPerComponent 8", rgbData)
+	c := "q 32 0 0 32 10 10 cm /Im0 Do Q 0 g q 32 0 0 32 60 10 cm /Im1 Do Q q 21.3 0 0 21.3 110 10 cm /Im2 Do Q"
+	img, _ := renderImagePage(t, imagePDF(c, gray, mask, rgb), RenderOptions{})
+	for y := 60; y < 88; y++ {
+		for x := 12; x < 40; x++ {
+			assertNear(t, img, x, y, rgba(128, 128, 128, 255), 3)
+			assertNear(t, img, x+50, y, rgba(128, 128, 128, 255), 3)
+		}
+		for x := 112; x < 130 && y > 70; x++ {
+			assertNear(t, img, x, y, rgba(128, 0, 128, 255), 12)
+		}
+	}
+}
+
+func TestImageMipLevels(t *testing.T) {
+	// Odd sizes: edge blocks are partial and averaged over what they hold.
+	p := plane{kind: planeRGBA, w: 5, h: 3, stride: 5, pix32: make([]uint32, 15)}
+	for i := range p.pix32 {
+		p.pix32[i] = pack(uint8(10*i), 0, 0, 255)
+	}
+	tex := newTexture(p)
+	if tex.levels() != 3 {
+		t.Errorf("levels %d", tex.levels())
+	}
+	l1 := tex.level(1)
+	if l1.w != 3 || l1.h != 2 {
+		t.Fatalf("level 1 is %d × %d", l1.w, l1.h)
+	}
+	// Top-left block: samples 0, 1, 5, 6 → 30; bottom-right: sample 14.
+	if r, _, _, _ := unpack(l1.at(0, 0)); r != 30 {
+		t.Errorf("level 1 (0, 0) red %d", r)
+	}
+	if r, _, _, _ := unpack(l1.at(2, 1)); r != 140 {
+		t.Errorf("level 1 (2, 1) red %d", r)
+	}
+	if tex.level(1) != l1 || tex.level(9) != tex.level(3) {
+		t.Error("levels are not kept")
+	}
+
+	// Bit planes count ones, at byte and sub-byte block sizes.
+	bitsPlane := plane{kind: planeBits, w: 20, h: 4, stride: 3, pix8: []byte{
+		0xff, 0x00, 0xf0, 0xff, 0x00, 0xf0, 0xff, 0x00, 0xf0, 0xff, 0x00, 0xf0,
+	}, pal: grayPal}
+	bt := newTexture(bitsPlane)
+	if !bt.gray {
+		t.Error("a grey palette makes grey levels")
+	}
+	l3 := bt.level(3) // blocks of 8: all ones, all zeros, the last 4 ones
+	for x, want := range []uint8{1, 0, 1} {
+		if got := l3.pix8[x]; got != want {
+			t.Errorf("level 3 [%d] = %d, want %d", x, got, want)
+		}
+	}
+	l2 := bt.level(2)
+	if l2.w != 5 || l2.pix8[1] != 1 || l2.pix8[2] != 0 || l2.pix8[4] != 1 {
+		t.Errorf("level 2 %v", l2.pix8[:l2.w])
+	}
+}
+
+func TestImageCache(t *testing.T) {
+	im := streamObj("/Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8",
+		[]byte("\xff\x00\x00\x00\xff\x00\x00\x00\xff\xff\xff\xff"))
+	c := "q 100 0 0 100 0 0 cm /Im0 Do Q"
+	pdf := buildPDF([]string{c, c}, "/Resources << /XObject << /Im0 100 0 R >> >>", im)
+	doc, err := Open(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first *Image
+	for i := range 2 {
+		p, _ := doc.Page(i)
+		dst := image.NewRGBA(p.Bounds(1))
+		if err := p.Render(context.Background(), dst, RenderOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if len(doc.imgs) != 1 {
+			t.Fatalf("%d cached images", len(doc.imgs))
+		}
+		img := doc.imgLRU.Front().Value.(*imageEntry).res.img
+		if first == nil {
+			first = img
+		} else if img != first {
+			t.Error("the image was decoded again")
+		}
+		assertPixel(t, dst, 25, 25, red)
+	}
+	if got := first.RGBA().RGBAAt(1, 1); got != white {
+		t.Errorf("Image.RGBA (1, 1) = %v", got)
+	}
+}
+
+func imageDrawingPDF() []byte {
+	rgbData := make([]byte, 3*64*48)
+	for i := range rgbData {
+		rgbData[i] = uint8(i * 7)
+	}
+	rgb := streamObj("/Subtype /Image /Width 64 /Height 48 /ColorSpace /DeviceRGB /BitsPerComponent 8 /SMask 101 0 R", rgbData)
+	sm := streamObj("/Subtype /Image /Width 16 /Height 16 /ColorSpace /DeviceGray /BitsPerComponent 8", bytes.Repeat([]byte{0x40, 0xff, 0x90, 0}, 64))
+	mask := streamObj("/Subtype /Image /Width 300 /Height 200 /ImageMask true", checker(300, 200))
+	c := "q 150 20 -30 90 40 5 cm /Im0 Do Q 0 0 1 rg q 60 0 0 40 130 30 cm /Im1 Do Q q 10 0 0 10 5 5 cm /Im0 Do Q"
+	return imagePDF(c, rgb, sm, mask)
+}
+
+func TestImageWorkersAndTilesAgree(t *testing.T) {
+	data := imageDrawingPDF()
+	one, _ := renderImagePage(t, data, RenderOptions{Scale: 3, Workers: 1})
+	many, _ := renderImagePage(t, data, RenderOptions{Scale: 3, Workers: 8})
+	if d := maxDiff(t, one, many, one.Rect); d > 1 {
+		t.Errorf("workers differ by %d", d)
+	}
+	doc, _ := Open(data)
+	p, _ := doc.Page(0)
+	for _, r := range []image.Rectangle{image.Rect(0, 0, 100, 100), image.Rect(250, 90, 600, 300), image.Rect(33, 17, 71, 280)} {
+		tile := image.NewRGBA(r)
+		if err := p.Render(context.Background(), tile, RenderOptions{Scale: 3, Background: white}); err != nil {
+			t.Fatal(err)
+		}
+		if d := maxDiff(t, one, tile, r); d > 1 {
+			t.Errorf("tile %v differs by %d", r, d)
+		}
+	}
+}
+
+func TestImageSteadyStateAllocations(t *testing.T) {
+	if raceEnabled {
+		t.Skip("sync.Pool drops items under the race detector")
+	}
+	doc, _ := Open(imageDrawingPDF())
+	p, _ := doc.Page(0)
+	dst := image.NewRGBA(p.Bounds(2))
+	opt := RenderOptions{Scale: 2, Workers: 1}
+	if err := p.Render(context.Background(), dst, opt); err != nil {
+		t.Fatal(err)
+	}
+	allocs := testing.AllocsPerRun(20, func() {
+		if err := p.Render(context.Background(), dst, opt); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs > 1 {
+		t.Errorf("%v allocations per cached render", allocs)
+	}
+}
+
+func TestImageUnsupportedFilter(t *testing.T) {
+	im := streamObj("/Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /Foo", []byte("xx"))
+	_, st := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q", im), RenderOptions{})
+	if st.Unsupported["image-filter"] != 1 {
+		t.Errorf("stats %+v", st)
+	}
+}
+
+func BenchmarkRenderImage(b *testing.B) {
+	// A bilevel "scan" (2480 × 3508, 300 dpi A4) drawn at 100 dpi, and a
+	// colour photo.
+	scan := streamObj("/Subtype /Image /Width 2480 /Height 3508 /ColorSpace /DeviceGray /BitsPerComponent 1", checker(2480, 3508))
+	photo := make([]byte, 3*1200*800)
+	for i := range photo {
+		photo[i] = uint8(i * 13)
+	}
+	ph := streamObj("/Subtype /Image /Width 1200 /Height 800 /ColorSpace /DeviceRGB /BitsPerComponent 8", photo)
+	data := buildPDF([]string{"q 200 0 0 100 0 0 cm /Im0 Do Q q 150 20 -20 80 30 5 cm /Im1 Do Q"}, "/Resources << /XObject << /Im0 100 0 R /Im1 101 0 R >> >>", scan, ph)
+	doc, _ := Open(data)
+	p, _ := doc.Page(0)
+	scale := 600.0 / 72
+	dst := image.NewRGBA(p.Bounds(scale))
+	opt := RenderOptions{Scale: scale, Workers: 1}
+	if err := p.Render(context.Background(), dst, opt); err != nil { // decode and record
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := p.Render(context.Background(), dst, opt); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func FuzzImage(f *testing.F) {
+	f.Add("/Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8", []byte("\xff\x00\x00\x00\xff\x00\x00\x00\xff\xff\xff\xff"), "q 100 0 0 100 0 0 cm /Im0 Do Q")
+	f.Add("/Width 8 /Height 3 /ImageMask true /Decode [1 0]", []byte{0xaa, 0x55}, "q 0 30 -80 0 90 5 cm /Im0 Do Q")
+	f.Add("/Width 3 /Height 2 /ColorSpace [/Indexed /DeviceCMYK 2 <00ff00ff ff00ff00 00000000>] /BitsPerComponent 2 /Mask [1 2]", []byte{0x6c, 0x93}, "q 1e3 0 0 1e-3 -5 5 cm /Im0 Do Q")
+	f.Add("/Width 16 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /JBIG2Decode", jbig2Segments, "q 10 0 0 10 0 0 cm /Im0 Do Q")
+	f.Add("/Width 4 /Height 4 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode", []byte("\xff\xd8\xff\xc0\x00\x11\x08\x00\x04\x00\x04\x03"), "q 50 0 0 50 0 0 cm /Im0 Do Q")
+	f.Add("/Width 5 /Height 5 /ColorSpace /DeviceGray /BitsPerComponent 16 /Decode [1 0] /Interpolate true", []byte{1, 2, 3}, "q 190 0 0 90 5 5 cm /Im0 Do Q")
+	f.Fuzz(func(t *testing.T, dict string, data []byte, c string) {
+		if len(dict) > 400 || len(data) > 1<<12 || len(c) > 200 {
+			return
+		}
+		doc, err := Open(imagePDF(c, streamObj("/Subtype /Image "+dict, data)))
+		if err != nil {
+			return
+		}
+		p, err := doc.Page(0)
+		if err != nil {
+			return
+		}
+		dst := image.NewRGBA(p.Bounds(0.5))
+		for _, workers := range []int{1, 3} {
+			err = p.Render(context.Background(), dst, RenderOptions{Scale: 0.5, Workers: workers, Deadline: time.Now().Add(2 * time.Second)})
+			var pe *PanicError
+			if errors.As(err, &pe) {
+				t.Fatalf("%v\n%s", pe.Value, pe.Stack)
+			}
+		}
+	})
+}

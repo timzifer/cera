@@ -26,6 +26,7 @@ const (
 	dlClipRect
 	dlPopClip
 	dlGlyphs
+	dlImage
 )
 
 // dlItem is one recorded operation.
@@ -63,6 +64,7 @@ type displayList struct {
 	dashes []float64
 	glyphs []Glyph
 	fonts  []*Font
+	images []*Image
 
 	// Recording state: the boxes of the open clips, and how many clips
 	// are open inside one that is empty (whose content is dropped).
@@ -106,6 +108,8 @@ func (l *displayList) reset(bounds image.Rectangle) {
 	l.glyphs = l.glyphs[:0]
 	clear(l.fonts)
 	l.fonts = l.fonts[:0]
+	clear(l.images)
+	l.images = l.images[:0]
 	l.clips = append(l.clips[:0], bounds)
 	l.dead = 0
 	l.bounds = bounds
@@ -198,6 +202,22 @@ func (l *displayList) FillGlyphs(run *GlyphRun, paint *Paint) {
 		op: dlGlyphs, color: paint.Color, bbox: bb,
 		v0: int32(g0), v1: int32(len(l.glyphs)), style: int32(f),
 	})
+}
+
+func (l *displayList) DrawImage(img *Image, m Matrix, paint *Paint) {
+	if l.dead > 0 || paint.Color.A == 0 {
+		return
+	}
+	bb := deviceBoxPoints(unitSquare[:], m, 1).Intersect(l.clipBox())
+	if bb.Empty() {
+		return
+	}
+	i := len(l.images) - 1
+	if i < 0 || l.images[i] != img {
+		l.images = append(l.images, img)
+		i++
+	}
+	l.items = append(l.items, dlItem{op: dlImage, color: paint.Color, m: m, bbox: bb, style: int32(i)})
 }
 
 // style returns the index of st in the list, reusing the last one if equal.
@@ -396,6 +416,9 @@ func (l *displayList) drawItem(dev Device, ds *drawState, it *dlItem) {
 		ds.run = GlyphRun{Font: l.fonts[it.style], Glyphs: l.glyphs[it.v0:it.v1:it.v1]}
 		ds.paint.Color = it.color
 		dev.FillGlyphs(&ds.run, &ds.paint)
+	case dlImage:
+		ds.paint.Color = it.color
+		dev.DrawImage(l.images[it.style], it.m, &ds.paint)
 	}
 }
 

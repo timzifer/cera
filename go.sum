@@ -1,3 +1,9 @@
+github.com/ajroetker/go-highway v0.0.12 h1:OcGp/l/W7WQtH5ELLuNnKXCuR7ePpWGh2RWZI/INtck=
+github.com/ajroetker/go-highway v0.0.12/go.mod h1:un7fcrwix7UOHJrr18Lgh5eeF+1yaZiGWdTw3FbfDv4=
+github.com/go-images/jpeg v0.2.0 h1:dn55cTczPdOJf+NQq+sETCFeov/KeP1haF1ES+FJa+4=
+github.com/go-images/jpeg v0.2.0/go.mod h1:2C1DevAM+HaQlysTLbSdyol8X/RlvmsXmHAXs9teAqo=
+github.com/go-images/jpeg2000 v0.13.2 h1:wthA3iZkyqWXzNXxd6EjjsrsQ7GOYX7vYZbaI4vU6+I=
+github.com/go-images/jpeg2000 v0.13.2/go.mod h1:Qqxz1gBrUwFDBOGkA4RGyTsX7wifr0wvaTQ7k8FK0wY=
 github.com/go-opentype/fonts v0.10.0 h1:9f7ik795SlBEJjz6iqBE/ZV2PaTauAj537MMWw9t4OQ=
 github.com/go-opentype/fonts v0.10.0/go.mod h1:b+o8v1zDZ6B3GixA398jGILAh09+WwfyoYz52zKe7DA=
 github.com/go-opentype/opentype v0.13.0 h1:q9K7IGDfwMP/ik51ZkwiYf6jbaqPfocvAIuojetd0UQ=
@@ -6,5 +12,9 @@ github.com/go-pdfkit/pdffont v0.3.1 h1:+K7opHGRERDZ5EMkA12s1GT48t8GpncArhnyzyc5b
 github.com/go-pdfkit/pdffont v0.3.1/go.mod h1:eFJ/7t9AvcX76KY5qNJMMKetz8hUUUdVM1qSWLi3S1g=
 github.com/go-pdfkit/reader v0.6.0 h1:KAabNOYUcTlZlNBTbG9bEhWP1NiZhjuhzUdavdTdfes=
 github.com/go-pdfkit/reader v0.6.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
+github.com/tannevaled/gobig2 v0.2.0 h1:yx97/ltljALrIWDFVqHjPUIjAp3bfUUhH8Z8UROvNLc=
+github.com/tannevaled/gobig2 v0.2.0/go.mod h1:X0S1H+N35kg6zYgVYRqGMsGj3C35zs+iA2r1MXyPcV4=
 github.com/timzifer/stilus v0.0.0-20260930091613-3a16d92c14fd h1:RjtMZnbBrJ87sYOEiazTD13biX8yw7z7W8o6iJN8h7k=
 github.com/timzifer/stilus v0.0.0-20260930091613-3a16d92c14fd/go.mod h1:J8uybarHVrCcMUgRwrEkZOw5USCYqbIcfqjTGm2pB2o=
+golang.org/x/sys v0.41.0 h1:Ivj+2Cp/ylzLiEU89QhWblYnOE9zerudt9Ftecq2C6k=
+golang.org/x/sys v0.41.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=

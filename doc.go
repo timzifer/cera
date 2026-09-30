@@ -38,6 +38,16 @@
 // also receives the text shown in every render mode; Page.Text extracts
 // the characters of a page with their boxes.
 //
+// # Images
+//
+// Images reach a device as DrawImage with the matrix of their unit square.
+// A document decodes each image once and keeps it in a bounded cache; an
+// Image holds its samples as compactly as they come (one bit or one byte
+// a pixel with a palette where it can) and its mask at the mask's own
+// resolution. The raster device samples the mip level that fits the
+// device resolution, so an image drawn small costs what its device pixels
+// cost, not what its samples do.
+//
 // # Robustness
 //
 // Broken content is skipped, not fatal: unknown or malformed operators are
