@@ -76,40 +76,29 @@ type Device interface {
 	EndMask()
 }
 
-// BlendMode is a PDF blend mode (PDF 2.0, 11.3.5).
-type BlendMode uint8
+// BlendMode is a PDF blend mode (PDF 2.0, 11.3.5); PDF's blend modes are
+// those of stilus.
+type BlendMode = stilus.BlendMode
 
 // Blend modes.
 const (
-	BlendNormal BlendMode = iota
-	BlendMultiply
-	BlendScreen
-	BlendOverlay
-	BlendDarken
-	BlendLighten
-	BlendColorDodge
-	BlendColorBurn
-	BlendHardLight
-	BlendSoftLight
-	BlendDifference
-	BlendExclusion
-	BlendHue
-	BlendSaturation
-	BlendColor
-	BlendLuminosity
+	BlendNormal     = stilus.BlendNormal
+	BlendMultiply   = stilus.BlendMultiply
+	BlendScreen     = stilus.BlendScreen
+	BlendOverlay    = stilus.BlendOverlay
+	BlendDarken     = stilus.BlendDarken
+	BlendLighten    = stilus.BlendLighten
+	BlendColorDodge = stilus.BlendColorDodge
+	BlendColorBurn  = stilus.BlendColorBurn
+	BlendHardLight  = stilus.BlendHardLight
+	BlendSoftLight  = stilus.BlendSoftLight
+	BlendDifference = stilus.BlendDifference
+	BlendExclusion  = stilus.BlendExclusion
+	BlendHue        = stilus.BlendHue
+	BlendSaturation = stilus.BlendSaturation
+	BlendColor      = stilus.BlendColor
+	BlendLuminosity = stilus.BlendLuminosity
 )
-
-var blendNames = [...]string{
-	"Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "ColorDodge", "ColorBurn",
-	"HardLight", "SoftLight", "Difference", "Exclusion", "Hue", "Saturation", "Color", "Luminosity",
-}
-
-func (b BlendMode) String() string {
-	if int(b) < len(blendNames) {
-		return blendNames[b]
-	}
-	return "BlendMode(?)"
-}
 
 // Group describes a transparency group (PDF 2.0, 11.4).
 type Group struct {
