@@ -145,7 +145,9 @@ per page (`smask-budget`, drawn empty).
 
 ## Roadmap
 
-Milestones follow the spec *PDF-Renderer für Go (Testballon)*.
+Milestones follow the spec *PDF-Renderer für Go (Testballon)*. What is
+still missing for a feature-complete renderer, and how it will be built, is
+recorded as architecture decisions in [`docs/adr`](docs/adr/README.md).
 
 | | milestone | content |
 |---|---|---|
