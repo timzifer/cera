@@ -10,7 +10,7 @@ require (
 	github.com/go-pdfkit/pdffont v0.3.1
 	github.com/go-pdfkit/reader v0.6.0
 	github.com/tannevaled/gobig2 v0.2.0
-	github.com/timzifer/stilus v0.4.1-0.20261001073722-ae4e48af9384
+	github.com/timzifer/stilus v0.4.1-0.20261001081441-92cee4a2606b
 )
 
 require (
