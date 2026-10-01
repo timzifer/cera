@@ -69,6 +69,8 @@ type layers struct {
 
 type clipRec struct {
 	rect           bool
+	stroke         bool
+	st             StrokeStyle
 	r              Rect
 	m              Matrix
 	rule           FillRule
@@ -162,11 +164,16 @@ func (t *layers) image(area image.Rectangle) image.RGBA {
 	return image.RGBA{Pix: t.buf(4 * area.Dx() * area.Dy()), Stride: 4 * area.Dx(), Rect: area}
 }
 
-func (t *layers) pushClip(p *Path, r Rect, m Matrix, rule FillRule, rect bool) {
+func (t *layers) pushClip(p *Path, r Rect, m Matrix, rule FillRule, rect bool, st *StrokeStyle) {
 	if t.base == nil {
 		return
 	}
 	c := clipRec{rect: rect, r: r, m: m, rule: rule}
+	if st != nil {
+		// The dash pattern belongs to the display list or the
+		// interpreter's arena, which outlive the clip.
+		c.stroke, c.st = true, *st
+	}
 	c.v0, c.p0 = int32(len(t.verbs)), int32(len(t.points))
 	if p != nil {
 		t.verbs = append(t.verbs, p.Verbs...)
@@ -244,7 +251,11 @@ func (d *RasterDevice) retargetOn(i int, dst *image.RGBA) {
 			d.C.ClipRect(stilus.Rect{X0: c.r.X0, Y0: c.r.Y0, X1: c.r.X1, Y1: c.r.Y1}, c.m)
 		} else {
 			p := Path{Verbs: t.verbs[c.v0:c.v1:c.v1], Points: t.points[c.p0:c.p1:c.p1]}
-			d.C.ClipPath(&p, c.m, c.rule)
+			if c.stroke {
+				d.C.ClipStroke(&p, c.m, &c.st)
+			} else {
+				d.C.ClipPath(&p, c.m, c.rule)
+			}
 		}
 	}
 }

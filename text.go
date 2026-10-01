@@ -277,7 +277,21 @@ func (in *interp) flushText() {
 		defer in.dev.EndGroup()
 	}
 	if mode == TextFill || mode == TextFillStroke || mode == TextFillClip || mode == TextFillStrokeClip {
-		if in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
+		if in.gs.fillCS.kind == csPattern {
+			// The glyphs as a clip, in device space.
+			if sh := in.patternShading(&in.gs.fillPat, in.gs.fillAlpha); sh != nil {
+				in.st.Glyphs += len(run.Glyphs)
+				in.tmp.Reset()
+				for i := range run.Glyphs {
+					if o := run.Glyphs[i].Outline; o != nil {
+						appendTransformed(&in.tmp, o, run.Glyphs[i].M)
+					}
+				}
+				in.dev.ClipPath(&in.tmp, identity, NonZero)
+				in.dev.FillShading(sh, in.gs.fillPat.m, &in.paint)
+				in.dev.PopClip()
+			}
+		} else if in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
 			in.st.Glyphs += len(run.Glyphs)
 			in.dev.FillGlyphs(run, &in.paint)
 		}
@@ -289,7 +303,16 @@ func (in *interp) flushText() {
 				appendTransformed(&tx.path, o, tx.user[i])
 			}
 		}
-		if !tx.path.Empty() && in.setPaint(in.gs.strokeCS, in.gs.stroke[:], in.gs.strokeAlp) {
+		switch {
+		case tx.path.Empty():
+		case in.gs.strokeCS.kind == csPattern:
+			if sh := in.patternShading(&in.gs.strokePat, in.gs.strokeAlp); sh != nil {
+				in.st.Strokes++
+				in.dev.ClipStroke(&tx.path, in.gs.ctm, &in.gs.style)
+				in.dev.FillShading(sh, in.gs.strokePat.m, &in.paint)
+				in.dev.PopClip()
+			}
+		case in.setPaint(in.gs.strokeCS, in.gs.stroke[:], in.gs.strokeAlp):
 			in.st.Strokes++
 			in.dev.StrokePath(&tx.path, in.gs.ctm, &in.gs.style, &in.paint)
 		}

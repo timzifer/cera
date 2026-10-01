@@ -396,10 +396,10 @@ func decodeRange(cs *colorSpace, c, bpc int) (lo, hi float64) {
 	case cs == nil:
 	case cs.kind == csIndexed:
 		return 0, float64(int(1)<<bpc - 1)
-	case cs.kind == csLab && c == 0:
+	case cs.kind == csCIE && cs.cie.lab && c == 0:
 		return 0, 100
-	case cs.kind == csLab:
-		return -100, 100
+	case cs.kind == csCIE && cs.cie.lab && c <= 2:
+		return cs.cie.rng[2*c-2], cs.cie.rng[2*c-1]
 	}
 	return 0, 1
 }
@@ -530,13 +530,31 @@ func (dc *imageDecoder) rgbaPlane(data []byte, sp *sampleSpec) (plane, *plane, b
 				k := 255 - uint32(s[3])
 				dst[x] = pack(inkOff(s[0], k), inkOff(s[1], k), inkOff(s[2], k), 255)
 			}
-		default:
+		case plain && sp.cs.kind == csCIE && n == 3 && !sp.cs.cie.lab && len(row) == 3*w:
 			for x := range dst {
+				s := row[3*x:][:3]
+				r, g, b := sp.cs.cie.rgb8(s[0], s[1], s[2])
+				dst[x] = pack(r, g, b, 255)
+			}
+		default:
+			// Conversions through functions or CIE formulas are slow:
+			// the last colour is remembered, since neighbours repeat.
+			var last [maxComps]uint32
+			var lastC uint32
+			have := false
+			for x := range dst {
+				same := have
 				for c := range n {
-					v[c] = lut[c<<bpc+int(sampleAt(row, (x*n+c)*bpc, bpc))]
+					raw := sampleAt(row, (x*n+c)*bpc, bpc)
+					same = same && raw == last[c]
+					last[c] = raw
+					v[c] = lut[c<<bpc+int(raw)]
 				}
-				r, g, b := sp.cs.rgb(v[:n])
-				dst[x] = pack(unit8(r), unit8(g), unit8(b), 255)
+				if !same {
+					r, g, b := sp.cs.rgb(v[:n])
+					lastC, have = pack(unit8(r), unit8(g), unit8(b), 255), true
+				}
+				dst[x] = lastC
 			}
 		}
 		if keyMask != nil {

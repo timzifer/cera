@@ -13,7 +13,9 @@
 //     boxes and a band index, so a page is interpreted once and only the
 //     visible part is drawn, by several cores;
 //   - rasterization: github.com/timzifer/stilus, a sparse CPU rasterizer
-//     whose cost per path is edge length plus covered spans.
+//     whose cost per path is edge length plus covered spans, with the
+//     shaders cera paints through: images, glyph masks, layers, gradients
+//     and meshes.
 //
 // # Use
 //
@@ -56,6 +58,19 @@
 // a layer covering only what the group can touch in the band being drawn
 // and composites it through the clips around it. The display list drops
 // the groups that need no layer, which are most of them.
+//
+// # Shadings and colour
+//
+// Shadings reach a device as FillShading, painting the current clip; a
+// path, stroke or text painted with a shading pattern arrives as the
+// shading filled through a clip of its shape. A document reads each
+// shading once into what a device draws without PDF functions: a colour
+// ramp for axial and radial shadings, a sampled texture for function-based
+// ones and Gouraud-shaded triangles for the four mesh kinds. Colour spaces
+// are converted to sRGB: Separation and DeviceN through their tint
+// transforms (tabulated for one ink), CalGray, CalRGB, Lab and ICC
+// profiles of the matrix/TRC kind through CIE XYZ; other ICC profiles
+// fall back on the device space of as many components.
 //
 // # Robustness
 //

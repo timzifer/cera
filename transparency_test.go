@@ -402,3 +402,14 @@ func FuzzTransparency(f *testing.F) {
 		}
 	})
 }
+
+func TestPageBackdropIsTransparent(t *testing.T) {
+	// Blended onto the page, a colour over nothing stays itself (the
+	// paper comes after the page group); over red it blends.
+	c := "1 0 0 rg 0 0 100 100 re f /G0 gs 0 0 1 rg 50 0 100 100 re f"
+	img, _ := renderTransparent(t, c, "/ExtGState << /G0 100 0 R >>", "<< /BM /Difference >>")
+	assertPixel(t, img, 25, 50, rgba(255, 0, 0, 255))
+	assertPixel(t, img, 75, 50, rgba(255, 0, 255, 255))
+	assertPixel(t, img, 125, 50, rgba(0, 0, 255, 255))
+	assertPixel(t, img, 175, 50, white)
+}

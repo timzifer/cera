@@ -231,7 +231,10 @@ func (in *interp) formContent(s *reader.Stream, parent reader.Dict, depth int) {
 	}
 	in.path.Reset()
 	in.hasCur, in.clip = false, -1
+	base := in.base
+	in.base = in.gs.ctm
 	in.exec(dec.Data, res, depth)
+	in.base = base
 	in.path.Reset()
 	in.hasCur, in.clip = false, -1
 }

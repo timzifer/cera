@@ -31,6 +31,8 @@ const (
 	dlEndGroup
 	dlBeginMask
 	dlEndMask
+	dlClipStroke
+	dlShading
 	dlNop // a group found not to need a layer
 )
 
@@ -42,9 +44,10 @@ type dlItem struct {
 	color color.RGBA
 	m     Matrix
 	// verbs and points are ranges of the list's path storage; for a stroke
-	// style is an index into styles. For glyphs, v0:v1 is a range of glyphs
+	// or a stroke clip style is an index into styles. For glyphs, v0:v1 is a range of glyphs
 	// and style an index into fonts; for an image an index into images,
-	// for a group into groups and for a mask into masks.
+	// for a group into groups, for a mask into masks and for a shading
+	// into shadings.
 	v0, v1, p0, p1 int32
 	style          int32
 	rect           Rect // dlClipRect, dlBeginGroup, dlBeginMask
@@ -74,6 +77,7 @@ type displayList struct {
 	images []*Image
 	groups []Group
 	masks  []SoftMask
+	shades []*Shading
 
 	// Recording state: the boxes of the open clips, groups and masks, and
 	// how many are open inside one that is empty (whose content is
@@ -96,8 +100,13 @@ type displayList struct {
 	scale    float64
 	stats    Stats
 	complete bool
-	panic    *PanicError // recovered while recording
-	refs     int         // renders using the list; guarded by the page's mutex
+	// blends says that something is blended onto the page itself: the
+	// page is then drawn transparent and composited onto the background,
+	// since the page group's backdrop is transparent and the paper comes
+	// after it (PDF 2.0, 11.4.7).
+	blends bool
+	panic  *PanicError // recovered while recording
+	refs   int         // renders using the list; guarded by the page's mutex
 }
 
 var lists = sync.Pool{New: func() any { return new(displayList) }}
@@ -125,6 +134,8 @@ func (l *displayList) reset(bounds image.Rectangle) {
 	l.images = l.images[:0]
 	clear(l.masks) // transfer tables
 	l.masks = l.masks[:0]
+	clear(l.shades)
+	l.shades = l.shades[:0]
 	l.groups = l.groups[:0]
 	l.clips = append(l.clips[:0], bounds)
 	l.dead = 0
@@ -132,7 +143,7 @@ func (l *displayList) reset(bounds image.Rectangle) {
 	l.bounds = bounds
 	l.bandStart = l.bandStart[:0]
 	l.bandItems = l.bandItems[:0]
-	l.complete, l.panic = false, nil
+	l.complete, l.panic, l.blends = false, nil, false
 	l.refs = 0
 	um := l.stats.Unsupported
 	clear(um)
@@ -230,6 +241,22 @@ func (l *displayList) DrawImage(img *Image, m Matrix, paint *Paint) {
 	l.items = append(l.items, dlItem{op: dlImage, color: paint.Color, m: m, bbox: bb, style: int32(i)})
 }
 
+func (l *displayList) FillShading(sh *Shading, m Matrix, paint *Paint) {
+	if l.dead > 0 || paint.Color.A == 0 {
+		return
+	}
+	bb := shadingBox(sh, m).Intersect(l.clipBox())
+	if bb.Empty() {
+		return
+	}
+	i := len(l.shades) - 1
+	if i < 0 || l.shades[i] != sh {
+		l.shades = append(l.shades, sh)
+		i++
+	}
+	l.items = append(l.items, dlItem{op: dlShading, color: paint.Color, m: m, bbox: bb, style: int32(i)})
+}
+
 // strokeBox returns the device pixels a stroke of p can touch.
 func strokeBox(p *Path, m Matrix, st *StrokeStyle) image.Rectangle {
 	// The widest the outline can reach beyond the path: half the device
@@ -283,6 +310,22 @@ func (l *displayList) ClipPath(p *Path, m Matrix, rule FillRule) {
 		return
 	}
 	it := dlItem{op: dlClipPath, rule: rule, m: m, bbox: bb}
+	l.addPath(&it, p)
+	l.items = append(l.items, it)
+	l.clips = append(l.clips, bb)
+}
+
+func (l *displayList) ClipStroke(p *Path, m Matrix, st *StrokeStyle) {
+	if l.dead > 0 {
+		l.dead++
+		return
+	}
+	bb := strokeBox(p, m, st).Intersect(l.clipBox())
+	if len(p.Points) == 0 || bb.Empty() {
+		l.dead++
+		return
+	}
+	it := dlItem{op: dlClipStroke, m: m, bbox: bb, style: l.style(st)}
 	l.addPath(&it, p)
 	l.items = append(l.items, it)
 	l.clips = append(l.clips, bb)
@@ -421,7 +464,11 @@ func (l *displayList) EndGroup() {
 			l.stats.unsupported("non-isolated-blend") // approximated
 		}
 	}
-	// What the parent sees drawn into it.
+	// What the parent sees drawn into it; at the top, whether the page
+	// itself blends (see displayList.blends).
+	if parent == nil && (o.blends || g.Blend != BlendNormal) {
+		l.blends = true
+	}
 	if parent != nil {
 		p := parent
 		if flatten {
@@ -451,8 +498,8 @@ func (l *displayList) single(i int32) *dlItem {
 	var one *dlItem
 	for k := i; int(k) < len(l.items); k++ {
 		switch it := &l.items[k]; it.op {
-		case dlClipPath, dlClipRect, dlPopClip, dlNop:
-		case dlFill, dlStroke, dlGlyphs, dlImage:
+		case dlClipPath, dlClipRect, dlClipStroke, dlPopClip, dlNop:
+		case dlFill, dlStroke, dlGlyphs, dlImage, dlShading:
 			if one != nil {
 				return nil
 			}
@@ -600,6 +647,15 @@ func (l *displayList) drawItem(dev Device, ds *drawState, it *dlItem) {
 		dev.ClipPath(&ds.path, it.m, it.rule)
 	case dlClipRect:
 		dev.ClipRect(it.rect, it.m)
+	case dlClipStroke:
+		ds.path = l.path(it)
+		s := &l.styles[it.style]
+		ds.style = s.st
+		ds.style.Dash = l.dashes[s.d0:s.d1:s.d1]
+		dev.ClipStroke(&ds.path, it.m, &ds.style)
+	case dlShading:
+		ds.paint.Color = it.color
+		dev.FillShading(l.shades[it.style], it.m, &ds.paint)
 	case dlPopClip:
 		dev.PopClip()
 	case dlGlyphs:
