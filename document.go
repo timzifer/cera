@@ -26,6 +26,9 @@ type Document struct {
 	imgs     map[reader.Ref]*list.Element
 	imgLRU   list.List
 	imgBytes int
+
+	ocOnce sync.Once
+	oc     *ocProps // optional content, read on first use
 }
 
 // Open parses a PDF file. Damaged cross-reference tables, wrong stream

@@ -57,6 +57,16 @@
 // and composites it through the clips around it. The display list drops
 // the groups that need no layer, which are most of them.
 //
+// # Optional content
+//
+// Document.Layers reads the layers of a document (optional content groups
+// and configurations). A Visibility selects which of them a render shows,
+// RenderOptions.Layers passes it; it is a value the caller owns, so views
+// of one document can show different layers. The display list records
+// hidden content too and evaluates its layer tags once per render, so
+// switching layers draws again without interpreting the page. Page.RunWith
+// gives other devices only the content a Visibility shows.
+//
 // # Robustness
 //
 // Broken content is skipped, not fatal: unknown or malformed operators are

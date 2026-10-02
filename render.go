@@ -38,6 +38,14 @@ type RenderOptions struct {
 	// goroutine in one pass. Antialiasing may round differently by one
 	// level where bands meet.
 	Workers int
+	// Layers selects the optional content to draw; nil is the document's
+	// default configuration for Usage (see Document.Layers). Switching
+	// layers does not interpret the page again.
+	Layers *Visibility
+	// Usage is UsageView (the default), UsagePrint or UsageExport. It
+	// selects the automatic states (/AS) of the default configuration and
+	// applies only when Layers is nil.
+	Usage Usage
 }
 
 // Stats describes what rendering a page did.
@@ -201,7 +209,11 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 	if region.Empty() {
 		return err
 	}
-	if derr := dl.render(dst, region, opt.Workers, lim); derr != nil && err == nil {
+	vis := opt.Layers
+	if vis == nil && len(dl.ocTags) > 1 {
+		vis = p.doc.defaultVisibility(opt.Usage)
+	}
+	if derr := dl.render(dst, region, opt.Workers, vis, lim); derr != nil && err == nil {
 		err = derr
 	}
 	return err
@@ -232,7 +244,7 @@ func (p *Page) list(scale float64, lim *limit) (dl *displayList, reused bool) {
 				dl.panic = &PanicError{Value: v, Stack: debug.Stack()}
 			}
 		}()
-		dl.complete = p.record(in, dl, &dl.stats, scale, lim)
+		dl.complete = p.record(in, dl, &dl.stats, scale, nil, lim)
 	}()
 	if in != nil {
 		in.release()
@@ -253,11 +265,15 @@ func (p *Page) list(scale float64, lim *limit) (dl *displayList, reused bool) {
 }
 
 // record interprets the page into dev at scale and reports whether it got
-// to the end.
-func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, lim *limit) bool {
+// to the end. A display list records all optional content; any other
+// device sees what vis shows.
+func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, vis *Visibility, lim *limit) bool {
 	base := p.deviceMatrix(scale)
 	dev.ClipRect(p.Box, base)
 	in.reset(p.doc, dev, st, lim)
+	if vis != nil {
+		in.ocVis, in.ocZoom = vis, scale
+	}
 	res := p.doc.dict(p.dict["Resources"])
 	dec, derr := p.doc.r.PageContentDecoded(p.index + 1)
 	switch {
@@ -275,22 +291,46 @@ func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, lim *lim
 // Run interprets the page into dev, without a display list: device space
 // is the page at scale pixels per point, as for Render. It is how devices
 // other than the raster one (text extraction, hit testing) see a page. The
-// page's box is the outermost clip. st, when non-nil, receives the
-// statistics. The error is ErrDeadline when ctx ends first, or a
-// *PanicError.
-func (p *Page) Run(ctx context.Context, dev Device, scale float64, st *Stats) (err error) {
+// page's box is the outermost clip. Optional content is drawn as the
+// document's default configuration shows it on screen. st, when non-nil,
+// receives the statistics. The error is ErrDeadline when ctx ends first,
+// or a *PanicError.
+func (p *Page) Run(ctx context.Context, dev Device, scale float64, st *Stats) error {
+	return p.RunWith(ctx, dev, RunOptions{Scale: scale, Stats: st})
+}
+
+// RunOptions control Page.RunWith.
+type RunOptions struct {
+	// Scale is pixels per point, as for RenderOptions.
+	Scale float64
+	// Stats, when non-nil, receives what interpreting did.
+	Stats *Stats
+	// Layers and Usage select the optional content dev sees, as for
+	// RenderOptions; hidden content reaches dev only as its clips, and
+	// a TextDevice does not see its text.
+	Layers *Visibility
+	Usage  Usage
+}
+
+// RunWith is Run with options.
+func (p *Page) RunWith(ctx context.Context, dev Device, opt RunOptions) (err error) {
 	defer recoverPanic(&err)
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	st := opt.Stats
 	if st == nil {
 		st = new(Stats)
 	} else {
 		st.set(&Stats{})
 	}
+	vis := opt.Layers
+	if vis == nil {
+		vis = p.doc.defaultVisibility(opt.Usage)
+	}
 	lim := &limit{ctx: ctx}
 	in := recorders.Get().(*interp)
-	ok := p.record(in, dev, st, normScale(scale), lim)
+	ok := p.record(in, dev, st, normScale(opt.Scale), vis, lim)
 	dev.PopClip()
 	in.release()
 	recorders.Put(in)
@@ -322,9 +362,10 @@ func (p *Page) Release() {
 	p.mu.Unlock()
 }
 
-// render draws the part of the list inside region into dst. One worker
-// draws the region in one pass; several share the bands that touch it.
-func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers int, lim *limit) error {
+// render draws the part of the list inside region into dst, with the
+// optional content vis shows (nil: all). One worker draws the region in
+// one pass; several share the bands that touch it.
+func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers int, vis *Visibility, lim *limit) error {
 	b0, b1 := l.bandRange(region)
 	if b0 >= b1 {
 		return nil
@@ -333,7 +374,10 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers in
 		workers = runtime.GOMAXPROCS(0)
 	}
 	j := jobs.Get().(*job)
-	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1}
+	if vis == nil {
+		vis = &noLayers
+	}
+	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1, vis: l.visibleTags(j.vis, vis)}
 	if workers = min(workers, b1-b0); workers == 1 {
 		j.work(true)
 	} else {
@@ -348,7 +392,7 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers in
 	if err == nil && lim.hit.Load() {
 		err = ErrDeadline
 	}
-	*j = job{}
+	*j = job{vis: j.vis[:0]}
 	jobs.Put(j)
 	return err
 }
@@ -360,6 +404,7 @@ type job struct {
 	region image.Rectangle
 	lim    *limit
 	b1     int
+	vis    []bool       // per tag of the list: drawn
 	next   atomic.Int32 // next band to draw
 	wg     sync.WaitGroup
 	mu     sync.Mutex
@@ -417,9 +462,9 @@ func (j *job) paint(pt *painter, b int, r image.Rectangle) {
 	pt.dev.Reset(j.dst, r)
 	var ok bool
 	if b < 0 {
-		ok = j.l.drawAll(&pt.dev, &pt.ds, r, j.lim)
+		ok = j.l.drawAll(&pt.dev, &pt.ds, r, j.vis, j.lim)
 	} else {
-		ok = j.l.drawBand(&pt.dev, &pt.ds, b, r, j.lim)
+		ok = j.l.drawBand(&pt.dev, &pt.ds, b, r, j.vis, j.lim)
 	}
 	if err := pt.dev.Err(); err != nil {
 		j.report(err)
