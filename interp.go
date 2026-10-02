@@ -188,21 +188,8 @@ func (in *interp) expired() bool {
 	return false
 }
 
-// lookup returns the resolved entry of the resource category cat named by
-// the operand name.
-func (in *interp) lookup(res reader.Dict, cat reader.Name, sc *content.Scanner, name *content.Operand) reader.Object {
-	if name == nil || name.Kind != content.Name {
-		return nil
-	}
-	sub := in.doc.dict(res[cat])
-	if sub == nil {
-		return nil
-	}
-	return in.doc.resolve(sub[reader.Name(sc.Text(name))])
-}
-
-// lookupRef is lookup without resolving the entry, so that the reference
-// can serve as a cache key.
+// lookupRef returns the entry of the resource category cat named by the
+// operand name, unresolved, so that a reference can serve as a cache key.
 func (in *interp) lookupRef(res reader.Dict, cat reader.Name, sc *content.Scanner, name *content.Operand) reader.Object {
 	if name == nil || name.Kind != content.Name {
 		return nil
