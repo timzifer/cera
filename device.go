@@ -46,6 +46,12 @@ const (
 // Images arrive as DrawImage with m mapping the image's unit square to
 // device space.
 //
+// Shadings and patterns paint the current clip: an object painted with a
+// pattern arrives as a clip of its shape (ClipPath, ClipStroke, or its
+// glyph outlines as a path), then FillShading or FillTile, then PopClip.
+// The sh operator is FillShading alone. A pattern whose cells are few and
+// large arrives as the drawing operations of its cells instead.
+//
 // Transparency arrives as groups: what is drawn between BeginGroup and
 // EndGroup is composited as one, with the group's blend mode, opacity and,
 // for a masked group, the soft mask drawn between the BeginMask and
@@ -53,13 +59,14 @@ const (
 // in the graphics state come as groups of their own. Clips, groups and
 // masks nest: a clip pushed inside a group or mask is popped inside it.
 // The rectangle r under m bounds what a group or mask covers.
-//
-// The set grows with the milestones of the spec: FillShading (M7).
 type Device interface {
 	FillPath(p *Path, m Matrix, rule FillRule, paint *Paint)
 	StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Paint)
 	ClipPath(p *Path, m Matrix, rule FillRule)
 	ClipRect(r Rect, m Matrix)
+	// ClipStroke intersects the clip with the area a stroke of p with
+	// style st under m paints: a stroke painted with a pattern.
+	ClipStroke(p *Path, m Matrix, st *StrokeStyle)
 	PopClip()
 	// FillGlyphs fills the outlines of run (nonzero) with paint.
 	FillGlyphs(run *GlyphRun, paint *Paint)
@@ -67,6 +74,14 @@ type Device interface {
 	// stencil (img.Stencil) paints paint through its shape; any other
 	// image paints its own colours with the constant alpha paint.Color.A.
 	DrawImage(img *Image, m Matrix, paint *Paint)
+	// FillShading paints sh over the current clip, with m mapping
+	// shading space to device space and constant opacity alpha.
+	FillShading(sh *Shading, m Matrix, alpha uint8)
+	// FillTile paints t, repeated in both directions, over the current
+	// clip, with m mapping the tile's pixel space to device space. A
+	// stencil tile (t.Stencil) paints paint through its shape, any other
+	// its own colours with the constant alpha paint.Color.A.
+	FillTile(t *Tile, m Matrix, paint *Paint)
 	// BeginGroup starts a transparency group; EndGroup composites it.
 	BeginGroup(r Rect, m Matrix, g *Group)
 	EndGroup()
@@ -199,6 +214,7 @@ type RasterDevice struct {
 
 	glyphs *glyphCache // allocated on first use
 	img    imageDraw
+	pd     paintDraw
 	t      layers
 }
 
@@ -252,6 +268,11 @@ func (d *RasterDevice) ClipPath(p *Path, m Matrix, rule FillRule) {
 func (d *RasterDevice) ClipRect(r Rect, m Matrix) {
 	d.t.pushClip(nil, r, m, 0, true)
 	d.C.ClipRect(stilus.Rect{X0: r.X0, Y0: r.Y0, X1: r.X1, Y1: r.Y1}, m)
+}
+
+func (d *RasterDevice) ClipStroke(p *Path, m Matrix, st *StrokeStyle) {
+	d.t.pushStroke(p, m, st)
+	d.C.ClipStroke(p, m, st)
 }
 
 func (d *RasterDevice) PopClip() {

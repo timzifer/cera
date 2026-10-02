@@ -198,13 +198,13 @@ func TestBrokenContentDoesNotStop(t *testing.T) {
 }
 
 func TestUnsupportedIsCounted(t *testing.T) {
-	c := "BT /F1 12 Tf (Hi) Tj ET /Sh sh"
+	c := "BT /F1 12 Tf (Hi) Tj ET"
 	// Symbol is not embedded, and no stand-in has its glyphs.
 	_, st, err := renderPage(t, textPDF(c, "<< /Type /Font /Subtype /Type1 /BaseFont /Symbol >>"), 0, RenderOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Unsupported["font-missing"] != 1 || st.Unsupported["shading"] != 1 {
+	if st.Unsupported["font-missing"] != 1 || len(st.Unsupported) != 1 {
 		t.Errorf("unsupported %v", st.Unsupported)
 	}
 }

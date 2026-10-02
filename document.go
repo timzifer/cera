@@ -27,6 +27,11 @@ type Document struct {
 	imgLRU   list.List
 	imgBytes int
 
+	// Compiled shadings and patterns by reference.
+	shMu     sync.Mutex
+	shades   map[shadeKey]*Shading
+	patterns map[reader.Ref]*pattern
+
 	ocOnce sync.Once
 	oc     *ocProps // optional content, read on first use
 

@@ -229,9 +229,14 @@ func (in *interp) formContent(s *reader.Stream, parent reader.Dict, depth int) {
 	if dec.Recovered {
 		in.st.Errors++
 	}
+	in.content(dec.Data, res, depth)
+}
+
+// content runs a content stream with a new path.
+func (in *interp) content(data []byte, res reader.Dict, depth int) {
 	in.path.Reset()
 	in.hasCur, in.clip = false, -1
-	in.exec(dec.Data, res, depth)
+	in.exec(data, res, depth)
 	in.path.Reset()
 	in.hasCur, in.clip = false, -1
 }

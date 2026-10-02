@@ -56,6 +56,7 @@ type layers struct {
 	clips  []clipRec
 	verbs  []stilus.Verb
 	points []stilus.Point
+	dashes []float64
 	// pending is the mask made by the last EndMask, for the next group.
 	pending softPlane
 	// knockout says that the canvas draws into a knockout layer's scratch.
@@ -77,6 +78,11 @@ type clipRec struct {
 	m              Matrix
 	rule           FillRule
 	v0, v1, p0, p1 int32
+	// stroke marks a stroke clip of style st, whose dashes are
+	// dashes[d0:d1].
+	stroke bool
+	st     StrokeStyle
+	d0, d1 int32
 }
 
 type layer struct {
@@ -113,7 +119,7 @@ func (t *layers) reset(dst *image.RGBA, region image.Rectangle) {
 	clear(t.stack)
 	t.stack = t.stack[:0]
 	t.clips = t.clips[:0]
-	t.verbs, t.points = t.verbs[:0], t.points[:0]
+	t.verbs, t.points, t.dashes = t.verbs[:0], t.points[:0], t.dashes[:0]
 	t.release(t.pending.pix)
 	t.pending = softPlane{}
 	t.knockout = false
@@ -177,7 +183,20 @@ func (t *layers) pushClip(p *Path, r Rect, m Matrix, rule FillRule, rect bool) {
 		t.points = append(t.points, p.Points...)
 	}
 	c.v1, c.p1 = int32(len(t.verbs)), int32(len(t.points))
+	c.d0, c.d1 = int32(len(t.dashes)), int32(len(t.dashes))
 	t.clips = append(t.clips, c)
+}
+
+func (t *layers) pushStroke(p *Path, m Matrix, st *StrokeStyle) {
+	if t.base == nil {
+		return
+	}
+	t.pushClip(p, Rect{}, m, 0, false)
+	c := &t.clips[len(t.clips)-1]
+	c.stroke, c.st = true, *st
+	c.st.Dash = nil
+	t.dashes = append(t.dashes, st.Dash...)
+	c.d1 = int32(len(t.dashes))
 }
 
 func (t *layers) popClip() {
@@ -191,7 +210,7 @@ func (t *layers) popClip() {
 func (t *layers) truncClips(n int) {
 	if n < len(t.clips) {
 		c := &t.clips[n]
-		t.verbs, t.points = t.verbs[:c.v0], t.points[:c.p0]
+		t.verbs, t.points, t.dashes = t.verbs[:c.v0], t.points[:c.p0], t.dashes[:c.d0]
 		t.clips = t.clips[:n]
 	}
 }
@@ -244,9 +263,15 @@ func (d *RasterDevice) retargetOn(i int, dst *image.RGBA) {
 	d.C.Reset(dst, region)
 	for k := t.clipsOf(i); k < len(t.clips); k++ {
 		c := &t.clips[k]
-		if c.rect {
+		switch {
+		case c.rect:
 			d.C.ClipRect(stilus.Rect{X0: c.r.X0, Y0: c.r.Y0, X1: c.r.X1, Y1: c.r.Y1}, c.m)
-		} else {
+		case c.stroke:
+			p := Path{Verbs: t.verbs[c.v0:c.v1:c.v1], Points: t.points[c.p0:c.p1:c.p1]}
+			st := c.st
+			st.Dash = t.dashes[c.d0:c.d1:c.d1]
+			d.C.ClipStroke(&p, c.m, &st)
+		default:
 			p := Path{Verbs: t.verbs[c.v0:c.v1:c.v1], Points: t.points[c.p0:c.p1:c.p1]}
 			d.C.ClipPath(&p, c.m, c.rule)
 		}

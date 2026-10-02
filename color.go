@@ -18,7 +18,7 @@ const (
 type colorSpace struct {
 	kind   csKind
 	n      int         // components of a colour value
-	base   *colorSpace // Indexed
+	base   *colorSpace // Indexed, and the colours of uncoloured patterns
 	hival  int         // Indexed
 	lookup []byte      // Indexed
 }
@@ -167,7 +167,14 @@ func (d *Document) colorSpace(o reader.Object, res reader.Dict, depth int) (cs *
 		names, _ := reader.ToArray(d.resolve(a[1]))
 		return &colorSpace{kind: csTint, n: min(max(len(names), 1), maxComps)}, "tint-transform"
 	case "Pattern":
-		return spacePattern, ""
+		if len(a) < 2 {
+			return spacePattern, ""
+		}
+		base, approx := d.colorSpace(a[1], res, depth+1)
+		if base == nil || base.kind == csPattern {
+			return spacePattern, approx
+		}
+		return &colorSpace{kind: csPattern, n: base.n, base: base}, approx
 	}
 	return nil, ""
 }

@@ -36,6 +36,9 @@ const (
 	dlEndGroup
 	dlBeginMask
 	dlEndMask
+	dlClipStroke
+	dlShading
+	dlTile
 	dlNop // a group found not to need a layer
 )
 
@@ -47,9 +50,11 @@ type dlItem struct {
 	color color.RGBA
 	m     Matrix
 	// verbs and points are ranges of the list's path storage; for a stroke
-	// style is an index into styles. For glyphs, v0:v1 is a range of glyphs
-	// and style an index into fonts; for an image an index into images,
-	// for a group into groups and for a mask into masks.
+	// or a stroke clip style is an index into styles. For glyphs, v0:v1 is
+	// a range of glyphs and style an index into fonts; for an image an
+	// index into images, for a shading into shadings, for a tile into
+	// tiles, for a group into groups and for a mask into masks. The alpha
+	// of a shading is color.A.
 	v0, v1, p0, p1 int32
 	style          int32
 	// tag is the optional content the item belongs to, an index into
@@ -81,6 +86,8 @@ type displayList struct {
 	glyphs []Glyph
 	fonts  []*Font
 	images []*Image
+	shades []*Shading
+	tiles  []*Tile
 	groups []Group
 	masks  []SoftMask
 
@@ -138,6 +145,10 @@ func (l *displayList) reset(bounds image.Rectangle) {
 	l.fonts = l.fonts[:0]
 	clear(l.images)
 	l.images = l.images[:0]
+	clear(l.shades)
+	l.shades = l.shades[:0]
+	clear(l.tiles)
+	l.tiles = l.tiles[:0]
 	clear(l.masks) // transfer tables
 	l.masks = l.masks[:0]
 	l.groups = l.groups[:0]
@@ -249,6 +260,38 @@ func (l *displayList) DrawImage(img *Image, m Matrix, paint *Paint) {
 	l.items = append(l.items, dlItem{op: dlImage, color: paint.Color, m: m, bbox: bb, style: int32(i), tag: l.tag})
 }
 
+func (l *displayList) FillShading(sh *Shading, m Matrix, alpha uint8) {
+	if l.dead > 0 || alpha == 0 {
+		return
+	}
+	bb := l.clipBox()
+	if sh.hasBBox {
+		bb = l.rectBox(sh.bbox, m)
+	}
+	if bb.Empty() {
+		return
+	}
+	i := len(l.shades) - 1
+	if i < 0 || l.shades[i] != sh {
+		l.shades = append(l.shades, sh)
+		i++
+	}
+	l.items = append(l.items, dlItem{op: dlShading, color: color.RGBA{A: alpha}, m: m, bbox: bb, style: int32(i), tag: l.tag})
+}
+
+func (l *displayList) FillTile(t *Tile, m Matrix, paint *Paint) {
+	bb := l.clipBox()
+	if l.dead > 0 || paint.Color.A == 0 || bb.Empty() {
+		return
+	}
+	i := len(l.tiles) - 1
+	if i < 0 || l.tiles[i] != t {
+		l.tiles = append(l.tiles, t)
+		i++
+	}
+	l.items = append(l.items, dlItem{op: dlTile, color: paint.Color, m: m, bbox: bb, style: int32(i), tag: l.tag})
+}
+
 // strokeBox returns the device pixels a stroke of p can touch.
 func strokeBox(p *Path, m Matrix, st *StrokeStyle) image.Rectangle {
 	// The widest the outline can reach beyond the path: half the device
@@ -302,6 +345,22 @@ func (l *displayList) ClipPath(p *Path, m Matrix, rule FillRule) {
 		return
 	}
 	it := dlItem{op: dlClipPath, rule: rule, m: m, bbox: bb}
+	l.addPath(&it, p)
+	l.items = append(l.items, it)
+	l.clips = append(l.clips, bb)
+}
+
+func (l *displayList) ClipStroke(p *Path, m Matrix, st *StrokeStyle) {
+	if l.dead > 0 {
+		l.dead++
+		return
+	}
+	bb := strokeBox(p, m, st).Intersect(l.clipBox())
+	if len(p.Points) == 0 || bb.Empty() {
+		l.dead++
+		return
+	}
+	it := dlItem{op: dlClipStroke, m: m, bbox: bb, style: l.style(st)}
 	l.addPath(&it, p)
 	l.items = append(l.items, it)
 	l.clips = append(l.clips, bb)
@@ -471,8 +530,8 @@ func (l *displayList) single(i int32) *dlItem {
 	var one *dlItem
 	for k := i; int(k) < len(l.items); k++ {
 		switch it := &l.items[k]; it.op {
-		case dlClipPath, dlClipRect, dlPopClip, dlNop:
-		case dlFill, dlStroke, dlGlyphs, dlImage:
+		case dlClipPath, dlClipRect, dlClipStroke, dlPopClip, dlNop:
+		case dlFill, dlStroke, dlGlyphs, dlImage, dlShading, dlTile:
 			if one != nil {
 				return nil
 			}
@@ -671,6 +730,17 @@ func (l *displayList) drawItem(dev Device, ds *drawState, it *dlItem) {
 		dev.ClipPath(&ds.path, it.m, it.rule)
 	case dlClipRect:
 		dev.ClipRect(it.rect, it.m)
+	case dlClipStroke:
+		ds.path = l.path(it)
+		s := &l.styles[it.style]
+		ds.style = s.st
+		ds.style.Dash = l.dashes[s.d0:s.d1:s.d1]
+		dev.ClipStroke(&ds.path, it.m, &ds.style)
+	case dlShading:
+		dev.FillShading(l.shades[it.style], it.m, it.color.A)
+	case dlTile:
+		ds.paint.Color = it.color
+		dev.FillTile(l.tiles[it.style], it.m, &ds.paint)
 	case dlPopClip:
 		dev.PopClip()
 	case dlGlyphs:
