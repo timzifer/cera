@@ -184,11 +184,12 @@ func (in *interp) transparent() bool {
 	return in.gs.blend != BlendNormal || in.gs.smask != nil
 }
 
-// beginObject starts the group of an object bounded by r under m. It
-// keeps in.paint.
-func (in *interp) beginObject(r Rect, m Matrix) {
+// beginObject starts the group of an object bounded by r under m,
+// composited with blend mode bm; a knockout group holds the glyphs of a
+// run (see textKnockout). It keeps in.paint.
+func (in *interp) beginObject(r Rect, m Matrix, bm BlendMode, knockout bool) {
 	paint := in.paint
-	g := Group{Isolated: true, Blend: in.gs.blend, Alpha: 255}
+	g := Group{Isolated: true, Knockout: knockout, Blend: bm, Alpha: 255}
 	if in.gs.smask != nil {
 		in.drawSoftMask(r, m)
 		g.Masked = true

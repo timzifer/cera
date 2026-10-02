@@ -116,9 +116,10 @@ type displayList struct {
 	allItems []int32
 
 	// What the list was recorded for, and what recording did.
-	scale    float64
-	stats    Stats
-	complete bool
+	scale     float64
+	overprint bool // simulated
+	stats     Stats
+	complete  bool
 	// blends says that something is blended onto the page itself: the
 	// page is then drawn transparent and composited onto the background,
 	// since the page group's backdrop is transparent and the paper comes

@@ -39,6 +39,10 @@ type Document struct {
 	shMu     sync.Mutex
 	shadings map[reader.Ref]*shadingEntry
 	patterns map[reader.Ref]*patternEntry
+
+	// Transfer functions by ExtGState reference.
+	trMu      sync.Mutex
+	transfers map[reader.Ref]trEntry
 }
 
 // Open parses a PDF file. Damaged cross-reference tables, wrong stream

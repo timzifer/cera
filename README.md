@@ -184,7 +184,13 @@ knockout, with the fill alpha of the state that paints them), all 16
 blend modes, soft masks (luminosity with backdrop colour, alpha, transfer
 functions of all four function types) in the graphics state, and objects
 painted with a blend mode or soft mask, composited as groups of their own;
-a page that blends is drawn transparent and composited onto the
+glyphs of one text-showing operator that overlap at an opacity below 1
+knock each other out (`TK`). The rest of the graphics state: the font of
+`gs` (`/Font`), transfer functions (`TR`, `TR2`) on solid colours, and
+overprint (`OP`, `op`, `OPM`) of DeviceCMYK, Separation and DeviceN
+simulated as Multiply with `RenderOptions.SimulateOverprint` (off by
+default); the device parameters (`BG`, `UCR`, `HT`, `FL`, `SM`, `SA`) and
+`ri` are ignored on purpose. A page that blends is drawn transparent and composited onto the
 background, which comes after the page group. Shadings: all seven types
 (function-based, axial, radial, free-form and lattice triangle meshes,
 Coons and tensor-product patches), with `Function`, `Domain`, `Extend`,
@@ -221,7 +227,11 @@ a non-isolated group with blend modes inside that is an object of a
 knockout group (`non-isolated-blend`: drawn isolated; one that is itself
 blended has its backdrop removed, PDF 2.0 11.4.8), `/AIS` (`alpha-is-shape`), transfer functions that do
 not read (`smask-transfer`), soft masks past 4 levels of nesting or 1024
-per page (`smask-budget`, drawn empty).
+per page (`smask-budget`, drawn empty); overprint that is not simulated
+(`overprint`, painted over), transfer functions on images, shadings and
+patterns or that do not read (`transfer`, drawn without), overlapping
+stroked or pattern-filled glyphs that `TK` would knock out
+(`text-knockout`).
 
 ## Roadmap
 

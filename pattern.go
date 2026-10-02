@@ -152,6 +152,7 @@ func (in *interp) patternReady(p *patternPaint, alpha float64) bool {
 	if e == nil || unit8(alpha) == 0 {
 		return false
 	}
+	in.untransferred()
 	if e.tiling != nil {
 		return true
 	}
@@ -219,12 +220,13 @@ func (in *interp) shadingOp(sc *content.Scanner, res reader.Dict) {
 	}
 	in.paint = Paint{Color: color.RGBA{A: a}}
 	in.st.Shadings++
+	in.untransferred()
 	if in.transparent() {
 		r, m := Rect{-1 << 20, -1 << 20, 1 << 20, 1 << 20}, identity
 		if e.plain.HasBBox {
 			r, m = e.plain.BBox, in.gs.ctm
 		}
-		in.beginObject(r, m)
+		in.beginObject(r, m, in.gs.blend, false)
 		defer in.dev.EndGroup()
 	}
 	in.dev.FillShading(e.plain, in.gs.ctm, &in.paint)

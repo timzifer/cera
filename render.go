@@ -54,6 +54,12 @@ type RenderOptions struct {
 	// returns true for are not drawn (a form overlay drawing its own
 	// widgets). Changing it does not interpret the page again.
 	SkipAnnotation func(index int) bool
+	// SimulateOverprint composites objects painted with overprint (OP,
+	// op) in DeviceCMYK under OPM 1, Separation or DeviceN as Multiply
+	// with what is below them, approximating the mixed result of print;
+	// off, they are painted over it, as most viewers do for files that
+	// are not PDF/X. The page is interpreted once per setting.
+	SimulateOverprint bool
 }
 
 // Stats describes what rendering a page did.
@@ -208,7 +214,7 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 	lim := &limit{ctx: ctx, deadline: opt.Deadline}
 	scale := normScale(opt.Scale)
 
-	dl, reused := p.list(scale, lim)
+	dl, reused := p.list(scale, opt.SimulateOverprint, lim)
 	defer p.done(dl)
 	st.set(&dl.stats)
 	st.Reused = reused
@@ -233,11 +239,12 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 	return err
 }
 
-// list returns the display list of the page at scale, recording it unless
-// the cached one fits. The caller must pass it to done.
-func (p *Page) list(scale float64, lim *limit) (dl *displayList, reused bool) {
+// list returns the display list of the page at scale, with overprint
+// simulated or not, recording it unless the cached one fits. The caller
+// must pass it to done.
+func (p *Page) list(scale float64, overprint bool, lim *limit) (dl *displayList, reused bool) {
 	p.mu.Lock()
-	if dl := p.dl; dl != nil && dl.scale == scale {
+	if dl := p.dl; dl != nil && dl.scale == scale && dl.overprint == overprint {
 		dl.refs++
 		p.mu.Unlock()
 		return dl, true
@@ -246,7 +253,7 @@ func (p *Page) list(scale float64, lim *limit) (dl *displayList, reused bool) {
 
 	dl = getList()
 	dl.reset(p.Bounds(scale))
-	dl.scale = scale
+	dl.scale, dl.overprint = scale, overprint
 	in := recorders.Get().(*interp)
 	func() {
 		defer func() {
@@ -258,7 +265,7 @@ func (p *Page) list(scale float64, lim *limit) (dl *displayList, reused bool) {
 				dl.panic = &PanicError{Value: v, Stack: debug.Stack()}
 			}
 		}()
-		dl.complete = p.record(in, dl, &dl.stats, scale, nil, nil, lim)
+		dl.complete = p.record(in, dl, &dl.stats, scale, overprint, nil, nil, lim)
 	}()
 	if in != nil {
 		in.release()
@@ -282,10 +289,11 @@ func (p *Page) list(scale float64, lim *limit) (dl *displayList, reused bool) {
 // to the end. A display list records all optional content and all
 // annotations that can be drawn; any other device sees what vis and af
 // show.
-func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, vis *Visibility, af *annotFilter, lim *limit) bool {
+func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, overprint bool, vis *Visibility, af *annotFilter, lim *limit) bool {
 	base := p.deviceMatrix(scale)
 	dev.ClipRect(p.Box, base)
 	in.reset(p.doc, dev, st, lim)
+	in.overprint = overprint
 	in.devBox = p.Bounds(scale)
 	if vis != nil {
 		in.ocVis, in.ocZoom = vis, scale
@@ -333,6 +341,8 @@ type RunOptions struct {
 	// RenderOptions. A TextDevice sees the text of their appearances.
 	Annotations    AnnotMode
 	SkipAnnotation func(index int) bool
+	// SimulateOverprint is as for RenderOptions.
+	SimulateOverprint bool
 }
 
 // RunWith is Run with options.
@@ -354,7 +364,7 @@ func (p *Page) RunWith(ctx context.Context, dev Device, opt RunOptions) (err err
 	lim := &limit{ctx: ctx}
 	in := recorders.Get().(*interp)
 	af := annotFilter{mode: opt.Annotations, skip: opt.SkipAnnotation}
-	ok := p.record(in, dev, st, normScale(opt.Scale), vis, &af, lim)
+	ok := p.record(in, dev, st, normScale(opt.Scale), opt.SimulateOverprint, vis, &af, lim)
 	dev.PopClip()
 	in.release()
 	recorders.Put(in)

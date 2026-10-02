@@ -18,6 +18,8 @@ type textState struct {
 	leading   float64
 	rise      float64
 	mode      TextMode
+	// noKnockout is TK false (see textKnockout).
+	noKnockout bool
 }
 
 // textObject is what lives between BT and ET, outside the graphics state,
@@ -33,6 +35,11 @@ type textObject struct {
 	user []Matrix // em → user space, per glyph of run
 	path Path     // stroked text
 
+	// one is a glyph of run drawn on its own, boxes the glyph boxes
+	// compared for text knockout.
+	one   GlyphRun
+	boxes []Rect
+
 	// t3 are the Type 3 fonts whose glyphs are running, innermost last.
 	t3 []*Font
 }
@@ -47,7 +54,7 @@ func (t textObject) keep() textObject {
 	return textObject{
 		clip: t.clip, path: t.path,
 		run:  GlyphRun{Glyphs: t.run.Glyphs[:0]},
-		user: t.user[:0], t3: t.t3[:0],
+		user: t.user[:0], t3: t.t3[:0], boxes: t.boxes[:0],
 	}
 }
 
@@ -272,9 +279,16 @@ func (in *interp) flushText() {
 		td.ShowText(run, ts.mode)
 	}
 	mode := ts.mode
-	if mode != TextInvisible && mode != TextClip && in.transparent() {
-		in.beginObject(in.runBox(), identity)
-		defer in.dev.EndGroup()
+	cs, op := in.gs.fillCS, in.gs.opFill
+	if mode == TextStroke || mode == TextStrokeClip {
+		cs, op = in.gs.strokeCS, in.gs.opStroke
+	}
+	knockout := in.textKnockout(mode)
+	if mode != TextInvisible && mode != TextClip {
+		if bm, grouped := in.objectBlend(cs, op); grouped || knockout {
+			in.beginObject(in.runBox(), identity, bm, knockout)
+			defer in.dev.EndGroup()
+		}
 	}
 	if mode == TextFill || mode == TextFillStroke || mode == TextFillClip || mode == TextFillStrokeClip {
 		if in.gs.fillCS.kind == csPattern {
@@ -293,7 +307,18 @@ func (in *interp) flushText() {
 			}
 		} else if in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
 			in.st.Glyphs += len(run.Glyphs)
-			in.dev.FillGlyphs(run, &in.paint)
+			if knockout {
+				// Each glyph an object of the knockout group.
+				one := &tx.one
+				one.Font = run.Font
+				for i := range run.Glyphs {
+					one.Glyphs = run.Glyphs[i : i+1 : i+1]
+					in.dev.FillGlyphs(one, &in.paint)
+				}
+				*one = GlyphRun{}
+			} else {
+				in.dev.FillGlyphs(run, &in.paint)
+			}
 		}
 	}
 	if mode == TextStroke || mode == TextFillStroke || mode == TextStrokeClip || mode == TextFillStrokeClip {
