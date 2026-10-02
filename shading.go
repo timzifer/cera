@@ -3,6 +3,8 @@ package cera
 import (
 	"image/color"
 	"math"
+	"slices"
+	"sync"
 
 	"github.com/go-pdfkit/reader"
 	"github.com/timzifer/stilus"
@@ -31,6 +33,10 @@ type Shading struct {
 	// parameter, or of a parametric mesh over the parameter of its
 	// vertices (premultiplied, opaque).
 	Ramp stilus.Ramp
+	// Knots, if not empty, are the parameters of the entries of an axial
+	// or radial Ramp: the bounds of stitching functions appear twice,
+	// with the colours on either side, so that colour breaks stay exact.
+	Knots []float32
 	// BBox clips the shading in its own space if HasBBox is set.
 	BBox    Rect
 	HasBBox bool
@@ -49,6 +55,10 @@ type Shading struct {
 	// Bounds the box of their vertices.
 	Mesh   []stilus.MeshTriangle
 	Bounds Rect
+
+	// meshes keeps the shaders that draw Mesh, shared with the copy
+	// without background.
+	meshes *meshCache
 }
 
 // shadingEntry is a shading as read, for the sh operator (plain, without
@@ -150,7 +160,7 @@ func (d *Document) readShading(o reader.Object, res reader.Dict) *shadingEntry {
 		if a, ok := reader.ToArray(d.resolve(dict["Extend"])); ok && len(a) == 2 {
 			sh.Extend = [2]bool{d.boolean(a[0]), d.boolean(a[1])}
 		}
-		sh.Ramp = ramp(cs, fn, t0, t1)
+		sh.Ramp, sh.Knots = knottedRamp(cs, fn, t0, t1)
 	default:
 		if !isStream {
 			return e
@@ -158,6 +168,7 @@ func (d *Document) readShading(o reader.Object, res reader.Dict) *shadingEntry {
 		if !d.readMesh(sh, s, cs, fn) {
 			return e
 		}
+		sh.meshes = new(meshCache)
 	}
 	if approx != "" {
 		e.feature = approx
@@ -187,6 +198,108 @@ func ramp(cs *colorSpace, fn function, t0, t1 float64) stilus.Ramp {
 		r[i] = shadeColor(cs, fn.eval(in[:]))
 	}
 	return r
+}
+
+// knottedRamp tabulates fn from t0 to t1 like ramp, with knots at the
+// bounds of its stitching functions if it has any: each bound twice, with
+// the colours on either side, between evenly spaced samples.
+func knottedRamp(cs *colorSpace, fn function, t0, t1 float64) (stilus.Ramp, []float32) {
+	var ks []float64
+	var breaks []float64
+	stitchBounds(fn, &breaks)
+	for _, b := range breaks {
+		if t1 != t0 {
+			if k := (b - t0) / (t1 - t0); k > 0 && k < 1 {
+				ks = append(ks, k)
+			}
+		}
+	}
+	if len(ks) == 0 {
+		return ramp(cs, fn, t0, t1), nil
+	}
+	slices.Sort(ks)
+	ks = slices.Compact(ks)
+	var in [1]float64
+	at := func(t float64) uint32 {
+		in[0] = t
+		return shadeColor(cs, fn.eval(in[:]))
+	}
+	r := make(stilus.Ramp, 0, rampSize+2*len(ks))
+	knots := make([]float32, 0, cap(r))
+	eps := 1e-9 * max(math.Abs(t1-t0), 1)
+	for i := range rampSize {
+		k := float64(i) / (rampSize - 1)
+		for len(ks) > 0 && ks[0] <= k {
+			b := ks[0]
+			ks = ks[1:]
+			t := t0 + b*(t1-t0)
+			left := t - eps
+			if t1 < t0 {
+				left = t + eps
+			}
+			r = append(r, at(left), at(t))
+			knots = append(knots, float32(b), float32(b))
+		}
+		if n := len(knots); n > 0 && float64(knots[n-1]) >= k {
+			continue // a break at the sample
+		}
+		r = append(r, at(t0+k*(t1-t0)))
+		knots = append(knots, float32(k))
+	}
+	knots[len(knots)-1] = 1
+	return r, knots
+}
+
+// stitchBounds appends the bounds of the stitching functions in f, in the
+// input space of f.
+func stitchBounds(f function, dst *[]float64) {
+	switch f := f.(type) {
+	case *fnArray:
+		for _, p := range f.parts {
+			stitchBounds(p, dst)
+		}
+	case *stitchingFn:
+		*dst = append(*dst, f.bounds...)
+	}
+}
+
+// meshCache keeps one MeshShader per device matrix and alpha a mesh is
+// drawn with: its triangles are binned once and the shader is then shared
+// by every band and worker.
+type meshCache struct {
+	mu      sync.Mutex
+	entries []meshEntry
+}
+
+type meshEntry struct {
+	m     Matrix
+	alpha uint8
+	s     *stilus.MeshShader
+}
+
+// maxMeshShaders bounds the shaders kept per mesh; beyond, each draw sets
+// up its own.
+const maxMeshShaders = 8
+
+// meshShader returns a shader for the mesh of sh under m with alpha, nil
+// if it cannot be drawn so.
+func (sh *Shading) meshShader(m Matrix, alpha uint8) *stilus.MeshShader {
+	c := sh.meshes
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range c.entries {
+		if e.m == m && e.alpha == alpha {
+			return e.s
+		}
+	}
+	s := &stilus.MeshShader{Alpha: alpha}
+	if !s.Set(sh.Mesh, m, sh.Ramp) {
+		return nil
+	}
+	if len(c.entries) < maxMeshShaders {
+		c.entries = append(c.entries, meshEntry{m: m, alpha: alpha, s: s})
+	}
+	return s
 }
 
 // functionTexture samples a function-based shading over its domain.

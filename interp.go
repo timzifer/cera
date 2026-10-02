@@ -2,6 +2,7 @@ package cera
 
 import (
 	"bytes"
+	"image"
 	"image/color"
 	"math"
 
@@ -65,6 +66,14 @@ type interp struct {
 	td   TextDevice // dev, if it wants the text
 	tmp  Path       // glyph outlines filled with a pattern
 
+	// Tiling patterns: the device pixels drawn (empty: unknown), the
+	// depth of pattern cells being drawn, the tiles made for this page
+	// and their bytes.
+	devBox    image.Rectangle
+	patDepth  int
+	tiles     map[tileKey]*Tile
+	tileBytes int
+
 	paint Paint
 
 	scanners  []*content.Scanner // one per form depth
@@ -112,6 +121,7 @@ func (in *interp) release() {
 	in.stack = in.stack[:0]
 	in.doc, in.dev, in.st, in.lim, in.td = nil, nil, nil, nil, nil
 	in.out, in.rec, in.mute.d, in.ocVis = nil, nil, nil, nil
+	in.tiles = nil
 	in.gs = gstate{}
 	in.text = in.text.keep()
 }
@@ -527,8 +537,7 @@ func (in *interp) fillPath(rule FillRule) {
 		return
 	}
 	if in.gs.fillCS.kind == csPattern {
-		sh := in.patternShading(&in.gs.fillPat, in.gs.fillAlpha)
-		if sh == nil {
+		if !in.patternReady(&in.gs.fillPat, in.gs.fillAlpha) {
 			return
 		}
 		in.st.Fills++
@@ -537,7 +546,7 @@ func (in *interp) fillPath(rule FillRule) {
 			defer in.dev.EndGroup()
 		}
 		in.dev.ClipPath(&in.path, in.gs.ctm, rule)
-		in.dev.FillShading(sh, in.gs.fillPat.m, &in.paint)
+		in.paintPattern(false, deviceBox(&in.path, in.gs.ctm, 1))
 		in.dev.PopClip()
 		return
 	}
@@ -557,8 +566,7 @@ func (in *interp) strokePath() {
 		return
 	}
 	if in.gs.strokeCS.kind == csPattern {
-		sh := in.patternShading(&in.gs.strokePat, in.gs.strokeAlp)
-		if sh == nil {
+		if !in.patternReady(&in.gs.strokePat, in.gs.strokeAlp) {
 			return
 		}
 		in.st.Strokes++
@@ -567,7 +575,7 @@ func (in *interp) strokePath() {
 			defer in.dev.EndGroup()
 		}
 		in.dev.ClipStroke(&in.path, in.gs.ctm, &in.gs.style)
-		in.dev.FillShading(sh, in.gs.strokePat.m, &in.paint)
+		in.paintPattern(true, strokeBox(&in.path, in.gs.ctm, &in.gs.style))
 		in.dev.PopClip()
 		return
 	}
@@ -599,7 +607,16 @@ func (in *interp) setPaint(cs *colorSpace, v []float64, alpha float64) bool {
 
 func (in *interp) setColor(sc *content.Scanner, cs *colorSpace, dst []float64) {
 	if cs.kind == csPattern {
-		return // the pattern name: see setPattern
+		// The components of an uncoloured pattern's colour come before
+		// the name (see setPattern).
+		for i := range cs.n {
+			o := sc.FromEnd(cs.n - i)
+			if o == nil || o.Kind != content.Number {
+				break
+			}
+			dst[i] = o.Num
+		}
+		return
 	}
 	var v [maxComps]float64
 	if !sc.Nums(v[:cs.n]) {
@@ -739,6 +756,7 @@ func (c *clipsOnly) ClipPath(p *Path, m Matrix, rule FillRule)      { c.d.ClipPa
 func (c *clipsOnly) ClipRect(r Rect, m Matrix)                      { c.d.ClipRect(r, m) }
 func (c *clipsOnly) ClipStroke(p *Path, m Matrix, st *StrokeStyle)  { c.d.ClipStroke(p, m, st) }
 func (c *clipsOnly) FillShading(*Shading, Matrix, *Paint)           {}
+func (c *clipsOnly) FillTile(*Tile, Matrix, *Paint)                 {}
 func (c *clipsOnly) PopClip()                                       { c.d.PopClip() }
 func (c *clipsOnly) FillGlyphs(*GlyphRun, *Paint)                   {}
 func (c *clipsOnly) DrawImage(*Image, Matrix, *Paint)               {}

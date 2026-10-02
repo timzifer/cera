@@ -1,6 +1,6 @@
 # 0002. Tiling and shading patterns
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-01
 - Milestone: M7
 - Depends on: ADR 0001 (shadings), stilus ADR 0002 (repeating textures)
@@ -67,8 +67,9 @@ in the document's image cache and count against its budget.
 
 ## Consequences
 
-- `pattern` disappears from `Stats.Unsupported`; new keys `pattern-budget`
-  and `pattern-bad`.
+- `pattern` disappears from `Stats.Unsupported` (it remains only for
+  stencil images painted with a pattern); new key `pattern-budget`.
+  Patterns that do not read count as errors.
 - Text and strokes can be painted with patterns at no extra cost, since all
   three paths already take a `*Paint`.
 - Strategy 1 introduces resampling: a hatch line may be up to half a device
@@ -76,13 +77,33 @@ in the document's image cache and count against its budget.
   decide the thresholds between strategies; they are constants, not options.
 - The display list no longer holds only colours; items get a paint index.
 
-## Progress
+## Implementation notes
 
 Shading patterns (`PatternType 2`) are drawn as part of ADR 0001: the
 shading filled through a clip of the painted shape, with the pattern
 matrix against the pattern's base space and `Background` honoured.
-Tiling patterns (`PatternType 1`) are still counted as `pattern` and not
-drawn; this record stays proposed until they are.
+
+Tiling patterns (`pattern.go`, `tiledraw.go`), where they differ from the
+decision above:
+
+- **Paint as a clip.** As for shading patterns, an object painted with a
+  tiling pattern reaches the device as a clip of its shape, then the new
+  `Device.FillTile(t *Tile, m Matrix, paint *Paint)`, then `PopClip`. The
+  display list needs no paint index.
+- **Two strategies.** The tile, unless one cell covers the object's
+  device box, or at most 64 cells do whose step is larger than a tile:
+  those are replayed. Cells replayed side by side leave antialiased seams
+  where their content meets the cells' edges at fractional pixels, which
+  the wrapping tile does not. The average-colour strategy is not a
+  separate path: a tile is at least one pixel a side, and cells smaller
+  than a device pixel are averaged by stilus's periodic mip levels.
+- **Tiles are made while recording**, by a nested interpreter on a raster
+  device, at most 1024 pixels a side, once per page, pattern and linear
+  part of the pattern matrix, and kept by the display list. Recording
+  already happens per scale, so workers only read tiles.
+- **Uncoloured patterns** draw their cells in the colour given with `scn`
+  when replayed, and in white into an alpha tile otherwise, which
+  `ImageShader.SetMaskWrap` paints in any colour.
 
 ## Alternatives considered
 

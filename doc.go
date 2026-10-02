@@ -62,8 +62,10 @@
 // # Shadings and colour
 //
 // Shadings reach a device as FillShading, painting the current clip; a
-// path, stroke or text painted with a shading pattern arrives as the
-// shading filled through a clip of its shape. A document reads each
+// path, stroke or text painted with a pattern arrives as the pattern
+// painted through a clip of its shape: FillShading for a shading pattern,
+// FillTile for a tiling pattern (one step rasterized at device resolution
+// and repeated with wrap-around). A document reads each
 // shading once into what a device draws without PDF functions: a colour
 // ramp for axial and radial shadings, a sampled texture for function-based
 // ones and Gouraud-shaded triangles for the four mesh kinds. Colour spaces

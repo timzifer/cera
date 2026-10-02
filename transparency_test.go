@@ -147,6 +147,28 @@ func TestNonIsolatedGroup(t *testing.T) {
 	}
 }
 
+// A non-isolated group with Multiply inside, composited with Screen:
+// blue multiplied onto yellow is black, but the group's backdrop is
+// removed before Screen blends it (PDF 2.0, 11.4.8), so Screen sees
+// black over yellow on the left; on the right the page's backdrop is
+// transparent (the paper comes after it), so the blue stays.
+func TestNonIsolatedGroupBlended(t *testing.T) {
+	content := "/M gs 0 0 1 rg 50 0 100 100 re f"
+	res := "/Resources << /ExtGState << /M << /BM /Multiply >> >> >>"
+	for _, workers := range []int{1, 3} {
+		img, st, err := renderPage(t, buildPDF([]string{"1 1 0 rg 0 0 100 100 re f /S gs /F Do"},
+			"/Resources << /ExtGState << /S << /BM /Screen >> >> /XObject << /F 100 0 R >> >>",
+			formObj("/Group << /S /Transparency >> "+res, content)), 0,
+			RenderOptions{Background: white, Workers: workers, Scale: 2})
+		if err != nil || len(st.Unsupported) != 0 {
+			t.Fatal(err, st.Unsupported)
+		}
+		assertNear(t, img, 150, 100, color.RGBA{255, 255, 0, 255}, 1)
+		assertNear(t, img, 250, 100, color.RGBA{0, 0, 255, 255}, 1)
+		assertNear(t, img, 50, 100, color.RGBA{255, 255, 0, 255}, 1)
+	}
+}
+
 func TestIsolatedGroupBlends(t *testing.T) {
 	// Multiply inside a group: an isolated group blends with its own
 	// transparent backdrop (so the blue shows unchanged), a non-isolated

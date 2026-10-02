@@ -55,9 +55,11 @@ const (
 // The rectangle r under m bounds what a group or mask covers.
 //
 // Shadings arrive as FillShading, painting the current clip. A path,
-// stroke or text painted with a shading pattern arrives as the shading
-// filled through a clip of the shape: ClipPath, ClipStroke for strokes,
-// then FillShading and PopClip.
+// stroke or text painted with a pattern arrives as the pattern painted
+// through a clip of the shape: ClipPath, ClipStroke for strokes, then
+// FillShading (a shading pattern) or FillTile (a tiling pattern) and
+// PopClip. A tiling pattern of a few large cells arrives as the drawing
+// operations of its cells instead.
 type Device interface {
 	FillPath(p *Path, m Matrix, rule FillRule, paint *Paint)
 	StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Paint)
@@ -70,6 +72,11 @@ type Device interface {
 	// current clip (and the shading's BBox) with the constant alpha
 	// paint.Color.A.
 	FillShading(sh *Shading, m Matrix, paint *Paint)
+	// FillTile paints t, repeated in both directions, over the current
+	// clip, with m mapping the tile's pixel space to device space. A
+	// stencil tile (t.Stencil) paints paint through its shape, any other
+	// its own colours with the constant alpha paint.Color.A.
+	FillTile(t *Tile, m Matrix, paint *Paint)
 	// FillGlyphs fills the outlines of run (nonzero) with paint.
 	FillGlyphs(run *GlyphRun, paint *Paint)
 	// DrawImage paints img, whose unit square m maps to device space. A
@@ -123,6 +130,11 @@ type Group struct {
 	Alpha uint8
 	// Masked composites the group through the soft mask drawn just before.
 	Masked bool
+
+	// alone marks, in a display list, a non-isolated group with blend
+	// modes inside that is itself blended: drawn once more on its own
+	// first, so that compositing it can remove its backdrop.
+	alone bool
 }
 
 // SoftMask describes a soft mask (PDF 2.0, 11.6.5.2). Its values come from

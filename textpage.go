@@ -79,6 +79,7 @@ func (*textDevice) ClipPath(*Path, Matrix, FillRule)               {}
 func (*textDevice) ClipRect(Rect, Matrix)                          {}
 func (*textDevice) ClipStroke(*Path, Matrix, *StrokeStyle)         {}
 func (*textDevice) FillShading(*Shading, Matrix, *Paint)           {}
+func (*textDevice) FillTile(*Tile, Matrix, *Paint)                 {}
 func (*textDevice) PopClip()                                       {}
 func (*textDevice) FillGlyphs(*GlyphRun, *Paint)                   {}
 func (*textDevice) DrawImage(*Image, Matrix, *Paint)               {}

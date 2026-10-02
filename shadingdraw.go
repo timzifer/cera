@@ -8,10 +8,10 @@ import (
 
 // A raster device paints a shading over the current clip, within the
 // shading's BBox: axial and radial shadings and the background as fills
-// of the clip's rectangle with a shader, a function-based shading as a
-// texture over its domain, and a mesh as triangles drawn into a layer over
-// the part of the clip it covers, composited through the clips like a
-// group.
+// of the clip's rectangle with a shader (over a ramp with knots at
+// stitching bounds), a function-based shading as a texture over its
+// domain, and a mesh as one fill of its box with a stilus MeshShader that
+// every worker shares, without a layer.
 
 // shadeDraw is the per-device state of FillShading, reused between
 // shadings.
@@ -19,8 +19,6 @@ type shadeDraw struct {
 	lin   stilus.LinearGradient
 	rad   stilus.RadialGradient
 	img   stilus.ImageShader
-	layer stilus.LayerShader
-	mesh  image.RGBA // the layer of a mesh
 	paint Paint
 	path  Path
 }
@@ -75,8 +73,8 @@ func (d *RasterDevice) fillShading(sh *Shading, m Matrix, alpha uint8) {
 		d.C.Fill(&s.path, toShading, NonZero, &s.paint)
 	case 2:
 		g := &s.lin
-		g.Ramp, g.Extend, g.Alpha = sh.Ramp, sh.Extend, alpha
-		defer func() { g.Ramp = nil }()
+		g.Ramp, g.Knots, g.Extend, g.Alpha = sh.Ramp, sh.Knots, sh.Extend, alpha
+		defer func() { g.Ramp, g.Knots = nil, nil }()
 		c := &sh.Coords
 		if g.Set(c[0], c[1], c[2], c[3], m) {
 			s.paint = Paint{Shader: g}
@@ -84,8 +82,8 @@ func (d *RasterDevice) fillShading(sh *Shading, m Matrix, alpha uint8) {
 		}
 	case 3:
 		g := &s.rad
-		g.Ramp, g.Extend, g.Alpha = sh.Ramp, sh.Extend, alpha
-		defer func() { g.Ramp = nil }()
+		g.Ramp, g.Knots, g.Extend, g.Alpha = sh.Ramp, sh.Knots, sh.Extend, alpha
+		defer func() { g.Ramp, g.Knots = nil, nil }()
 		c := &sh.Coords
 		if g.Set(c[0], c[1], c[2], c[3], c[4], c[5], m) {
 			s.paint = Paint{Shader: g}
@@ -97,24 +95,22 @@ func (d *RasterDevice) fillShading(sh *Shading, m Matrix, alpha uint8) {
 	s.paint = Paint{}
 }
 
-// fillMesh draws the triangles of a mesh into a layer over the part of
-// clip they cover and composites it.
+// fillMesh fills the box of a mesh within clip with its shader.
 func (d *RasterDevice) fillMesh(sh *Shading, m Matrix, alpha uint8, clip image.Rectangle) {
 	b := sh.Bounds
 	corners := [2]stilus.Point{{X: float32(b.X0), Y: float32(b.Y0)}, {X: float32(b.X1), Y: float32(b.Y1)}}
-	area := deviceBoxPoints(corners[:], m, 1).Intersect(clip)
-	if area.Empty() {
+	if deviceBoxPoints(corners[:], m, 1).Intersect(clip).Empty() {
 		return
 	}
-	t := &d.t
+	ms := sh.meshShader(m, alpha)
+	if ms == nil {
+		return
+	}
 	s := &d.shade
-	s.mesh = t.image(area)
-	stilus.FillMesh(&s.mesh, area, sh.Mesh, m, sh.Ramp)
-	s.layer = stilus.LayerShader{Src: &s.mesh, Alpha: alpha}
-	d.fillArea(area, &s.layer)
-	s.layer = stilus.LayerShader{}
-	t.release(s.mesh.Pix)
-	s.mesh = image.RGBA{}
+	s.path.Reset()
+	s.path.Rect(float32(b.X0), float32(b.Y0), float32(b.Dx()), float32(b.Dy()))
+	s.paint = Paint{Shader: ms}
+	d.C.Fill(&s.path, m, NonZero, &s.paint)
 }
 
 // shadingBox returns the device pixels sh can paint under m, before

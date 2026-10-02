@@ -279,7 +279,7 @@ func (in *interp) flushText() {
 	if mode == TextFill || mode == TextFillStroke || mode == TextFillClip || mode == TextFillStrokeClip {
 		if in.gs.fillCS.kind == csPattern {
 			// The glyphs as a clip, in device space.
-			if sh := in.patternShading(&in.gs.fillPat, in.gs.fillAlpha); sh != nil {
+			if in.patternReady(&in.gs.fillPat, in.gs.fillAlpha) {
 				in.st.Glyphs += len(run.Glyphs)
 				in.tmp.Reset()
 				for i := range run.Glyphs {
@@ -288,7 +288,7 @@ func (in *interp) flushText() {
 					}
 				}
 				in.dev.ClipPath(&in.tmp, identity, NonZero)
-				in.dev.FillShading(sh, in.gs.fillPat.m, &in.paint)
+				in.paintPattern(false, deviceBox(&in.tmp, identity, 1))
 				in.dev.PopClip()
 			}
 		} else if in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
@@ -306,10 +306,10 @@ func (in *interp) flushText() {
 		switch {
 		case tx.path.Empty():
 		case in.gs.strokeCS.kind == csPattern:
-			if sh := in.patternShading(&in.gs.strokePat, in.gs.strokeAlp); sh != nil {
+			if in.patternReady(&in.gs.strokePat, in.gs.strokeAlp) {
 				in.st.Strokes++
 				in.dev.ClipStroke(&tx.path, in.gs.ctm, &in.gs.style)
-				in.dev.FillShading(sh, in.gs.strokePat.m, &in.paint)
+				in.paintPattern(true, strokeBox(&tx.path, in.gs.ctm, &in.gs.style))
 				in.dev.PopClip()
 			}
 		case in.setPaint(in.gs.strokeCS, in.gs.stroke[:], in.gs.strokeAlp):

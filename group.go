@@ -229,11 +229,17 @@ func (in *interp) formContent(s *reader.Stream, parent reader.Dict, depth int) {
 	if dec.Recovered {
 		in.st.Errors++
 	}
+	in.content(dec.Data, res, depth)
+}
+
+// content runs a content stream with a new path, in the current state,
+// which is the space of the patterns it names.
+func (in *interp) content(data []byte, res reader.Dict, depth int) {
 	in.path.Reset()
 	in.hasCur, in.clip = false, -1
 	base := in.base
 	in.base = in.gs.ctm
-	in.exec(dec.Data, res, depth)
+	in.exec(data, res, depth)
 	in.base = base
 	in.path.Reset()
 	in.hasCur, in.clip = false, -1

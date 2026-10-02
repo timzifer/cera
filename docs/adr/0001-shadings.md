@@ -115,7 +115,12 @@ decision above:
   shading pattern reaches the device as a clip of its shape (`ClipPath`,
   or the new `ClipStroke`) followed by `FillShading`; there is no path
   argument.
-- Axial and radial shadings use a ramp of 512 entries; function-based
+- Axial and radial shadings use a ramp of 512 entries, and with stilus
+  v0.7 the `Knots` of stilus ADR 0001: the bounds of stitching functions
+  appear twice, with the colours on either side, so a colour break falls
+  on the exact device pixel. Meshes are drawn by stilus's `MeshShader`,
+  one per shading, matrix and alpha (at most 8 kept), shared by all
+  workers, instead of a `FillMesh` layer per band. Function-based
   ones a fixed 128 × 128 texture sampled bilinearly (not the adaptive
   64–256 grid).
 - Budgets: 2²⁰ mesh triangles and 2¹⁶ patches per shading.

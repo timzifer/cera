@@ -55,7 +55,11 @@ type layers struct {
 	pending softPlane
 	// knockout says that the canvas draws into a knockout layer's scratch.
 	knockout bool
-	cover    image.RGBA // clip coverage of a non-isolated group
+	// aloneNext says that the next group is the first pass of a group
+	// drawn twice, on its own; alone is its layer, kept for the second.
+	aloneNext bool
+	alone     image.RGBA
+	cover     image.RGBA // clip coverage of a non-isolated group
 
 	free      [][]byte
 	freeBytes int
@@ -85,6 +89,10 @@ type layer struct {
 	mask softPlane // Masked: the soft mask, nil pixels if there is none
 	// ko and shape are the scratch and shape of a knockout group.
 	ko, shape image.RGBA
+	// initial and alone are, for a non-isolated group whose backdrop is
+	// removed, its backdrop and its first pass, drawn on its own.
+	initial, alone image.RGBA
+	alonePass      bool // the first pass
 	// ink is the greatest opacity drawn into the layer.
 	ink uint8
 	// isMask marks a soft mask being drawn, with sm its parameters.
@@ -114,6 +122,8 @@ func (t *layers) reset(dst *image.RGBA, region image.Rectangle) {
 	t.verbs, t.points = t.verbs[:0], t.points[:0]
 	t.release(t.pending.pix)
 	t.pending = softPlane{}
+	t.release(t.alone.Pix)
+	t.alone, t.aloneNext = image.RGBA{}, false
 	t.knockout = false
 	t.err = nil
 	t.base, t.region = dst, region
@@ -124,6 +134,8 @@ func (t *layers) drop(l *layer) {
 	t.release(l.ko.Pix)
 	t.release(l.shape.Pix)
 	t.release(l.mask.pix)
+	t.release(l.initial.Pix)
+	t.release(l.alone.Pix)
 	*l = layer{}
 }
 
@@ -293,6 +305,11 @@ func (d *RasterDevice) BeginGroup(r Rect, m Matrix, g *Group) {
 	l := t.push()
 	l.g, l.area, l.clips = *g, area, len(t.clips)
 	l.iso = g.Isolated || inKnockout
+	if t.aloneNext {
+		// The group drawn on its own: isolated and composited nowhere.
+		t.aloneNext = false
+		l.alonePass, l.iso, l.g.Masked = true, true, false
+	}
 	if t.base == nil {
 		l.pass = true
 		return
@@ -300,11 +317,16 @@ func (d *RasterDevice) BeginGroup(r Rect, m Matrix, g *Group) {
 	l.img = t.image(area)
 	if !l.iso {
 		copyRect(&l.img, t.target(parent), area)
+		if g.alone && t.alone.Rect == area && t.alone.Pix != nil {
+			l.alone, t.alone = t.alone, image.RGBA{}
+			l.initial = t.image(area)
+			copyRect(&l.initial, &l.img, area)
+		}
 	}
 	if g.Knockout {
 		l.ko, l.shape = t.image(area), t.image(area)
 	}
-	if g.Masked {
+	if l.g.Masked {
 		l.mask, t.pending = t.pending, softPlane{}
 	}
 	d.retarget(len(t.stack) - 1)
@@ -323,9 +345,15 @@ func (d *RasterDevice) EndGroup() {
 	}
 	parent := n - 2
 	d.retarget(parent)
+	if l.alonePass {
+		t.release(t.alone.Pix)
+		t.alone, l.img = l.img, image.RGBA{}
+		t.drop(l)
+		return
+	}
 	if !l.area.Empty() && l.g.Alpha != 0 && l.ink != 0 && (!l.g.Masked || l.mask.pix != nil) {
 		dst := t.target(parent)
-		if l.iso {
+		if l.iso || l.alone.Pix != nil {
 			d.composite(l, dst)
 		} else {
 			d.interpolate(l, dst, parent)
@@ -416,6 +444,9 @@ func (d *RasterDevice) composite(l *layer, dst *image.RGBA) {
 	if l.g.Masked {
 		t.alpha = *l.mask.alpha()
 		c.Mask = &t.alpha
+	}
+	if l.alone.Pix != nil {
+		c.Initial, c.Alone = &l.initial, &l.alone
 	}
 	d.fillArea(l.area, c)
 	*c = stilus.LayerShader{}

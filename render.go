@@ -286,6 +286,7 @@ func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, vis *Vis
 	base := p.deviceMatrix(scale)
 	dev.ClipRect(p.Box, base)
 	in.reset(p.doc, dev, st, lim)
+	in.devBox = p.Bounds(scale)
 	if vis != nil {
 		in.ocVis, in.ocZoom = vis, scale
 	}

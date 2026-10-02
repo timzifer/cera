@@ -124,17 +124,25 @@ it masks, over that object's box only.
 
 Shadings are read once per document into what a raster worker draws
 without evaluating PDF functions: axial and radial shadings into a ramp
-of 512 colours over their parameter, drawn by the gradient shaders of
-stilus (exact two-circle geometry, extends, per pixel centre), a
+of 512 colours over their parameter, with knots at the bounds of
+stitching functions so that colour breaks fall on the exact pixel, drawn
+by the gradient shaders of stilus (exact two-circle geometry, extends, per
+pixel centre), a
 function-based shading into a 128 × 128 texture sampled bilinearly over
 its domain, and the four mesh kinds into Gouraud-shaded triangles,
 coloured at their vertices or carrying the shading's parameter into a
 ramp; Coons and tensor patches are cut on a grid of 2 to 16 cells a side,
-finer the fewer patches a mesh has. A mesh is drawn into a layer over the
-part of the band it covers, without antialiasing inside so that no seams
-show, and composited through the clips. A path, a stroke or text painted
-with a shading pattern becomes the shading filled through a clip of its
-shape (`ClipPath`, or `ClipStroke` for strokes).
+finer the fewer patches a mesh has. A mesh is one fill of its box with a
+stilus `MeshShader`, binned once per matrix and shared by all workers,
+without antialiasing inside so that no seams show and without a layer. A
+path, a stroke or text painted with a pattern becomes the pattern painted
+through a clip of its shape (`ClipPath`, or `ClipStroke` for strokes). A
+tiling pattern is rasterized once per page and matrix into a tile of one
+step at device resolution, which stilus's `ImageShader` repeats with exact
+wrap-around (rotated and skewed hatching included, without seams); an
+uncoloured pattern is an alpha tile painted in any colour. When one cell
+covers the shape, or a few cells too large for a tile do, the cells are
+replayed as vector operations instead.
 
 Colours are converted to sRGB when they are read: Separation and DeviceN
 through their tint transforms into the alternate space (a one-ink
@@ -196,7 +204,8 @@ Ink, Highlight, Underline, StrikeOut and Squiggly without one;
 `Page.Annotations` exposes them with link targets.
 
 Not yet, and counted in `Stats.Unsupported` so the corpus report shows what
-matters most: tiling patterns (`pattern`), tint
+matters most: tiling patterns past their budgets (`pattern-budget`:
+nested past 4 levels, more than 64 MB of tiles per page), tint
 transforms that do not read (`tint-transform`, drawn as grey), shading
 functions that do not read (`shading-function`); ICC profiles built from
 lookup tables (CMYK press profiles among them) are drawn as the device
@@ -208,9 +217,9 @@ appearance that cera does not generate (`annot-no-ap`: FreeText, Text,
 Stamp …), `/Matte` of soft masks
 (`smask-matte`, drawn without), image filters the reader does not know
 (`image-filter`), images larger than 256 MB decoded (`image-too-large`);
-a non-isolated group with blend modes inside that is itself blended or an
-object of a knockout group (`non-isolated-blend`: composited as Normal,
-or drawn isolated), `/AIS` (`alpha-is-shape`), transfer functions that do
+a non-isolated group with blend modes inside that is an object of a
+knockout group (`non-isolated-blend`: drawn isolated; one that is itself
+blended has its backdrop removed, PDF 2.0 11.4.8), `/AIS` (`alpha-is-shape`), transfer functions that do
 not read (`smask-transfer`), soft masks past 4 levels of nesting or 1024
 per page (`smask-budget`, drawn empty).
 
@@ -229,7 +238,7 @@ recorded as architecture decisions in [`docs/adr`](docs/adr/README.md).
 | ✓ | M4 text | fonts via pdffont and opentype, stand-ins, per-worker glyph mask cache, Type 3, all render modes incl. text clips, TextDevice, `Page.Run`, `Page.Text` |
 | ✓ | M5 images | image XObjects and inline images, JPEG/JPEG 2000/JBIG2/CCITT, soft, stencil and colour-key masks at their own resolution, one-bit and palette planes, lazy mip levels with bilinear sampling, per-document image cache |
 | ✓ | M6 transparency | groups (isolated, non-isolated, knockout) in pooled layers per band, all blend modes exact at antialiased edges, soft masks (luminosity, alpha, backdrop, transfer functions), trivial and single-object groups dropped from the display list |
-| ◐ | M7 shadings and colour | shading types 1–7 and shading patterns, function LUTs (ramps, textures, tint tables), Separation/DeviceN, Lab, CalGray/CalRGB, simplified ICC (matrix/TRC); generic shaders moved to stilus; tiling patterns open |
+| ◐ | M7 shadings and colour | shading types 1–7 and shading patterns, function LUTs (ramps, textures, tint tables), Separation/DeviceN, Lab, CalGray/CalRGB, simplified ICC (matrix/TRC); generic shaders moved to stilus; tiling patterns (ADR 0002) on stilus's wrapping textures, knotted ramps and the mesh shader of stilus v0.7 |
 | ◐ | M7½ layers, annotations, forms | optional content (ADR 0004) ✓, annotations (ADR 0005) ✓; interactive forms |
 | | M8 robustness | fuzzing, large corpora, budgets (started: CI below) |
 | | M9 GPU backend | GGDevice on gogpu/gg, glyph atlas, lux |
