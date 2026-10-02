@@ -69,6 +69,19 @@ type interp struct {
 	maskDepth int                // soft masks being drawn
 	dashes    []float64          // dash patterns of this page, append-only
 	dashBuf   []float64
+
+	// Optional content. out is the device the page is drawn to; rec is
+	// out when it is a display list, which records hidden content with
+	// tags. Any other device sees hidden content through mute, which
+	// passes on only the clips, against ocVis at zoom ocZoom.
+	out    Device
+	rec    *displayList
+	mute   clipsOnly
+	ocVis  *Visibility
+	ocZoom float64
+	ocCur  int32   // the list's tag; for other devices 1 while hidden
+	mc     []int32 // ocCur before each open BMC or BDC
+	mcBase int     // len(mc) when the running content stream started
 }
 
 func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
@@ -76,10 +89,13 @@ func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
 		doc: doc, dev: dev, st: st, lim: lim,
 		stack: in.stack[:0], path: in.path, clip: -1,
 		scanners: in.scanners, dashes: in.dashes[:0], dashBuf: in.dashBuf,
-		text: in.text.keep(), objs: in.objs[:0],
+		text: in.text.keep(), objs: in.objs[:0], mc: in.mc[:0],
+		out: dev, ocVis: &noLayers, ocZoom: 1,
 	}
 	in.path.Reset()
 	in.td, _ = dev.(TextDevice)
+	in.rec, _ = dev.(*displayList)
+	in.mute.d = dev
 }
 
 // release drops references to the document so pooled workers do not keep
@@ -88,6 +104,7 @@ func (in *interp) release() {
 	clear(in.stack[:cap(in.stack)]) // popped states hold fonts too
 	in.stack = in.stack[:0]
 	in.doc, in.dev, in.st, in.lim, in.td = nil, nil, nil, nil, nil
+	in.out, in.rec, in.mute.d, in.ocVis = nil, nil, nil, nil
 	in.gs = gstate{}
 	in.text = in.text.keep()
 }
@@ -119,8 +136,8 @@ func (in *interp) exec(data []byte, res reader.Dict, depth int) {
 	}
 	sc := in.scanners[depth]
 	sc.Reset(data)
-	outer := in.depth
-	in.depth = depth
+	outer, mcBase := in.depth, in.mcBase
+	in.depth, in.mcBase = depth, len(in.mc)
 	for in.err == nil {
 		op, ok := sc.Next()
 		if !ok {
@@ -134,7 +151,8 @@ func (in *interp) exec(data []byte, res reader.Dict, depth int) {
 	}
 	in.st.Errors += sc.Errors()
 	sc.Reset(nil)
-	in.depth = outer
+	in.endMarked(in.mcBase) // marked content does not outlive its stream
+	in.depth, in.mcBase = outer, mcBase
 }
 
 func (in *interp) expired() bool {
@@ -339,10 +357,18 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 
 	// Marked content and compatibility.
 	case "BDC":
-		if sc.Len() >= 1 && sc.NameIs(sc.Arg(0), "OC") {
-			in.st.unsupported("optional-content")
+		in.mc = append(in.mc, in.ocCur)
+		if sc.Len() >= 2 && sc.NameIs(sc.Arg(0), "OC") {
+			o := in.lookupRef(res, "Properties", sc, sc.Arg(1))
+			in.enterOC(o)
 		}
-	case "BMC", "EMC", "MP", "DP", "BX", "EX":
+	case "BMC":
+		in.mc = append(in.mc, in.ocCur)
+	case "EMC":
+		if len(in.mc) > in.mcBase {
+			in.endMarked(len(in.mc) - 1)
+		}
+	case "MP", "DP", "BX", "EX":
 	default:
 		bad()
 	}
@@ -603,7 +629,72 @@ func (in *interp) extGState(d reader.Dict, res reader.Dict) {
 	}
 }
 
+// enterOC applies the membership o of content that begins; the caller
+// has saved ocCur on mc.
+func (in *interp) enterOC(o reader.Object) {
+	e, bad := in.doc.membership(o)
+	if bad {
+		in.st.unsupported("oc-bad") // drawn visible
+	}
+	switch {
+	case e == nil:
+	case in.rec != nil:
+		in.setOC(in.rec.ocTag(in.ocCur, e))
+	case in.ocCur == 0 && !e.eval(in.ocVis, in.ocZoom):
+		in.setOC(1)
+	}
+}
+
+// endMarked closes the marked content mc[n:].
+func (in *interp) endMarked(n int) {
+	if n < len(in.mc) {
+		in.setOC(in.mc[n])
+		in.mc = in.mc[:n]
+	}
+}
+
+func (in *interp) setOC(c int32) {
+	in.ocCur = c
+	switch {
+	case in.rec != nil:
+		in.rec.tag = c
+	case c != 0:
+		in.dev = &in.mute
+	default:
+		in.dev = in.out
+	}
+}
+
+// textDev returns the device that wants the text shown now, if any.
+func (in *interp) textDev() TextDevice {
+	if in.ocCur != 0 {
+		return nil // hidden text is not text of the page
+	}
+	return in.td
+}
+
+// clipsOnly passes the clips on to d and drops everything else: what a
+// device other than the display list sees of hidden content.
+type clipsOnly struct{ d Device }
+
+func (c *clipsOnly) FillPath(*Path, Matrix, FillRule, *Paint)       {}
+func (c *clipsOnly) StrokePath(*Path, Matrix, *StrokeStyle, *Paint) {}
+func (c *clipsOnly) ClipPath(p *Path, m Matrix, rule FillRule)      { c.d.ClipPath(p, m, rule) }
+func (c *clipsOnly) ClipRect(r Rect, m Matrix)                      { c.d.ClipRect(r, m) }
+func (c *clipsOnly) PopClip()                                       { c.d.PopClip() }
+func (c *clipsOnly) FillGlyphs(*GlyphRun, *Paint)                   {}
+func (c *clipsOnly) DrawImage(*Image, Matrix, *Paint)               {}
+func (c *clipsOnly) BeginGroup(Rect, Matrix, *Group)                {}
+func (c *clipsOnly) EndGroup()                                      {}
+func (c *clipsOnly) BeginMask(Rect, Matrix, *SoftMask)              {}
+func (c *clipsOnly) EndMask()                                       {}
+
+// xobject draws the XObject o. One that is optional content of its own
+// (/OC) is tagged like marked content.
 func (in *interp) xobject(o reader.Object, res reader.Dict, depth int) {
+	if in.rec == nil && in.ocCur != 0 {
+		return // hidden: an XObject changes no state outside itself
+	}
 	doc := in.doc
 	ref, _ := o.(reader.Ref)
 	s, ok := reader.ToStream(doc.resolve(o))
@@ -611,6 +702,21 @@ func (in *interp) xobject(o reader.Object, res reader.Dict, depth int) {
 		in.st.Errors++
 		return
 	}
+	if oc, ok := s.Dict["OC"]; ok {
+		n := len(in.mc)
+		in.mc = append(in.mc, in.ocCur)
+		in.enterOC(oc)
+		if in.rec != nil || in.ocCur == 0 {
+			in.drawXObject(ref, s, res, depth)
+		}
+		in.endMarked(n)
+		return
+	}
+	in.drawXObject(ref, s, res, depth)
+}
+
+func (in *interp) drawXObject(ref reader.Ref, s *reader.Stream, res reader.Dict, depth int) {
+	doc := in.doc
 	sub, _ := doc.name(s.Dict["Subtype"])
 	switch sub {
 	case "Image":

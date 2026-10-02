@@ -1,6 +1,6 @@
 # 0004. Optional content (layers)
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-01
 - Milestone: M7½
 
@@ -86,6 +86,41 @@ skipped with their bodies, which the existing bbox pairing already supports.
   content. The spec's memory targets are per page and scale; acceptable.
 - The cache key of the display list does not include visibility.
 - Group elimination (M6) must not merge items of different layer tags.
+
+## Implementation notes
+
+Implemented in `layers.go`, with tags in `displaylist.go` and the marked
+content stack in `interp.go`. Where it refines the decision above:
+
+- `Visibility` stores the layers that are *off*, so its zero value shows
+  every layer; `Visibility.Visible(l)` reads it. `LayerConfig.Visibility()`
+  is `VisibilityFor(UsageView)`; `RenderOptions.Usage` applies only when
+  `Layers` is nil, an explicit `Visibility` is taken as given.
+- Automatic states: a group listed in an `/AS` entry for the event is off
+  if any listed category (`View`, `Print`, `Export`) says so; `Zoom`
+  limits it to `[min, max)` of the render scale (1 = 100 %). `With`
+  removes a group's zoom limit. `Language` and `User` are not evaluated.
+- Groups whose `/Intent` the configuration's does not include are on and
+  stay out of the configuration's states.
+- **Clips are not tagged.** Hidden content does not paint, but its clips
+  still apply (PDF 2.0, 8.11), so the display list keeps them
+  untagged, and devices driven by `Page.Run` see hidden content as its
+  clips only. Group and mask ends carry the tag of their begin, so a
+  hidden group is skipped with its body.
+- `Page.RunWith(ctx, dev, RunOptions{Layers, Usage, ...})` selects the
+  visibility for other devices; `Page.Run` and `Page.Text` use the default
+  configuration. Hidden XObjects are not run for them at all.
+- Marked content does not outlive the content stream it starts in: what a
+  form, glyph procedure or soft mask leaves open is closed at its end, and
+  an unbalanced `EMC` is ignored.
+- Group elimination stays correct without extra rules: a single object
+  that takes over its group's opacity is nested in the group's content,
+  so its tag is never visible when the group's is not.
+- `/OC` of annotations waits for ADR 0005.
+- Without `/OCProperties`, `/OC` is ignored (spec). A group missing from
+  `/OCGs` counts as on. `oc-bad`: a `/Properties` entry that is missing, a
+  membership that is not a dictionary, or a visibility expression that does
+  not read or nests deeper than 16.
 
 ## Alternatives considered
 

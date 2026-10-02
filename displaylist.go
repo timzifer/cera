@@ -16,6 +16,11 @@ import (
 // carries its device-space bounding box, already clipped by the clips around
 // it, and a band index lists for each horizontal band of the page the items
 // that touch it. Drawing a band touches nothing else.
+//
+// Optional content is recorded whether visible or not: every item that
+// paints, and every group and mask, carries a tag for the membership of the
+// content around it, and a render skips the items whose tags its
+// Visibility hides. Clips are not tagged; hidden content still clips.
 
 type dlOp uint8
 
@@ -47,7 +52,11 @@ type dlItem struct {
 	// for a group into groups and for a mask into masks.
 	v0, v1, p0, p1 int32
 	style          int32
-	rect           Rect // dlClipRect, dlBeginGroup, dlBeginMask
+	// tag is the optional content the item belongs to, an index into
+	// ocTags; 0 is always visible. An end of a group or mask has the tag
+	// of its begin.
+	tag  int32
+	rect Rect // dlClipRect, dlBeginGroup, dlBeginMask
 	// bbox is the device-space area the item can touch, within the clips
 	// around it. A clip and its PopClip share the clip's box, so a band or
 	// region that skips one skips the other and everything in between;
@@ -83,6 +92,12 @@ type displayList struct {
 	open  []dlGroup
 	// maskAt is the first item of the last mask recorded.
 	maskAt int32
+	// tag is the tag of what is recorded now, set by the interpreter.
+	tag int32
+	// ocTags are the memberships of optional content met on the page,
+	// each nested in its parent; ocIndex finds them while recording.
+	ocTags  []ocTag
+	ocIndex map[ocTag]int32
 
 	// bounds is the page in device pixels; bandH the height of a band.
 	bounds image.Rectangle
@@ -126,6 +141,10 @@ func (l *displayList) reset(bounds image.Rectangle) {
 	clear(l.masks) // transfer tables
 	l.masks = l.masks[:0]
 	l.groups = l.groups[:0]
+	clear(l.ocTags) // expressions belong to a document
+	l.ocTags = append(l.ocTags[:0], ocTag{})
+	clear(l.ocIndex)
+	l.tag = 0
 	l.clips = append(l.clips[:0], bounds)
 	l.dead = 0
 	l.open = l.open[:0]
@@ -164,7 +183,7 @@ func (l *displayList) FillPath(p *Path, m Matrix, rule FillRule, paint *Paint) {
 	if bb.Empty() {
 		return
 	}
-	it := dlItem{op: dlFill, rule: rule, color: paint.Color, m: m, bbox: bb}
+	it := dlItem{op: dlFill, rule: rule, color: paint.Color, m: m, bbox: bb, tag: l.tag}
 	l.addPath(&it, p)
 	l.items = append(l.items, it)
 }
@@ -177,7 +196,7 @@ func (l *displayList) StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Pain
 	if bb.Empty() {
 		return
 	}
-	it := dlItem{op: dlStroke, color: paint.Color, m: m, bbox: bb, style: l.style(st)}
+	it := dlItem{op: dlStroke, color: paint.Color, m: m, bbox: bb, style: l.style(st), tag: l.tag}
 	l.addPath(&it, p)
 	l.items = append(l.items, it)
 }
@@ -209,7 +228,7 @@ func (l *displayList) FillGlyphs(run *GlyphRun, paint *Paint) {
 		f++
 	}
 	l.items = append(l.items, dlItem{
-		op: dlGlyphs, color: paint.Color, bbox: bb,
+		op: dlGlyphs, color: paint.Color, bbox: bb, tag: l.tag,
 		v0: int32(g0), v1: int32(len(l.glyphs)), style: int32(f),
 	})
 }
@@ -227,7 +246,7 @@ func (l *displayList) DrawImage(img *Image, m Matrix, paint *Paint) {
 		l.images = append(l.images, img)
 		i++
 	}
-	l.items = append(l.items, dlItem{op: dlImage, color: paint.Color, m: m, bbox: bb, style: int32(i)})
+	l.items = append(l.items, dlItem{op: dlImage, color: paint.Color, m: m, bbox: bb, style: int32(i), tag: l.tag})
 }
 
 // strokeBox returns the device pixels a stroke of p can touch.
@@ -342,7 +361,7 @@ func (l *displayList) BeginMask(r Rect, m Matrix, sm *SoftMask) {
 	}
 	l.maskAt = int32(len(l.items))
 	l.masks = append(l.masks, *sm)
-	l.items = append(l.items, dlItem{op: dlBeginMask, rect: r, m: m, bbox: bb, style: int32(len(l.masks) - 1)})
+	l.items = append(l.items, dlItem{op: dlBeginMask, rect: r, m: m, bbox: bb, style: int32(len(l.masks) - 1), tag: l.tag})
 	l.clips = append(l.clips, bb)
 	l.open = append(l.open, dlGroup{at: l.maskAt, first: l.maskAt, mask: true, depth: len(l.clips)})
 }
@@ -356,10 +375,11 @@ func (l *displayList) EndMask() {
 	if n == 0 || !l.open[n-1].mask {
 		return // unbalanced; the interpreter does not do this
 	}
+	at := l.open[n-1].at
 	l.open = l.open[:n-1]
 	bb := l.clipBox()
 	l.clips = l.clips[:len(l.clips)-1]
-	l.items = append(l.items, dlItem{op: dlEndMask, bbox: bb})
+	l.items = append(l.items, dlItem{op: dlEndMask, bbox: bb, tag: l.items[at].tag})
 }
 
 func (l *displayList) BeginGroup(r Rect, m Matrix, g *Group) {
@@ -374,7 +394,7 @@ func (l *displayList) BeginGroup(r Rect, m Matrix, g *Group) {
 		first = l.maskAt
 	}
 	l.groups = append(l.groups, *g)
-	l.items = append(l.items, dlItem{op: dlBeginGroup, rect: r, m: m, bbox: bb, style: int32(len(l.groups) - 1)})
+	l.items = append(l.items, dlItem{op: dlBeginGroup, rect: r, m: m, bbox: bb, style: int32(len(l.groups) - 1), tag: l.tag})
 	l.clips = append(l.clips, bb)
 	l.open = append(l.open, dlGroup{at: at, first: first, knockout: g.Knockout, depth: len(l.clips)})
 }
@@ -442,7 +462,7 @@ func (l *displayList) EndGroup() {
 		begin.op = dlNop
 		return
 	}
-	l.items = append(l.items, dlItem{op: dlEndGroup, bbox: bb})
+	l.items = append(l.items, dlItem{op: dlEndGroup, bbox: bb, tag: begin.tag})
 }
 
 // single returns the one item that paints among the items from i on,
@@ -554,32 +574,66 @@ type drawState struct {
 	run   GlyphRun
 }
 
-// drawBand replays the items of band b that touch r onto dev.
-func (l *displayList) drawBand(dev Device, ds *drawState, b int, r image.Rectangle, lim *limit) bool {
+// drawBand replays the items of band b that touch r and whose tags vis
+// shows onto dev.
+func (l *displayList) drawBand(dev Device, ds *drawState, b int, r image.Rectangle, vis []bool, lim *limit) bool {
 	defer func() { *ds = drawState{} }() // keep no references to the list
 	for k, i := range l.bandItems[l.bandStart[b]:l.bandStart[b+1]] {
 		if k%checkEvery == checkEvery-1 && lim.expired() {
 			return false
 		}
-		if it := &l.items[i]; it.bbox.Overlaps(r) {
+		if it := &l.items[i]; it.bbox.Overlaps(r) && vis[it.tag] {
 			l.drawItem(dev, ds, it)
 		}
 	}
 	return true
 }
 
-// drawAll replays the items that touch r onto dev in one pass.
-func (l *displayList) drawAll(dev Device, ds *drawState, r image.Rectangle, lim *limit) bool {
+// drawAll replays the items that touch r and whose tags vis shows onto
+// dev in one pass.
+func (l *displayList) drawAll(dev Device, ds *drawState, r image.Rectangle, vis []bool, lim *limit) bool {
 	defer func() { *ds = drawState{} }()
 	for k := range l.items {
 		if k%checkEvery == checkEvery-1 && lim.expired() {
 			return false
 		}
-		if it := &l.items[k]; it.bbox.Overlaps(r) {
+		if it := &l.items[k]; it.bbox.Overlaps(r) && vis[it.tag] {
 			l.drawItem(dev, ds, it)
 		}
 	}
 	return true
+}
+
+// ocTag is a membership of optional content, nested in the tag parent:
+// its content is visible when both are.
+type ocTag struct {
+	parent int32
+	expr   *ocExpr
+}
+
+// ocTag returns the tag of content of membership e inside content tagged
+// parent.
+func (l *displayList) ocTag(parent int32, e *ocExpr) int32 {
+	k := ocTag{parent, e}
+	if t, ok := l.ocIndex[k]; ok {
+		return t
+	}
+	if l.ocIndex == nil {
+		l.ocIndex = map[ocTag]int32{}
+	}
+	t := int32(len(l.ocTags))
+	l.ocTags = append(l.ocTags, k)
+	l.ocIndex[k] = t
+	return t
+}
+
+// visibleTags evaluates the tags of the list under v into dst.
+func (l *displayList) visibleTags(dst []bool, v *Visibility) []bool {
+	dst = append(dst[:0], true)
+	for _, t := range l.ocTags[1:] {
+		dst = append(dst, dst[t.parent] && t.expr.eval(v, l.scale))
+	}
+	return dst
 }
 
 func (l *displayList) drawItem(dev Device, ds *drawState, it *dlItem) {

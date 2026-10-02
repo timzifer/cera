@@ -210,7 +210,7 @@ func (in *interp) show(s []byte, res reader.Dict, depth int) {
 		in.st.unsupported("font-missing")
 	}
 	// Glyphs are needed unless nothing is drawn, clipped or extracted.
-	need := ts.mode != TextInvisible || in.td != nil
+	need := ts.mode != TextInvisible || in.textDev() != nil
 	step := 1
 	if f.composite() {
 		step = 2
@@ -268,8 +268,8 @@ func (in *interp) flushText() {
 	}()
 	ts := &in.gs.text
 	run.Font = ts.font
-	if in.td != nil {
-		in.td.ShowText(run, ts.mode)
+	if td := in.textDev(); td != nil {
+		td.ShowText(run, ts.mode)
 	}
 	mode := ts.mode
 	if mode != TextInvisible && mode != TextClip && in.transparent() {
@@ -373,10 +373,10 @@ func (in *interp) showType3(f *Font, s []byte, res reader.Dict, depth int) {
 	for _, b := range s {
 		code := int(b)
 		mt := em.Mul(tx.tm)
-		if in.td != nil {
+		if td := in.textDev(); td != nil {
 			tx.run.Font = f
 			tx.run.Glyphs = append(tx.run.Glyphs[:0], Glyph{Code: code, GID: code, M: mt.Mul(in.gs.ctm), Advance: f.pdf.Width(code)})
-			in.td.ShowText(&tx.run, ts.mode)
+			td.ShowText(&tx.run, ts.mode)
 			tx.run.Glyphs = tx.run.Glyphs[:0]
 			tx.run.Font = nil
 		}

@@ -16,6 +16,11 @@ import (
 // is added to every page dictionary; objs are extra objects numbered from
 // 100 on ("100 0 R" is the first).
 func buildPDF(contents []string, pageExtra string, objs ...string) []byte {
+	return buildPDFCatalog("", contents, pageExtra, objs...)
+}
+
+// buildPDFCatalog is buildPDF with catalogExtra added to the catalog.
+func buildPDFCatalog(catalogExtra string, contents []string, pageExtra string, objs ...string) []byte {
 	var b bytes.Buffer
 	offsets := map[int]int{}
 	obj := func(n int, body string) {
@@ -27,7 +32,7 @@ func buildPDF(contents []string, pageExtra string, objs ...string) []byte {
 	for i := range contents {
 		kids = append(kids, fmt.Sprintf("%d 0 R", 10+2*i))
 	}
-	obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+	obj(1, "<< /Type /Catalog /Pages 2 0 R "+catalogExtra+" >>")
 	obj(2, fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d /MediaBox [0 0 200 100] >>", strings.Join(kids, " "), len(contents)))
 	for i, c := range contents {
 		obj(10+2*i, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /Contents %d 0 R %s >>", 11+2*i, pageExtra))
