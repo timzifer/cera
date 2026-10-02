@@ -164,24 +164,46 @@ func TestTilingPatternTile(t *testing.T) {
 }
 
 func TestTilingPatternReplay(t *testing.T) {
-	// 4 cells: drawn as vector operations, through the object's clip.
-	img := renderPaint(t, "/Pattern cs /P scn 0 80 20 20 re f", "/Pattern << /P 100 0 R >>",
-		hatchPattern(1, "", "1 0 0 rg 0 0 2 2 re f"))
-	assertPixel(t, img, 0, 19, red)
-	assertPixel(t, img, 10, 9, red)
-	assertPixel(t, img, 5, 15, white)
-	assertPixel(t, img, 20, 19, white) // outside the rectangle
+	// Cells of 1200 pixels, too large for a tile: drawn as vector
+	// operations, through the object's clip.
+	img := renderPaint(t, "/Pattern cs /P scn 0 0 150 100 re f", "/Pattern << /P 100 0 R >>",
+		hatchPattern(1, "/Matrix [120 0 0 120 0 0]", "1 0 0 rg 0 0 0.5 0.5 re f"))
+	assertPixel(t, img, 30, 70, red)
+	assertPixel(t, img, 59, 99, red)
+	assertPixel(t, img, 60, 70, white)
+	assertPixel(t, img, 30, 39, white)
+}
+
+func TestTilingPatternNoSeams(t *testing.T) {
+	// Stripes that run across the cells' edges at a scale where cells are
+	// not whole pixels: every pixel of a stripe is fully red.
+	pat := streamObj("/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 30 30] /XStep 30 /YStep 30"+
+		" /Resources << >>", []byte("1 0 0 rg 0 0 10 30 re f 20 0 10 30 re f"))
+	img, _, err := renderPage(t, buildPDF([]string{"/Pattern cs /P scn 0 0 200 100 re f"},
+		"/Resources << /Pattern << /P 100 0 R >> >>", pat), 0, RenderOptions{Background: white, Scale: 150.0 / 72, Workers: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := 150.0 / 72
+	for y := 2; y < img.Bounds().Dy()-2; y++ {
+		for _, ux := range []float64{25, 35, 55, 65} { // inside stripes that cross x = 30 and 60
+			x := int(ux * s)
+			if c := img.RGBAAt(x, y); c.G > 2 {
+				t.Fatalf("pixel (%d, %d) = %v", x, y, c)
+			}
+		}
+	}
 }
 
 func TestUncolouredPattern(t *testing.T) {
-	for _, area := range []string{"0 0 200 100", "0 80 20 20"} { // tile, replay
-		t.Run(area, func(t *testing.T) {
-			img := renderPaint(t, "/CS0 cs 0 0 1 /P scn "+area+" re f",
+	// Drawn from a tile, and with cells too large for one, replayed.
+	for _, c := range []struct{ m, cell string }{{"", "0 0 2 2"}, {"/Matrix [120 0 0 120 0 0]", "0 0 0.1 0.1"}} {
+		t.Run(c.m, func(t *testing.T) {
+			img := renderPaint(t, "/CS0 cs 0 0 1 /P scn 0 0 200 100 re f",
 				"/Pattern << /P 100 0 R >> /ColorSpace << /CS0 [/Pattern /DeviceRGB] >>",
-				hatchPattern(2, "", "1 0 0 rg 0 0 2 2 re f"))
-			assertNear(t, img, 0, 19, blue, 8)
-			assertNear(t, img, 10, 9, blue, 8)
-			assertNear(t, img, 5, 15, white, 8)
+				hatchPattern(2, c.m, "1 0 0 rg "+c.cell+" re f"))
+			assertNear(t, img, 0, 99, blue, 8)
+			assertNear(t, img, 20, 95, white, 8)
 		})
 	}
 }

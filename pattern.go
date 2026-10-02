@@ -14,8 +14,9 @@ import (
 // device as a clip of its shape followed by the pattern over the clip:
 // FillShading for a shading pattern, and for a tiling pattern either
 // FillTile, one step of the pattern rasterized at device resolution and
-// repeated by stilus's wrapping sampler, or, when only a few cells cover
-// the object, the drawing operations of each cell (exact vector output).
+// repeated by stilus's wrapping sampler, or, when one cell covers the
+// object or a few cells too large for a tile do, the drawing operations
+// of each cell (exact vector output).
 // The pattern matrix maps pattern space to the default space of the
 // content stream whose resources name the pattern.
 
@@ -209,8 +210,13 @@ func (in *interp) tiling(p *pattern, o reader.Object, pm Matrix, base *colorSpac
 	if i0 > i1 || j0 > j1 {
 		return
 	}
+	// The tile repeats without seams, where cells drawn side by side
+	// would leave antialiased edges between them; cells too large for a
+	// tile are drawn as they are, if there are few.
 	cells := (i1 - i0 + 1) * (j1 - j0 + 1)
-	if cells <= maxReplayCells {
+	large := math.Hypot(pm[0], pm[1])*math.Abs(p.xstep) > maxTileSide ||
+		math.Hypot(pm[2], pm[3])*math.Abs(p.ystep) > maxTileSide
+	if cells == 1 || large && cells <= maxReplayCells {
 		in.replayCells(p, pm, base, comps, a, box, i0, i1, j0, j1)
 		return
 	}

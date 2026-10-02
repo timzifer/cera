@@ -75,8 +75,11 @@ in the document's image cache and count against its budget.
   `Device.FillTile(t *Tile, m Matrix, paint *Paint)`. `FillPath`,
   `StrokePath` and `FillGlyphs` keep solid colours, and the display list
   needs no paint index.
-- **Two strategies.** Replay when at most 64 cells cover the object's
-  device box; otherwise the tile. The average-colour strategy is not a
+- **Two strategies.** The tile, unless one cell covers the object's
+  device box, or at most 64 cells do whose step is larger than a tile:
+  those are replayed. Replaying cells side by side leaves antialiased
+  seams where cell content meets the cells' edges at fractional pixels,
+  which the wrapping tile does not. The average-colour strategy is not a
   separate path: a tile is at least one pixel a side, and a cell smaller
   than a device pixel is drawn into it antialiased and read through
   stilus's periodic mip levels, which averages it.
