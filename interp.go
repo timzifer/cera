@@ -24,6 +24,7 @@ type gstate struct {
 
 	fillCS, strokeCS     *colorSpace
 	fill, stroke         [maxComps]float64
+	fillPat, strokePat   patternPaint // in a Pattern colour space
 	fillAlpha, strokeAlp float64
 	// blend and smask composite what is painted (see group.go).
 	blend BlendMode
@@ -51,6 +52,9 @@ type interp struct {
 
 	gs    gstate
 	stack []gstate
+	// base is the CTM at the start of the content stream running: the
+	// space of the patterns it sets.
+	base Matrix
 
 	path       Path
 	cur, start stilus.Point
@@ -59,6 +63,7 @@ type interp struct {
 
 	text textObject
 	td   TextDevice // dev, if it wants the text
+	tmp  Path       // glyph outlines filled with a pattern
 
 	paint Paint
 
@@ -89,7 +94,7 @@ type interp struct {
 func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
 	*in = interp{
 		doc: doc, dev: dev, st: st, lim: lim,
-		stack: in.stack[:0], path: in.path, clip: -1,
+		stack: in.stack[:0], path: in.path, clip: -1, tmp: in.tmp,
 		scanners: in.scanners, dashes: in.dashes[:0], dashBuf: in.dashBuf,
 		text: in.text.keep(), objs: in.objs[:0], mc: in.mc[:0], annotBuf: in.annotBuf[:0],
 		out: dev, ocVis: &noLayers, ocZoom: 1,
@@ -125,6 +130,7 @@ func (in *interp) initState(ctm Matrix) {
 // stack afterwards.
 func (in *interp) run(data []byte, res reader.Dict, ctm Matrix, depth int) {
 	in.initState(ctm)
+	in.base = ctm
 	in.exec(data, res, depth)
 	in.unwind(0)
 	in.popClips(in.gs.clips)
@@ -350,7 +356,7 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 	case "BI":
 		in.inlineImage(sc, res)
 	case "sh":
-		in.st.unsupported("shading")
+		in.shadingOp(sc, res)
 
 	// Text.
 	case "BT", "ET", "Tc", "Tw", "Tz", "TL", "Tf", "Tr", "Ts", "Td", "TD", "Tm", "T*",
@@ -389,14 +395,22 @@ func (in *interp) color(sc *content.Scanner, op []byte, res reader.Dict) {
 		if op[0] == 'C' {
 			in.gs.strokeCS = cs
 			cs.initial(in.gs.stroke[:])
+			in.gs.strokePat = patternPaint{}
 		} else {
 			in.gs.fillCS = cs
 			cs.initial(in.gs.fill[:])
+			in.gs.fillPat = patternPaint{}
 		}
 	case "SC", "SCN":
 		in.setColor(sc, in.gs.strokeCS, in.gs.stroke[:])
+		if in.gs.strokeCS.kind == csPattern {
+			in.setPattern(sc, res, &in.gs.strokePat)
+		}
 	case "sc", "scn":
 		in.setColor(sc, in.gs.fillCS, in.gs.fill[:])
+		if in.gs.fillCS.kind == csPattern {
+			in.setPattern(sc, res, &in.gs.fillPat)
+		}
 	default: // G g RG rg K k
 		cs := spaceGray
 		switch op[0] {
@@ -509,7 +523,25 @@ func (in *interp) endPath() {
 }
 
 func (in *interp) fillPath(rule FillRule) {
-	if in.path.Empty() || !in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
+	if in.path.Empty() {
+		return
+	}
+	if in.gs.fillCS.kind == csPattern {
+		sh := in.patternShading(&in.gs.fillPat, in.gs.fillAlpha)
+		if sh == nil {
+			return
+		}
+		in.st.Fills++
+		if in.transparent() {
+			in.beginObject(in.pathBox(0), in.gs.ctm)
+			defer in.dev.EndGroup()
+		}
+		in.dev.ClipPath(&in.path, in.gs.ctm, rule)
+		in.dev.FillShading(sh, in.gs.fillPat.m, &in.paint)
+		in.dev.PopClip()
+		return
+	}
+	if !in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
 		return
 	}
 	in.st.Fills++
@@ -521,7 +553,25 @@ func (in *interp) fillPath(rule FillRule) {
 }
 
 func (in *interp) strokePath() {
-	if in.path.Empty() || !in.setPaint(in.gs.strokeCS, in.gs.stroke[:], in.gs.strokeAlp) {
+	if in.path.Empty() {
+		return
+	}
+	if in.gs.strokeCS.kind == csPattern {
+		sh := in.patternShading(&in.gs.strokePat, in.gs.strokeAlp)
+		if sh == nil {
+			return
+		}
+		in.st.Strokes++
+		if in.transparent() {
+			in.beginObject(in.pathBox(in.strokePad()), in.gs.ctm)
+			defer in.dev.EndGroup()
+		}
+		in.dev.ClipStroke(&in.path, in.gs.ctm, &in.gs.style)
+		in.dev.FillShading(sh, in.gs.strokePat.m, &in.paint)
+		in.dev.PopClip()
+		return
+	}
+	if !in.setPaint(in.gs.strokeCS, in.gs.stroke[:], in.gs.strokeAlp) {
 		return
 	}
 	in.st.Strokes++
@@ -532,10 +582,14 @@ func (in *interp) strokePath() {
 	in.dev.StrokePath(&in.path, in.gs.ctm, &in.gs.style, &in.paint)
 }
 
-// setPaint prepares in.paint; false means nothing is painted.
+// setPaint prepares in.paint; false means nothing is painted. Patterns
+// are painted by the callers that can (fills, strokes, text).
 func (in *interp) setPaint(cs *colorSpace, v []float64, alpha float64) bool {
 	if cs.kind == csPattern {
 		in.st.unsupported("pattern")
+		return false
+	}
+	if cs.none {
 		return false
 	}
 	r, g, b := cs.rgb(v)
@@ -545,7 +599,7 @@ func (in *interp) setPaint(cs *colorSpace, v []float64, alpha float64) bool {
 
 func (in *interp) setColor(sc *content.Scanner, cs *colorSpace, dst []float64) {
 	if cs.kind == csPattern {
-		return // the pattern name is resolved when patterns land (M7)
+		return // the pattern name: see setPattern
 	}
 	var v [maxComps]float64
 	if !sc.Nums(v[:cs.n]) {
@@ -683,6 +737,8 @@ func (c *clipsOnly) FillPath(*Path, Matrix, FillRule, *Paint)       {}
 func (c *clipsOnly) StrokePath(*Path, Matrix, *StrokeStyle, *Paint) {}
 func (c *clipsOnly) ClipPath(p *Path, m Matrix, rule FillRule)      { c.d.ClipPath(p, m, rule) }
 func (c *clipsOnly) ClipRect(r Rect, m Matrix)                      { c.d.ClipRect(r, m) }
+func (c *clipsOnly) ClipStroke(p *Path, m Matrix, st *StrokeStyle)  { c.d.ClipStroke(p, m, st) }
+func (c *clipsOnly) FillShading(*Shading, Matrix, *Paint)           {}
 func (c *clipsOnly) PopClip()                                       { c.d.PopClip() }
 func (c *clipsOnly) FillGlyphs(*GlyphRun, *Paint)                   {}
 func (c *clipsOnly) DrawImage(*Image, Matrix, *Paint)               {}

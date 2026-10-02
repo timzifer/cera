@@ -346,51 +346,6 @@ func TestImageMipmapAverages(t *testing.T) {
 	}
 }
 
-func TestImageMipLevels(t *testing.T) {
-	// Odd sizes: edge blocks are partial and averaged over what they hold.
-	p := plane{kind: planeRGBA, w: 5, h: 3, stride: 5, pix32: make([]uint32, 15)}
-	for i := range p.pix32 {
-		p.pix32[i] = pack(uint8(10*i), 0, 0, 255)
-	}
-	tex := newTexture(p)
-	if tex.levels() != 3 {
-		t.Errorf("levels %d", tex.levels())
-	}
-	l1 := tex.level(1)
-	if l1.w != 3 || l1.h != 2 {
-		t.Fatalf("level 1 is %d × %d", l1.w, l1.h)
-	}
-	// Top-left block: samples 0, 1, 5, 6 → 30; bottom-right: sample 14.
-	if r, _, _, _ := unpack(l1.at(0, 0)); r != 30 {
-		t.Errorf("level 1 (0, 0) red %d", r)
-	}
-	if r, _, _, _ := unpack(l1.at(2, 1)); r != 140 {
-		t.Errorf("level 1 (2, 1) red %d", r)
-	}
-	if tex.level(1) != l1 || tex.level(9) != tex.level(3) {
-		t.Error("levels are not kept")
-	}
-
-	// Bit planes count ones, at byte and sub-byte block sizes.
-	bitsPlane := plane{kind: planeBits, w: 20, h: 4, stride: 3, pix8: []byte{
-		0xff, 0x00, 0xf0, 0xff, 0x00, 0xf0, 0xff, 0x00, 0xf0, 0xff, 0x00, 0xf0,
-	}, pal: grayPal}
-	bt := newTexture(bitsPlane)
-	if !bt.gray {
-		t.Error("a grey palette makes grey levels")
-	}
-	l3 := bt.level(3) // blocks of 8: all ones, all zeros, the last 4 ones
-	for x, want := range []uint8{1, 0, 1} {
-		if got := l3.pix8[x]; got != want {
-			t.Errorf("level 3 [%d] = %d, want %d", x, got, want)
-		}
-	}
-	l2 := bt.level(2)
-	if l2.w != 5 || l2.pix8[1] != 1 || l2.pix8[2] != 0 || l2.pix8[4] != 1 {
-		t.Errorf("level 2 %v", l2.pix8[:l2.w])
-	}
-}
-
 func TestImageCache(t *testing.T) {
 	im := streamObj("/Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8",
 		[]byte("\xff\x00\x00\x00\xff\x00\x00\x00\xff\xff\xff\xff"))

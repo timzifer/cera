@@ -32,6 +32,13 @@ type Document struct {
 
 	pageIdxOnce sync.Once
 	pageIdx     map[reader.Ref]int // page index by reference, for links
+
+	// Colour spaces and shadings by reference.
+	csMu     sync.Mutex
+	spaces   map[reader.Ref]csEntry
+	shMu     sync.Mutex
+	shadings map[reader.Ref]*shadingEntry
+	patterns map[reader.Ref]*patternEntry
 }
 
 // Open parses a PDF file. Damaged cross-reference tables, wrong stream

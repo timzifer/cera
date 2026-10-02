@@ -204,8 +204,11 @@ func TestUnsupportedIsCounted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Unsupported["font-missing"] != 1 || st.Unsupported["shading"] != 1 {
+	if st.Unsupported["font-missing"] != 1 || len(st.Unsupported) != 1 {
 		t.Errorf("unsupported %v", st.Unsupported)
+	}
+	if st.Errors == 0 {
+		t.Error("a missing shading is not an error")
 	}
 }
 
