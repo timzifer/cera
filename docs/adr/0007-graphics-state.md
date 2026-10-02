@@ -1,6 +1,6 @@
 # 0007. The rest of the graphics state: overprint, text knockout, transfer
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-01
 - Milestone: M7
 
@@ -46,6 +46,31 @@
    a 256-entry table per channel (the machinery soft masks already have).
 6. **`BG`, `UCR`, `HT`, `FL`, `SM`, `SA`** are and stay ignored: they
    describe the output device, not the page. `ri` stays ignored (ADR 0003).
+
+## Implementation notes
+
+- **1–6** are in `extgstate.go`. `op` falls back to `OP` when absent.
+- **3**: overprinted objects (fills, strokes, text, stencil masks in a
+  solid colour) become object groups with `Multiply`, unless the state
+  already blends. The display list records the page once per
+  `SimulateOverprint` setting (`Page.Render` keeps the last one, like
+  the scale); `RunOptions` has the same field. `overprint` is counted only
+  where overprint would apply and is not simulated, so it stays in the
+  default corpus report as a measure of how often it occurs.
+- **4** works per text-showing operator, not per text object: a run is
+  checked for overlapping glyph boxes (more than 256 glyphs are taken to
+  overlap) when filled at an opacity below 1, and then drawn as an
+  isolated knockout group with one `FillGlyphs` per glyph, carrying the
+  state's blend mode and soft mask. For Normal compositing an isolated
+  knockout group equals the non-isolated one the spec describes. Glyphs
+  of different operators in one `BT … ET`, stroked text, pattern fills
+  and Type 3 glyphs are not knocked out; the stroked and pattern-filled
+  cases are counted as `text-knockout`.
+- **5**: transfer functions apply to solid colours (fills, strokes,
+  text, stencil masks), as a table per RGB component made once per
+  ExtGState object. Images, shadings and patterns are drawn without and
+  counted as `transfer`, as is a function that does not read. `TR2
+  /Default` is the identity.
 
 ## Consequences
 

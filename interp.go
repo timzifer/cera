@@ -30,6 +30,10 @@ type gstate struct {
 	// blend and smask composite what is painted (see group.go).
 	blend BlendMode
 	smask *softMask
+	// Overprint of fills and strokes, OPM 1, and the transfer function
+	// (nil: identity); see extgstate.go.
+	opFill, opStroke, opm1 bool
+	transfer               *transfer
 
 	style StrokeStyle
 
@@ -98,6 +102,9 @@ type interp struct {
 	mcBase int     // len(mc) when the running content stream started
 
 	annotBuf []byte // generated appearance streams
+
+	// overprint simulates overprint (RenderOptions.SimulateOverprint).
+	overprint bool
 }
 
 func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
@@ -181,21 +188,8 @@ func (in *interp) expired() bool {
 	return false
 }
 
-// lookup returns the resolved entry of the resource category cat named by
-// the operand name.
-func (in *interp) lookup(res reader.Dict, cat reader.Name, sc *content.Scanner, name *content.Operand) reader.Object {
-	if name == nil || name.Kind != content.Name {
-		return nil
-	}
-	sub := in.doc.dict(res[cat])
-	if sub == nil {
-		return nil
-	}
-	return in.doc.resolve(sub[reader.Name(sc.Text(name))])
-}
-
-// lookupRef is lookup without resolving the entry, so that the reference
-// can serve as a cache key.
+// lookupRef returns the entry of the resource category cat named by the
+// operand name, unresolved, so that a reference can serve as a cache key.
 func (in *interp) lookupRef(res reader.Dict, cat reader.Name, sc *content.Scanner, name *content.Operand) reader.Object {
 	if name == nil || name.Kind != content.Name {
 		return nil
@@ -265,8 +259,10 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 		}
 		in.setDash(in.dashBuf, phase.Num)
 	case "gs":
-		d, _ := reader.ToDict(in.lookup(res, "ExtGState", sc, sc.Last()))
-		in.extGState(d, res)
+		o := in.lookupRef(res, "ExtGState", sc, sc.Last())
+		ref, _ := o.(reader.Ref)
+		d, _ := reader.ToDict(in.doc.resolve(o))
+		in.extGState(d, ref, res)
 	case "ri", "i":
 
 	// Path construction.
@@ -542,7 +538,7 @@ func (in *interp) fillPath(rule FillRule) {
 		}
 		in.st.Fills++
 		if in.transparent() {
-			in.beginObject(in.pathBox(0), in.gs.ctm)
+			in.beginObject(in.pathBox(0), in.gs.ctm, in.gs.blend, false)
 			defer in.dev.EndGroup()
 		}
 		in.dev.ClipPath(&in.path, in.gs.ctm, rule)
@@ -554,8 +550,8 @@ func (in *interp) fillPath(rule FillRule) {
 		return
 	}
 	in.st.Fills++
-	if in.transparent() {
-		in.beginObject(in.pathBox(0), in.gs.ctm)
+	if bm, grouped := in.objectBlend(in.gs.fillCS, in.gs.opFill); grouped {
+		in.beginObject(in.pathBox(0), in.gs.ctm, bm, false)
 		defer in.dev.EndGroup()
 	}
 	in.dev.FillPath(&in.path, in.gs.ctm, rule, &in.paint)
@@ -571,7 +567,7 @@ func (in *interp) strokePath() {
 		}
 		in.st.Strokes++
 		if in.transparent() {
-			in.beginObject(in.pathBox(in.strokePad()), in.gs.ctm)
+			in.beginObject(in.pathBox(in.strokePad()), in.gs.ctm, in.gs.blend, false)
 			defer in.dev.EndGroup()
 		}
 		in.dev.ClipStroke(&in.path, in.gs.ctm, &in.gs.style)
@@ -583,8 +579,8 @@ func (in *interp) strokePath() {
 		return
 	}
 	in.st.Strokes++
-	if in.transparent() {
-		in.beginObject(in.pathBox(in.strokePad()), in.gs.ctm)
+	if bm, grouped := in.objectBlend(in.gs.strokeCS, in.gs.opStroke); grouped {
+		in.beginObject(in.pathBox(in.strokePad()), in.gs.ctm, bm, false)
 		defer in.dev.EndGroup()
 	}
 	in.dev.StrokePath(&in.path, in.gs.ctm, &in.gs.style, &in.paint)
@@ -601,6 +597,9 @@ func (in *interp) setPaint(cs *colorSpace, v []float64, alpha float64) bool {
 		return false
 	}
 	r, g, b := cs.rgb(v)
+	if t := in.gs.transfer; t != nil {
+		r, g, b = t.apply(r, g, b)
+	}
 	in.paint = Paint{Color: premul(r, g, b, alpha)}
 	return in.paint.Color.A != 0
 }
@@ -649,7 +648,7 @@ func (in *interp) setDash(arr []float64, phase float64) {
 	}
 }
 
-func (in *interp) extGState(d reader.Dict, res reader.Dict) {
+func (in *interp) extGState(d reader.Dict, ref reader.Ref, res reader.Dict) {
 	if d == nil {
 		in.st.Errors++
 		return
@@ -700,6 +699,7 @@ func (in *interp) extGState(d reader.Dict, res reader.Dict) {
 	if doc.boolean(d["AIS"]) {
 		in.st.unsupported("alpha-is-shape")
 	}
+	in.extGStateMore(d, ref)
 }
 
 // enterOC applies the membership o of content that begins; the caller
@@ -884,20 +884,23 @@ func (in *interp) drawImage(r *imageResult) {
 		}
 		return
 	}
+	bm, grouped := in.gs.blend, in.transparent()
 	if img.Stencil {
 		if !in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
 			return
 		}
+		bm, grouped = in.objectBlend(in.gs.fillCS, in.gs.opFill)
 	} else {
 		a := unit8(in.gs.fillAlpha)
 		if a == 0 {
 			return
 		}
 		in.paint = Paint{Color: color.RGBA{A: a}}
+		in.untransferred()
 	}
 	in.st.Images++
-	if in.transparent() {
-		in.beginObject(Rect{0, 0, 1, 1}, in.gs.ctm)
+	if grouped {
+		in.beginObject(Rect{0, 0, 1, 1}, in.gs.ctm, bm, false)
 		defer in.dev.EndGroup()
 	}
 	in.dev.DrawImage(img, in.gs.ctm, &in.paint)

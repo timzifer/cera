@@ -392,12 +392,15 @@ func FuzzTransparency(f *testing.F) {
 		"/A gs /L gs BT /F1 30 Tf 2 Tr (Hi) Tj ET /K Do",
 		"0 0 50 50 re W n /S gs /M gs /K Do /I Do BI /W 1 /H 1 /CS /G /BPC 8 ID \x80 EI",
 		"q 1 0 0 1 1e30 0 cm /S gs /K Do Q /L gs 0 0 0 0 re f",
+		"/O gs 0 1 0 0 k 0 0 100 100 re f /F gs BT -20 Tc (HHH) Tj ET /K Do",
+		"/F gs /O gs /M gs BT 0 Tr -30 Tc (HH) ' ET /I Do",
 	} {
 		f.Add(s)
 	}
 	res := "/ExtGState << /M << /BM /Multiply >> /A << /ca 0.5 /BM [/Hue] >>" +
 		" /S << /SMask << /S /Luminosity /G 101 0 R /BC [0.5] /TR 103 0 R >> >>" +
-		" /L << /SMask << /S /Alpha /G 102 0 R >> /BM /SoftLight >> >>" +
+		" /L << /SMask << /S /Alpha /G 102 0 R >> /BM /SoftLight >>" +
+		" /O << /OP true /OPM 1 /TR 103 0 R /ca 0.5 >> /F << /Font [100 0 R 20] /TK true /TR2 [103 0 R /Identity 103 0 R 103 0 R] >> >>" +
 		" /XObject << /K 101 0 R /I 102 0 R >> /Font << /F1 100 0 R >>"
 	calc := "<< /FunctionType 4 /Domain [0 1] /Range [0 1] /Length 12 >>\nstream\n{ 1 exch sub }\nendstream"
 	f.Fuzz(func(t *testing.T, c string) {
@@ -416,7 +419,8 @@ func FuzzTransparency(f *testing.F) {
 		}
 		dst := image.NewRGBA(p.Bounds(0.5))
 		for _, workers := range []int{1, 3} {
-			err = p.Render(context.Background(), dst, RenderOptions{Scale: 0.5, Workers: workers, Deadline: time.Now().Add(2 * time.Second)})
+			err = p.Render(context.Background(), dst, RenderOptions{Scale: 0.5, Workers: workers, Deadline: time.Now().Add(2 * time.Second),
+				SimulateOverprint: workers > 1})
 			var pe *PanicError
 			if errors.As(err, &pe) {
 				t.Fatalf("%v\n%s", pe.Value, pe.Stack)
