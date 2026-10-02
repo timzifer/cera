@@ -206,7 +206,7 @@ type GlyphRun struct {
 type RasterDevice struct {
 	C *stilus.Canvas
 
-	glyphs *glyphCache // allocated on first use
+	glyphs *stilus.GlyphCache // allocated on first use
 	img    imageDraw
 	pd     paintDraw
 	t      layers
