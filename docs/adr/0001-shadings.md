@@ -1,6 +1,6 @@
 # 0001. Shadings through `Device.FillShading`
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-01
 - Milestone: M7
 - Depends on: stilus ADR 0001 (shading shaders)
@@ -103,6 +103,27 @@ ignored; the LUT resolution is fixed.
   `FillShading`.
 - The `Device` interface changes; every implementation outside cera has to
   add one method. Acceptable before 1.0.
+
+## Implementation notes
+
+Implemented in `shading.go`, `shadingdraw.go` and `pattern.go`, on the
+gradient, texture and mesh shaders of stilus. Where it differs from the
+decision above:
+
+- The device operation is `FillShading(sh *Shading, m Matrix, paint
+  *Paint)`: it paints over the current clip. A fill, stroke or text in a
+  shading pattern reaches the device as a clip of its shape (`ClipPath`,
+  or the new `ClipStroke`) followed by `FillShading`; there is no path
+  argument.
+- Axial and radial shadings use a ramp of 512 entries; function-based
+  ones a fixed 128 × 128 texture sampled bilinearly (not the adaptive
+  64–256 grid).
+- Budgets: 2²⁰ mesh triangles and 2¹⁶ patches per shading.
+  `shading-function` counts shadings whose function does not read.
+- A page that blends is drawn transparent and composited onto the
+  background afterwards.
+- Shading items carry the optional content and annotation tags of ADRs
+  0004 and 0005 like every other painting item.
 
 ## Alternatives considered
 

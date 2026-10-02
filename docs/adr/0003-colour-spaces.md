@@ -1,6 +1,6 @@
 # 0003. Tint transforms, Lab, ICC and CMYK
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-01
 - Milestone: M7
 
@@ -75,6 +75,26 @@ real CMS. **Output intents** are ignored.
 - CMYK output changes for every CMYK file: reference images in tests that
   pinned the naive conversion must be regenerated once.
 - No overprint simulation; see ADR 0007.
+
+## Implementation notes
+
+Implemented in `color.go` and `colormath.go`:
+
+- Separation and DeviceN go through their tint transforms; a one-ink
+  transform is tabulated at 256 tints. `/None` paints nothing. A tint
+  space whose transform does not read is counted as `tint-transform` and
+  drawn as grey.
+- Lab, CalGray, CalRGB and matrix/TRC ICC profiles convert through CIE
+  XYZ, Bradford-adapted to D50. Profiles close to sRGB take the device
+  path.
+- Spaces named by reference are resolved once per document.
+
+Not done yet:
+
+- **DeviceCMYK** still uses the naive formula; the polynomial
+  approximation decided above is open.
+- LUT-based ICC profiles fall back on the device space of their component
+  count, but are not counted as `icc-lut`.
 
 ## Alternatives considered
 

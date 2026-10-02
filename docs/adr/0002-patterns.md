@@ -76,6 +76,14 @@ in the document's image cache and count against its budget.
   decide the thresholds between strategies; they are constants, not options.
 - The display list no longer holds only colours; items get a paint index.
 
+## Progress
+
+Shading patterns (`PatternType 2`) are drawn as part of ADR 0001: the
+shading filled through a clip of the painted shape, with the pattern
+matrix against the pattern's base space and `Background` honoured.
+Tiling patterns (`PatternType 1`) are still counted as `pattern` and not
+drawn; this record stays proposed until they are.
+
 ## Alternatives considered
 
 - **Always replay**: exact, but a hatch of 1 mm cells over an A3 sheet is

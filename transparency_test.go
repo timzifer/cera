@@ -74,46 +74,6 @@ func TestBlendModes(t *testing.T) {
 	}
 }
 
-func TestBlendFunctions(t *testing.T) {
-	cb, cs := [3]float64{0.2, 0.4, 0.6}, [3]float64{0.9, 0.5, 0.1}
-	for _, c := range []struct {
-		bm   BlendMode
-		want [3]float64
-	}{
-		{BlendNormal, cs},
-		{BlendMultiply, [3]float64{0.18, 0.2, 0.06}},
-		{BlendScreen, [3]float64{0.92, 0.7, 0.64}},
-		{BlendOverlay, [3]float64{0.36, 0.4, 0.28}},
-		{BlendHardLight, [3]float64{0.84, 0.4, 0.12}},
-		{BlendColorDodge, [3]float64{1, 0.8, 0.6 / 0.9}},
-		{BlendColorBurn, [3]float64{1 - 0.8/0.9, 0, 0}},
-		{BlendExclusion, [3]float64{0.2 + 0.9 - 0.36, 0.5, 0.6 + 0.1 - 0.12}},
-		{BlendColor, setLum(cs, lum(cb))},
-	} {
-		got := blend(c.bm, cb, cs)
-		for i := range got {
-			if math.Abs(got[i]-c.want[i]) > 1e-9 {
-				t.Errorf("%v: got %v, want %v", c.bm, got, c.want)
-				break
-			}
-		}
-	}
-	// Non-separable modes keep the luminosity they are asked for.
-	for _, bm := range []BlendMode{BlendHue, BlendSaturation, BlendColor, BlendLuminosity} {
-		got := blend(bm, cb, cs)
-		want := lum(cb)
-		if bm == BlendLuminosity {
-			want = lum(cs)
-		}
-		if math.Abs(lum(got)-want) > 1e-9 {
-			t.Errorf("%v: luminosity %v, want %v", bm, lum(got), want)
-		}
-	}
-	if s := sat(setSat(cb, 0.3)); math.Abs(s-0.3) > 1e-9 {
-		t.Errorf("setSat: saturation %v", s)
-	}
-}
-
 func TestGroupOpacity(t *testing.T) {
 	// Two overlapping opaque rectangles in a group at 50%: the overlap is
 	// as light as the rest. Without the group, each is drawn at 50%.
@@ -441,4 +401,15 @@ func FuzzTransparency(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestPageBackdropIsTransparent(t *testing.T) {
+	// Blended onto the page, a colour over nothing stays itself (the
+	// paper comes after the page group); over red it blends.
+	c := "1 0 0 rg 0 0 100 100 re f /G0 gs 0 0 1 rg 50 0 100 100 re f"
+	img, _ := renderTransparent(t, c, "/ExtGState << /G0 100 0 R >>", "<< /BM /Difference >>")
+	assertPixel(t, img, 25, 50, rgba(255, 0, 0, 255))
+	assertPixel(t, img, 75, 50, rgba(255, 0, 255, 255))
+	assertPixel(t, img, 125, 50, rgba(0, 0, 255, 255))
+	assertPixel(t, img, 175, 50, white)
 }

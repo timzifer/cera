@@ -16,13 +16,13 @@ cera is where the pieces come together:
 | file reader: xref, objects, filters, encryption, repair | [go-pdfkit/reader](https://github.com/go-pdfkit/reader) (BSD-3) | used as is |
 | content scanner, interpreter, graphics state | cera | zero-allocation scanner; paths, clips, colour spaces, ExtGState, form XObjects |
 | display list, bands, workers | cera | display list per page and scale, band index, parallel bands (M3) |
-| rasterizer, stroker, clip, compositing | [timzifer/stilus](https://github.com/timzifer/stilus) (MIT) | used as is |
+| rasterizer, stroker, clip, compositing; shaders for images, glyph masks, layers and blend modes, gradients, meshes | [timzifer/stilus](https://github.com/timzifer/stilus) (MIT) | used as is; the generic shaders moved there from cera with M7 |
 | fonts: PDF side (encodings, widths, ToUnicode) | [go-pdfkit/pdffont](https://github.com/go-pdfkit/pdffont) (BSD-3) | used as is |
 | fonts: programs (TrueType, CFF, Type 1) and stand-ins | [go-opentype/opentype](https://github.com/go-opentype/opentype), [go-opentype/fonts](https://github.com/go-opentype/fonts) (Arimo, Tinos, Cousine) | used as is |
 | text: glyph selection, glyph cache, Type 3, render modes, TextDevice | cera, glyph rules ported from the M2 spike | M4 |
 | images: samples, masks, mip levels, image cache | cera, decoding rules ported from [timzifer/render](https://github.com/timzifer/render); codecs [go-images/jpeg](https://github.com/go-images/jpeg) (BSD-3), [go-images/jpeg2000](https://github.com/go-images/jpeg2000) and [gobig2](https://github.com/tannevaled/gobig2) (Apache-2.0) | M5 |
 | transparency: groups, knockout, blend modes, soft masks | cera; PDF functions ported from [timzifer/render](https://github.com/timzifer/render) | M6 |
-| shadings | [timzifer/render](https://github.com/timzifer/render) fork of go-pdfkit/render (BSD-3) | to be ported (M7) |
+| shadings, colour spaces: tint transforms, CIE spaces, ICC matrix/TRC profiles | cera, mesh and patch reading after [timzifer/render](https://github.com/timzifer/render) (BSD-3); drawn by stilus | M7 |
 
 The [stilus integration in the go-pdfkit/render fork](https://github.com/timzifer/render/tree/codex/stilus-renderer)
 was the M2 spike of the plan: same interpreter, stilus instead of go-gfx,
@@ -122,6 +122,28 @@ and a group of a single object, whose opacity goes to the object. A soft
 mask is drawn, as the group its form describes, for each group or object
 it masks, over that object's box only.
 
+Shadings are read once per document into what a raster worker draws
+without evaluating PDF functions: axial and radial shadings into a ramp
+of 512 colours over their parameter, drawn by the gradient shaders of
+stilus (exact two-circle geometry, extends, per pixel centre), a
+function-based shading into a 128 × 128 texture sampled bilinearly over
+its domain, and the four mesh kinds into Gouraud-shaded triangles,
+coloured at their vertices or carrying the shading's parameter into a
+ramp; Coons and tensor patches are cut on a grid of 2 to 16 cells a side,
+finer the fewer patches a mesh has. A mesh is drawn into a layer over the
+part of the band it covers, without antialiasing inside so that no seams
+show, and composited through the clips. A path, a stroke or text painted
+with a shading pattern becomes the shading filled through a clip of its
+shape (`ClipPath`, or `ClipStroke` for strokes).
+
+Colours are converted to sRGB when they are read: Separation and DeviceN
+through their tint transforms into the alternate space (a one-ink
+transform is tabulated at 256 tints, so a spot-colour image costs a
+palette), Lab, CalGray, CalRGB and ICC profiles of the matrix/TRC kind
+through CIE XYZ, adapted to D50 with the Bradford transform. An ICC
+profile close to sRGB is taken as the device space; RGB images in another
+profile convert through tables per channel.
+
 `Page.Run` drives any `Device` directly, without a display list; a device
 that also implements `TextDevice` receives every string shown, in every
 render mode. `Page.Text` is built on it.
@@ -153,21 +175,32 @@ constant alpha (`CA`, `ca`), form XObjects with `Matrix` and `BBox`, `/Rotate`,
 knockout, with the fill alpha of the state that paints them), all 16
 blend modes, soft masks (luminosity with backdrop colour, alpha, transfer
 functions of all four function types) in the graphics state, and objects
-painted with a blend mode or soft mask, composited as groups of their own.
-Optional content (layers): groups and membership dictionaries (`/P` and
-visibility expressions), marked content `BDC /OC` and XObjects with `/OC`,
-the default and alternate configurations with `/Order`, radio-button
-groups, locked layers, intents and automatic states for view, print and
-export (`/AS`, including zoom ranges); see below. Annotations: drawn from
-their normal appearance streams (with `/AS` states, `/CA`, `NoZoom`,
-`NoRotate`, `/OC`), and generated for Square, Circle, Line (with endings
-and leader lines), PolyLine, Polygon, Ink, Highlight, Underline, StrikeOut
-and Squiggly without one; `Page.Annotations` exposes them with link
-targets.
+painted with a blend mode or soft mask, composited as groups of their own;
+a page that blends is drawn transparent and composited onto the
+background, which comes after the page group. Shadings: all seven types
+(function-based, axial, radial, free-form and lattice triangle meshes,
+Coons and tensor-product patches), with `Function`, `Domain`, `Extend`,
+`BBox`, and `Background` in patterns, painted by `sh` and as shading
+patterns of fills, strokes and text. Colour spaces: Separation and
+DeviceN with their tint transforms (`/None` paints nothing), Lab,
+CalGray, CalRGB, ICCBased with grey and RGB matrix/TRC profiles,
+Indexed on any of them. Optional content (layers): groups and membership
+dictionaries (`/P` and visibility expressions), marked content `BDC /OC`
+and XObjects with `/OC`, the default and alternate configurations with
+`/Order`, radio-button groups, locked layers, intents and automatic
+states for view, print and export (`/AS`, including zoom ranges); see
+below. Annotations: drawn from their normal appearance streams (with
+`/AS` states, `/CA`, `NoZoom`, `NoRotate`, `/OC`), and generated for
+Square, Circle, Line (with endings and leader lines), PolyLine, Polygon,
+Ink, Highlight, Underline, StrikeOut and Squiggly without one;
+`Page.Annotations` exposes them with link targets.
 
 Not yet, and counted in `Stats.Unsupported` so the corpus report shows what
-matters most: shadings, patterns, tint transforms
-(Separation/DeviceN are drawn as grey), Lab; fonts neither embedded nor
+matters most: tiling patterns (`pattern`), tint
+transforms that do not read (`tint-transform`, drawn as grey), shading
+functions that do not read (`shading-function`); ICC profiles built from
+lookup tables (CMYK press profiles among them) are drawn as the device
+space of as many components, DeviceCMYK without a profile; fonts neither embedded nor
 standing in (`font-missing`: Symbol, ZapfDingbats, non-embedded composite
 fonts), vertical writing (`vertical-text`, drawn with default metrics),
 Type 3 glyphs in clipping modes (`type3-clip`), annotations without
@@ -196,7 +229,7 @@ recorded as architecture decisions in [`docs/adr`](docs/adr/README.md).
 | ✓ | M4 text | fonts via pdffont and opentype, stand-ins, per-worker glyph mask cache, Type 3, all render modes incl. text clips, TextDevice, `Page.Run`, `Page.Text` |
 | ✓ | M5 images | image XObjects and inline images, JPEG/JPEG 2000/JBIG2/CCITT, soft, stencil and colour-key masks at their own resolution, one-bit and palette planes, lazy mip levels with bilinear sampling, per-document image cache |
 | ✓ | M6 transparency | groups (isolated, non-isolated, knockout) in pooled layers per band, all blend modes exact at antialiased edges, soft masks (luminosity, alpha, backdrop, transfer functions), trivial and single-object groups dropped from the display list |
-| | M7 shadings and colour | types 1–7, function LUTs, Separation/DeviceN, simplified ICC |
+| ◐ | M7 shadings and colour | shading types 1–7 and shading patterns, function LUTs (ramps, textures, tint tables), Separation/DeviceN, Lab, CalGray/CalRGB, simplified ICC (matrix/TRC); generic shaders moved to stilus; tiling patterns open |
 | ◐ | M7½ layers, annotations, forms | optional content (ADR 0004) ✓, annotations (ADR 0005) ✓; interactive forms |
 | | M8 robustness | fuzzing, large corpora, budgets (started: CI below) |
 | | M9 GPU backend | GGDevice on gogpu/gg, glyph atlas, lux |

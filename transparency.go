@@ -3,8 +3,6 @@ package cera
 import (
 	"image"
 	"image/color"
-	"math"
-	"sync/atomic"
 
 	"github.com/timzifer/stilus"
 )
@@ -19,11 +17,8 @@ import (
 // An isolated group starts transparent. EndGroup fills the layer's
 // rectangle below with a shader that reads the layer and the backdrop: so
 // the group is composited through the clip stack, antialiased at its
-// edges, like any fill. Blend modes are exact under partial coverage: the
-// canvas composites the shader's colour s over the backdrop d with
-// coverage a as a·s + d·(1−a·αs), and the shader returns
-// s = cs·(1−αb) + αs·αb·B(Cb, Cs) with alpha αs, which makes that the PDF
-// compositing formula interpolated by coverage.
+// edges, like any fill (stilus.LayerShader, which keeps blend modes exact
+// under partial coverage).
 //
 // A non-isolated group starts as a copy of its backdrop, so that blend
 // modes inside it see what is below, and is composited by interpolating
@@ -66,13 +61,16 @@ type layers struct {
 	freeBytes int
 	err       error // of the canvas before a retarget
 
-	comp  compositor
+	comp  stilus.LayerShader
+	alpha image.Alpha // the soft mask of comp
 	rect  Path
 	paint Paint
 }
 
 type clipRec struct {
 	rect           bool
+	stroke         bool
+	st             StrokeStyle
 	r              Rect
 	m              Matrix
 	rule           FillRule
@@ -166,11 +164,16 @@ func (t *layers) image(area image.Rectangle) image.RGBA {
 	return image.RGBA{Pix: t.buf(4 * area.Dx() * area.Dy()), Stride: 4 * area.Dx(), Rect: area}
 }
 
-func (t *layers) pushClip(p *Path, r Rect, m Matrix, rule FillRule, rect bool) {
+func (t *layers) pushClip(p *Path, r Rect, m Matrix, rule FillRule, rect bool, st *StrokeStyle) {
 	if t.base == nil {
 		return
 	}
 	c := clipRec{rect: rect, r: r, m: m, rule: rule}
+	if st != nil {
+		// The dash pattern belongs to the display list or the
+		// interpreter's arena, which outlive the clip.
+		c.stroke, c.st = true, *st
+	}
 	c.v0, c.p0 = int32(len(t.verbs)), int32(len(t.points))
 	if p != nil {
 		t.verbs = append(t.verbs, p.Verbs...)
@@ -248,7 +251,11 @@ func (d *RasterDevice) retargetOn(i int, dst *image.RGBA) {
 			d.C.ClipRect(stilus.Rect{X0: c.r.X0, Y0: c.r.Y0, X1: c.r.X1, Y1: c.r.Y1}, c.m)
 		} else {
 			p := Path{Verbs: t.verbs[c.v0:c.v1:c.v1], Points: t.points[c.p0:c.p1:c.p1]}
-			d.C.ClipPath(&p, c.m, c.rule)
+			if c.stroke {
+				d.C.ClipStroke(&p, c.m, &c.st)
+			} else {
+				d.C.ClipPath(&p, c.m, c.rule)
+			}
 		}
 	}
 }
@@ -405,12 +412,14 @@ func copyRect(dst, src *image.RGBA, r image.Rectangle) {
 func (d *RasterDevice) composite(l *layer, dst *image.RGBA) {
 	t := &d.t
 	c := &t.comp
-	*c = compositor{src: &l.img, dst: dst, alpha: uint32(l.g.Alpha), blend: l.g.Blend}
+	*c = stilus.LayerShader{Src: &l.img, Dst: dst, Alpha: l.g.Alpha, Blend: l.g.Blend}
 	if l.g.Masked {
-		c.mask, c.masked = l.mask, true
+		t.alpha = *l.mask.alpha()
+		c.Mask = &t.alpha
 	}
 	d.fillArea(l.area, c)
-	*c = compositor{}
+	*c = stilus.LayerShader{}
+	t.alpha = image.Alpha{}
 }
 
 // fillArea fills the pixels of a with shader s through the canvas.
@@ -589,45 +598,6 @@ func (d *RasterDevice) koEnd(box image.Rectangle) {
 	d.retarget(top)
 }
 
-// compositor is the shader that composites an isolated layer: its pixels
-// scaled by the group's opacity and soft mask, blended with the backdrop.
-type compositor struct {
-	src, dst *image.RGBA
-	mask     softPlane
-	masked   bool
-	alpha    uint32
-	blend    BlendMode
-}
-
-func (c *compositor) ShadeSpan(y, x int, out []uint32) {
-	n := len(out)
-	sp := c.src.Pix[c.src.PixOffset(x, y):][: 4*n : 4*n]
-	var dp []byte
-	if c.blend != BlendNormal {
-		dp = c.dst.Pix[c.dst.PixOffset(x, y):][: 4*n : 4*n]
-	}
-	for i := range out {
-		p := sp[4*i : 4*i+4 : 4*i+4]
-		r, g, b, a := p[0], p[1], p[2], p[3]
-		k := c.alpha
-		if c.masked {
-			k = div255(k * uint32(c.mask.at(x+i, y)))
-		}
-		if k != 255 {
-			r, g, b, a = mulByte(r, k), mulByte(g, k), mulByte(b, k), mulByte(a, k)
-		}
-		if a == 0 {
-			out[i] = 0
-			continue
-		}
-		if dp != nil && dp[4*i+3] != 0 {
-			q := dp[4*i : 4*i+4 : 4*i+4]
-			r, g, b = blendPixel(c.blend, r, g, b, a, q[0], q[1], q[2], q[3])
-		}
-		out[i] = pack(r, g, b, a)
-	}
-}
-
 // div255 divides by 255, rounded, for v ≤ 255·255.
 func div255(v uint32) uint32 {
 	v += 128
@@ -643,161 +613,7 @@ func (m *softPlane) at(x, y int) uint8 {
 	return m.pix[(y-m.area.Min.Y)*m.area.Dx()+x-m.area.Min.X]
 }
 
-// blendPixel returns the colour a premultiplied source composited onto a
-// premultiplied backdrop with blend mode bm must be drawn over it with
-// (see the top of the file); the source alpha does not change.
-func blendPixel(bm BlendMode, sr, sg, sb, sa, dr, dg, db, da uint8) (r, g, b uint8) {
-	if sa == 255 && da == 255 && bm < BlendHue {
-		t := blendTable(bm)
-		return t[int(dr)<<8|int(sr)], t[int(dg)<<8|int(sg)], t[int(db)<<8|int(sb)]
-	}
-	as, ab := float64(sa)/255, float64(da)/255
-	cs := [3]float64{float64(sr) / float64(sa), float64(sg) / float64(sa), float64(sb) / float64(sa)}
-	cb := [3]float64{float64(dr) / float64(da), float64(dg) / float64(da), float64(db) / float64(da)}
-	for i := range 3 {
-		cs[i], cb[i] = min(cs[i], 1), min(cb[i], 1)
-	}
-	bl := blend(bm, cb, cs)
-	var o [3]uint8
-	src := [3]uint8{sr, sg, sb}
-	for i := range 3 {
-		v := float64(src[i])*(1-ab) + as*ab*bl[i]*255
-		o[i] = uint8(min(max(v+0.5, 0), float64(sa)))
-	}
-	return o[0], o[1], o[2]
-}
-
-// blendTables hold B(b, s) of the separable blend modes for opaque 8-bit
-// colours, indexed by b<<8 | s, made on first use.
-var blendTables [BlendHue]atomic.Pointer[[1 << 16]uint8]
-
-func blendTable(bm BlendMode) *[1 << 16]uint8 {
-	if t := blendTables[bm].Load(); t != nil {
-		return t
-	}
-	t := new([1 << 16]uint8)
-	for i := range t {
-		v := blendChannel(bm, float64(i>>8)/255, float64(i&255)/255)
-		t[i] = uint8(clamp01(v)*255 + 0.5)
-	}
-	blendTables[bm].Store(t)
-	return t
-}
-
-// blend is B(Cb, Cs) of PDF 2.0, 11.3.5, on straight colours in [0, 1].
-func blend(bm BlendMode, cb, cs [3]float64) [3]float64 {
-	switch bm {
-	case BlendHue:
-		return setLum(setSat(cs, sat(cb)), lum(cb))
-	case BlendSaturation:
-		return setLum(setSat(cb, sat(cs)), lum(cb))
-	case BlendColor:
-		return setLum(cs, lum(cb))
-	case BlendLuminosity:
-		return setLum(cb, lum(cs))
-	}
-	var r [3]float64
-	for i := range 3 {
-		r[i] = blendChannel(bm, cb[i], cs[i])
-	}
-	return r
-}
-
-func blendChannel(bm BlendMode, b, s float64) float64 {
-	switch bm {
-	case BlendMultiply:
-		return b * s
-	case BlendScreen:
-		return b + s - b*s
-	case BlendOverlay:
-		return hardLight(s, b)
-	case BlendDarken:
-		return min(b, s)
-	case BlendLighten:
-		return max(b, s)
-	case BlendColorDodge:
-		switch {
-		case b == 0:
-			return 0
-		case s >= 1:
-			return 1
-		}
-		return min(1, b/(1-s))
-	case BlendColorBurn:
-		switch {
-		case b >= 1:
-			return 1
-		case s <= 0:
-			return 0
-		}
-		return 1 - min(1, (1-b)/s)
-	case BlendHardLight:
-		return hardLight(b, s)
-	case BlendSoftLight:
-		if s <= 0.5 {
-			return b - (1-2*s)*b*(1-b)
-		}
-		d := math.Sqrt(b)
-		if b <= 0.25 {
-			d = ((16*b-12)*b + 4) * b
-		}
-		return b + (2*s-1)*(d-b)
-	case BlendDifference:
-		return math.Abs(b - s)
-	case BlendExclusion:
-		return b + s - 2*b*s
-	}
-	return s
-}
-
-func hardLight(b, s float64) float64 {
-	if s <= 0.5 {
-		return b * 2 * s
-	}
-	s = 2*s - 1
-	return b + s - b*s
-}
-
-func lum(c [3]float64) float64 { return 0.3*c[0] + 0.59*c[1] + 0.11*c[2] }
-
-func setLum(c [3]float64, l float64) [3]float64 {
-	d := l - lum(c)
-	for i := range c {
-		c[i] += d
-	}
-	// Clip into [0, 1], keeping the luminosity.
-	l = lum(c)
-	n, x := min(c[0], c[1], c[2]), max(c[0], c[1], c[2])
-	for i := range c {
-		if n < 0 && l-n > 0 {
-			c[i] = l + (c[i]-l)*l/(l-n)
-		}
-		if x > 1 && x-l > 0 {
-			c[i] = l + (c[i]-l)*(1-l)/(x-l)
-		}
-		c[i] = clamp01(c[i])
-	}
-	return c
-}
-
-func sat(c [3]float64) float64 { return max(c[0], c[1], c[2]) - min(c[0], c[1], c[2]) }
-
-func setSat(c [3]float64, s float64) [3]float64 {
-	// Indices of the smallest, middle and largest component.
-	lo, mid, hi := 0, 1, 2
-	if c[lo] > c[mid] {
-		lo, mid = mid, lo
-	}
-	if c[mid] > c[hi] {
-		mid, hi = hi, mid
-	}
-	if c[lo] > c[mid] {
-		lo, mid = mid, lo
-	}
-	var r [3]float64
-	if c[hi] > c[lo] {
-		r[mid] = (c[mid] - c[lo]) * s / (c[hi] - c[lo])
-		r[hi] = s
-	}
-	return r
+// alpha returns the plane as an image for stilus.LayerShader.
+func (m *softPlane) alpha() *image.Alpha {
+	return &image.Alpha{Pix: m.pix, Stride: m.area.Dx(), Rect: m.area}
 }

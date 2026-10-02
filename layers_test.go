@@ -260,8 +260,10 @@ func TestLayersHideGroups(t *testing.T) {
 // countDevice counts what reaches it.
 type countDevice struct {
 	textDevice
-	fills, clips, pops int
+	fills, clips, pops, shadings int
 }
+
+func (d *countDevice) FillShading(*Shading, Matrix, *Paint) { d.shadings++ }
 
 func (d *countDevice) FillPath(*Path, Matrix, FillRule, *Paint) { d.fills++ }
 func (d *countDevice) ClipPath(*Path, Matrix, FillRule)         { d.clips++ }
@@ -337,5 +339,40 @@ func TestLayersSteadyStateAllocations(t *testing.T) {
 	})
 	if allocs > 1 {
 		t.Errorf("%v allocations per cached render", allocs)
+	}
+}
+
+func TestLayersHideShadings(t *testing.T) {
+	// An sh and a fill in a shading pattern, both in a layer that is off,
+	// then the same pattern outside it.
+	c := `/OC /a BDC q 0 0 40 100 re W n /S sh Q EMC
+		/OC /a BDC /Pattern cs /P scn 40 0 40 100 re f EMC
+		/Pattern cs /P scn 120 0 40 100 re f`
+	data := buildPDFCatalog("/OCProperties << /OCGs [100 0 R] /D << /OFF [100 0 R] >> >>", []string{c},
+		"/Resources << /Properties << /a 100 0 R >> /Shading << /S 101 0 R >> /Pattern << /P 102 0 R >> >>",
+		"<< /Type /OCG /Name (A) >>",
+		"<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0 0 1] /C1 [0 0 1] /N 1 >> >>",
+		"<< /PatternType 2 /Shading 101 0 R >>")
+	doc, _ := Open(data)
+	p, _ := doc.Page(0)
+	img := image.NewRGBA(p.Bounds(1))
+	if err := p.Render(context.Background(), img, RenderOptions{Background: white}); err != nil {
+		t.Fatal(err)
+	}
+	assertPixel(t, img, 20, 50, white)
+	assertPixel(t, img, 60, 50, white)
+	assertPixel(t, img, 140, 50, blue)
+	v := doc.Layers().Visibility().With(doc.Layers().Layers[0], true)
+	if err := p.Render(context.Background(), img, RenderOptions{Background: white, Layers: &v}); err != nil {
+		t.Fatal(err)
+	}
+	assertPixel(t, img, 20, 50, blue)
+	assertPixel(t, img, 60, 50, blue)
+	var d countDevice
+	if err := p.Run(context.Background(), &d, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if d.shadings != 1 {
+		t.Errorf("Run passed %d shadings, want the visible one", d.shadings)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/go-images/jpeg2000"
 	"github.com/go-pdfkit/reader"
 	"github.com/tannevaled/gobig2"
+	"github.com/timzifer/stilus"
 )
 
 // Decoding turns an image XObject or inline image into planes (see
@@ -137,11 +138,11 @@ func (dc *imageDecoder) decode(dict reader.Dict, raw []byte) {
 	if !ok {
 		return
 	}
-	img.W, img.H = p.w, p.h
+	img.W, img.H = p.W, p.H
 	if img.Stencil {
-		img.mask = newTexture(p)
+		img.mask = stilus.NewTexture(p)
 	} else {
-		img.color = newTexture(p)
+		img.color = stilus.NewTexture(p)
 		switch {
 		case d.stream(dict["SMask"]) != nil:
 			s := d.stream(dict["SMask"])
@@ -152,21 +153,21 @@ func (dc *imageDecoder) decode(dict reader.Dict, raw []byte) {
 			if !ok {
 				return
 			}
-			img.mask = newTexture(m)
+			img.mask = stilus.NewTexture(m)
 		case d.stream(dict["Mask"]) != nil:
 			s := d.stream(dict["Mask"])
 			m, _, ok := dc.plane(s.Dict, s.Raw, useStencil)
 			if !ok {
 				return
 			}
-			img.mask = newTexture(m)
+			img.mask = stilus.NewTexture(m)
 		case key != nil:
-			img.mask = newTexture(*key)
+			img.mask = stilus.NewTexture(*key)
 		}
 	}
 	for _, t := range [2]*texture{img.color, img.mask} {
 		if t != nil {
-			img.size += t.base.bytes() + t.mipBytes()
+			img.size += t.Base().Bytes() + t.MipBytes()
 		}
 	}
 	dc.out.img = img
@@ -395,10 +396,10 @@ func decodeRange(cs *colorSpace, c, bpc int) (lo, hi float64) {
 	case cs == nil:
 	case cs.kind == csIndexed:
 		return 0, float64(int(1)<<bpc - 1)
-	case cs.kind == csLab && c == 0:
+	case cs.kind == csCIE && cs.cie.lab && c == 0:
 		return 0, 100
-	case cs.kind == csLab:
-		return -100, 100
+	case cs.kind == csCIE && cs.cie.lab && c <= 2:
+		return cs.cie.rng[2*c-2], cs.cie.rng[2*c-1]
 	}
 	return 0, 1
 }
@@ -460,7 +461,7 @@ func (dc *imageDecoder) palettePlane(data []byte, sp *sampleSpec) (plane, bool) 
 		for y := range h {
 			copy(pix[y*stride:][:stride], rowOf(data, y, sp.stride))
 		}
-		return plane{kind: planeBits, w: w, h: h, stride: stride, pix8: pix, pal: pal}, true
+		return plane{Kind: stilus.PlaneBits, W: w, H: h, Stride: stride, Pix8: pix, Pal: pal}, true
 	}
 	if int64(w)*int64(h) > maxImageBytes {
 		return plane{}, false
@@ -477,7 +478,7 @@ func (dc *imageDecoder) palettePlane(data []byte, sp *sampleSpec) (plane, bool) 
 			dst[x] = uint8(sampleAt(row, x*bpc, bpc))
 		}
 	}
-	return plane{kind: planeIndex, w: w, h: h, stride: w, pix8: pix, pal: pal}, true
+	return plane{Kind: stilus.PlaneIndex, W: w, H: h, Stride: w, Pix8: pix, Pal: pal}, true
 }
 
 // sampleAt reads the bpc-bit sample at bit offset off of row (0 past its
@@ -499,11 +500,11 @@ func unit8(v float64) uint8 { return uint8(clamp01(v)*255 + 0.5) }
 // rgbaPlane converts samples of several components to opaque pixels.
 func (dc *imageDecoder) rgbaPlane(data []byte, sp *sampleSpec) (plane, *plane, bool) {
 	w, h, n, bpc := sp.w, sp.h, sp.n, sp.bpc
-	p := plane{kind: planeRGBA, w: w, h: h, stride: w, pix32: make([]uint32, w*h)}
+	p := plane{Kind: stilus.PlaneRGBA, W: w, H: h, Stride: w, Pix32: make([]uint32, w*h)}
 	var keyMask *plane
 	if sp.key != nil {
 		stride := (w + 7) / 8
-		keyMask = &plane{kind: planeBits, w: w, h: h, stride: stride, pix8: make([]uint8, stride*h), pal: stencilPal()}
+		keyMask = &plane{Kind: stilus.PlaneBits, W: w, H: h, Stride: stride, Pix8: make([]uint8, stride*h), Pal: stencilPal()}
 	}
 	// Decoded values per component and raw sample.
 	lut := make([]float64, n<<bpc)
@@ -516,7 +517,7 @@ func (dc *imageDecoder) rgbaPlane(data []byte, sp *sampleSpec) (plane, *plane, b
 	var v [maxComps]float64
 	for y := range h {
 		row := rowOf(data, y, sp.stride)
-		dst := p.pix32[y*w:][:w]
+		dst := p.Pix32[y*w:][:w]
 		switch {
 		case plain && sp.cs == spaceRGB && len(row) == 3*w:
 			for x := range dst {
@@ -529,17 +530,35 @@ func (dc *imageDecoder) rgbaPlane(data []byte, sp *sampleSpec) (plane, *plane, b
 				k := 255 - uint32(s[3])
 				dst[x] = pack(inkOff(s[0], k), inkOff(s[1], k), inkOff(s[2], k), 255)
 			}
-		default:
+		case plain && sp.cs.kind == csCIE && n == 3 && !sp.cs.cie.lab && len(row) == 3*w:
 			for x := range dst {
+				s := row[3*x:][:3]
+				r, g, b := sp.cs.cie.rgb8(s[0], s[1], s[2])
+				dst[x] = pack(r, g, b, 255)
+			}
+		default:
+			// Conversions through functions or CIE formulas are slow:
+			// the last colour is remembered, since neighbours repeat.
+			var last [maxComps]uint32
+			var lastC uint32
+			have := false
+			for x := range dst {
+				same := have
 				for c := range n {
-					v[c] = lut[c<<bpc+int(sampleAt(row, (x*n+c)*bpc, bpc))]
+					raw := sampleAt(row, (x*n+c)*bpc, bpc)
+					same = same && raw == last[c]
+					last[c] = raw
+					v[c] = lut[c<<bpc+int(raw)]
 				}
-				r, g, b := sp.cs.rgb(v[:n])
-				dst[x] = pack(unit8(r), unit8(g), unit8(b), 255)
+				if !same {
+					r, g, b := sp.cs.rgb(v[:n])
+					lastC, have = pack(unit8(r), unit8(g), unit8(b), 255), true
+				}
+				dst[x] = lastC
 			}
 		}
 		if keyMask != nil {
-			krow := keyMask.pix8[y*keyMask.stride:]
+			krow := keyMask.Pix8[y*keyMask.Stride:]
 			for x := range w {
 				in := true
 				for c := 0; c < n && in; c++ {
@@ -743,14 +762,14 @@ func rgbaFrom(img image.Image) plane {
 	}
 	dst := &image.RGBA{Pix: bs, Stride: 4 * w, Rect: image.Rect(0, 0, w, h)}
 	draw.Draw(dst, dst.Rect, img, b.Min, draw.Src)
-	return plane{kind: planeRGBA, w: w, h: h, stride: w, pix32: pix}
+	return plane{Kind: stilus.PlaneRGBA, W: w, H: h, Stride: w, Pix32: pix}
 }
 
 // rgbBytes returns the pixels of img as packed 8-bit RGB samples.
 func rgbBytes(img image.Image) []byte {
 	p := rgbaFrom(img)
-	out := make([]byte, 3*len(p.pix32))
-	for i, c := range p.pix32 {
+	out := make([]byte, 3*len(p.Pix32))
+	for i, c := range p.Pix32 {
 		out[3*i], out[3*i+1], out[3*i+2], _ = unpack(c)
 	}
 	return out

@@ -378,6 +378,7 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 	ctm := m.Mul(base)
 
 	in.initState(ctm)
+	in.base = ctm
 	alpha := 1.0
 	if v, ok := doc.num(a.dict["CA"]); ok {
 		alpha = clamp01(v)
