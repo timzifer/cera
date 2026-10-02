@@ -20,8 +20,8 @@ they depend on.
 
 | ADR | title | milestone | status |
 |---|---|---|---|
-| [0001](0001-shadings.md) | Shadings through `Device.FillShading` | M7 | proposed |
-| [0002](0002-patterns.md) | Tiling and shading patterns | M7 | proposed |
+| [0001](0001-shadings.md) | Shadings through `Device.FillShading` | M7 | accepted |
+| [0002](0002-patterns.md) | Tiling and shading patterns | M7 | accepted |
 | [0003](0003-colour-spaces.md) | Tint transforms, Lab, ICC and CMYK | M7 | proposed |
 | [0004](0004-optional-content.md) | Optional content (layers) | M7½ | accepted |
 | [0005](0005-annotations.md) | Annotations from appearance streams | M7½ | accepted |

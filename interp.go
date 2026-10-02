@@ -914,6 +914,10 @@ func (in *interp) drawImage(r *imageResult) {
 		return
 	}
 	if img.Stencil {
+		if in.gs.fillCS.kind == csPattern {
+			in.st.unsupported("pattern-stencil") // not drawn
+			return
+		}
 		if !in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
 			return
 		}

@@ -1,6 +1,6 @@
 # 0002. Tiling and shading patterns
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-01
 - Milestone: M7
 - Depends on: ADR 0001 (shadings), stilus ADR 0002 (repeating textures)
@@ -64,6 +64,32 @@ levels like soft masks, counted as `pattern-budget` beyond.
 **Bands.** A tile is made by the first worker that needs it under a
 `sync.Once` per tile, then read-only; all others wait for it. Tiles are kept
 in the document's image cache and count against its budget.
+
+### As implemented
+
+- **Paint as a clip.** An object painted with a pattern reaches the device
+  as a clip of its shape, the paint over the clip, and `PopClip`: fills as
+  `ClipPath`, strokes as the new `Device.ClipStroke` (stilus's
+  `Canvas.ClipStroke`), text as the glyph outlines in device space.
+  Shading patterns use `FillShading` (ADR 0001), tiling patterns the new
+  `Device.FillTile(t *Tile, m Matrix, paint *Paint)`. `FillPath`,
+  `StrokePath` and `FillGlyphs` keep solid colours, and the display list
+  needs no paint index.
+- **Two strategies.** Replay when at most 64 cells cover the object's
+  device box; otherwise the tile. The average-colour strategy is not a
+  separate path: a tile is at least one pixel a side, and a cell smaller
+  than a device pixel is drawn into it antialiased and read through
+  stilus's periodic mip levels, which averages it.
+- **Tiles are made while recording** (`pattern.go`), by a nested
+  interpreter on a raster device, at most 1024 pixels a side, once per
+  page, pattern and linear part of the pattern matrix, and kept by the
+  display list. Recording already happens per scale, so workers only read
+  tiles; no `sync.Once` is needed.
+- **Uncoloured patterns** draw their cells in the colour given with `scn`
+  when replayed, and in white into an alpha tile otherwise, which
+  `ImageShader.SetMaskWrap` paints in any colour.
+- Stencil images painted with a pattern are counted as `pattern-stencil`
+  and not drawn.
 
 ## Consequences
 

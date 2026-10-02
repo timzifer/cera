@@ -47,11 +47,24 @@ These are rare in the corpus but visible when they occur.
 5. **Budgets** (`smask-budget`, `image-too-large`, and new ones from other
    ADRs) stay; they are robustness limits, listed in ADR 0010.
 
+### As implemented
+
+- **3** is done for groups that are not objects of a knockout group: the
+  display list marks such a group (`Group.alone`) and draws it twice for a
+  raster device, first on its own into a layer the device keeps, then onto
+  its backdrop; `LayerShader` with `Initial` and `Alone` removes the
+  backdrop and blends. Non-isolated groups with blend modes inside a
+  knockout group are still drawn isolated and counted as
+  `non-isolated-blend`. `Page.Run` on a raster device, without a display
+  list, composites them as Normal.
+- Isolated layers are composited with stilus's `LayerShader` too; cera's
+  own compositor and blend functions are gone, and `BlendMode` is stilus's.
+
 ## Consequences
 
 - 1 and 2 are small, local changes and are done with M7.
-- 3 and 4 are justified only by corpus evidence; until then the keys stay
-  in the report as known approximations.
+- 4 is justified only by corpus evidence; until then the key stays in the
+  report as a known approximation.
 
 ## Alternatives considered
 

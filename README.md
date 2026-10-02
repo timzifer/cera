@@ -22,7 +22,7 @@ cera is where the pieces come together:
 | text: glyph selection, glyph cache, Type 3, render modes, TextDevice | cera, glyph rules ported from the M2 spike | M4 |
 | images: samples, masks, mip levels, image cache | cera, decoding rules ported from [timzifer/render](https://github.com/timzifer/render); codecs [go-images/jpeg](https://github.com/go-images/jpeg) (BSD-3), [go-images/jpeg2000](https://github.com/go-images/jpeg2000) and [gobig2](https://github.com/tannevaled/gobig2) (Apache-2.0) | M5 |
 | transparency: groups, knockout, blend modes, soft masks | cera; PDF functions ported from [timzifer/render](https://github.com/timzifer/render) | M6 |
-| shadings | [timzifer/render](https://github.com/timzifer/render) fork of go-pdfkit/render (BSD-3) | to be ported (M7) |
+| shadings and patterns | cera, compiled into stilus's gradient, mesh and wrapping image shaders | M7 (ADR 0001, 0002) |
 
 The [stilus integration in the go-pdfkit/render fork](https://github.com/timzifer/render/tree/codex/stilus-renderer)
 was the M2 spike of the plan: same interpreter, stilus instead of go-gfx,
@@ -97,14 +97,16 @@ font, in em units) and its device matrix. A raster worker rasterizes a
 glyph once per size (to 1/64 pixel per em) and quarter-pixel position
 into a coverage mask and composites it from then on, through the clip
 stack like any fill; glyphs larger than 160 pixels per em are filled as
-paths. Each worker keeps its own cache (4 MB), so drawing takes no locks.
+paths. Each worker keeps its own stilus `GlyphCache` (4 MB), so drawing
+takes no locks.
 
 Images are decoded once per document and kept in an image cache
 (256 MB, least recently used out), in the form their samples come in: one
 byte a pixel and a palette for grey, indexed and other one-component
 images, one bit a pixel for faxes, JBIG2 and stencil masks, four bytes only
-for colour. A raster worker draws an image as a fill of its parallelogram
-with a shader that maps every device pixel back into the image, so images
+for colour, as stilus textures. A raster worker draws an image as a fill of
+its parallelogram with stilus's `ImageShader`, which maps every device pixel
+back into the image, so images
 are clipped and antialiased like paths and a band samples only its own
 rows. An image drawn smaller than its samples is read from a mip level
 (the image averaged over 2^k × 2^k blocks, made on first use) at most twice
@@ -113,14 +115,31 @@ nearest pixel unless they ask for `/Interpolate`.
 
 Transparency groups and soft masks are drawn into layers: an RGBA image
 over the part of the band the group can touch, taken from a buffer pool
-of the worker, composited back through the clips around the group with a
-shader that reads the backdrop, so blend modes stay exact at antialiased
-edges. Most groups in real files need no layer, and the display list
+of the worker, composited back through the clips around the group with
+stilus's `LayerShader`, which reads the backdrop, so blend modes stay exact
+at antialiased edges. A non-isolated group with blend modes inside that is
+itself blended is drawn twice, on its own and onto its backdrop, and the
+layer shader removes the backdrop before blending (PDF 2.0, 11.4.8). Most groups in real files need no layer, and the display list
 drops them while recording: a group that composites like its content
 (Normal, opaque, unmasked, and non-isolated or without blend modes inside)
 and a group of a single object, whose opacity goes to the object. A soft
 mask is drawn, as the group its form describes, for each group or object
 it masks, over that object's box only.
+
+Shadings are compiled once per document, never evaluated per pixel: axial
+and radial shadings into a colour ramp whose knots carry the bounds of
+stitching functions, so colour breaks stay exactly where they are
+(stilus's `LinearGradient` and `RadialGradient` with `Knots`);
+function-based shadings into a grid of samples drawn as a texture; free-form,
+lattice, Coons and tensor-product meshes into Gouraud triangles, drawn by
+one stilus `MeshShader` per shading and matrix that all workers share, as
+one fill without seams. An object painted with a pattern is recorded as a
+clip of its shape (path, stroke or glyph outlines) and the paint over it.
+A tiling pattern is rasterized once per page and matrix into a tile of one
+step at device resolution, which the `ImageShader` repeats with exact
+wrap-around (rotated and skewed hatching included); an uncoloured pattern is
+an alpha tile painted in any colour. A pattern of a few large cells is
+replayed as vector operations instead.
 
 `Page.Run` drives any `Device` directly, without a display list; a device
 that also implements `TextDevice` receives every string shown, in every
@@ -154,6 +173,10 @@ knockout, with the fill alpha of the state that paints them), all 16
 blend modes, soft masks (luminosity with backdrop colour, alpha, transfer
 functions of all four function types) in the graphics state, and objects
 painted with a blend mode or soft mask, composited as groups of their own.
+Shadings: all seven types, through `sh` and shading patterns, with
+`Extend`, `BBox`, `Background` and functions of all four types. Patterns:
+tiling patterns (coloured and uncoloured, any matrix) and shading patterns
+as the paint of fills, strokes and text.
 Optional content (layers): groups and membership dictionaries (`/P` and
 visibility expressions), marked content `BDC /OC` and XObjects with `/OC`,
 the default and alternate configurations with `/Order`, radio-button
@@ -166,8 +189,11 @@ and Squiggly without one; `Page.Annotations` exposes them with link
 targets.
 
 Not yet, and counted in `Stats.Unsupported` so the corpus report shows what
-matters most: shadings, patterns, tint transforms
-(Separation/DeviceN are drawn as grey), Lab; fonts neither embedded nor
+matters most: tint transforms (Separation/DeviceN are drawn as grey), Lab;
+shadings and patterns that do not read (`shading-bad`, `pattern-bad`) or
+exceed a budget (`shading-mesh-budget`: more than 65 536 triangles;
+`pattern-budget`: patterns nested past 4 levels, 64 MB of tiles per page);
+stencil images painted with a pattern (`pattern-stencil`); fonts neither embedded nor
 standing in (`font-missing`: Symbol, ZapfDingbats, non-embedded composite
 fonts), vertical writing (`vertical-text`, drawn with default metrics),
 Type 3 glyphs in clipping modes (`type3-clip`), annotations without
@@ -175,9 +201,8 @@ appearance that cera does not generate (`annot-no-ap`: FreeText, Text,
 Stamp …), `/Matte` of soft masks
 (`smask-matte`, drawn without), image filters the reader does not know
 (`image-filter`), images larger than 256 MB decoded (`image-too-large`);
-a non-isolated group with blend modes inside that is itself blended or an
-object of a knockout group (`non-isolated-blend`: composited as Normal,
-or drawn isolated), `/AIS` (`alpha-is-shape`), transfer functions that do
+a non-isolated group with blend modes inside that is an object of a
+knockout group (`non-isolated-blend`: drawn isolated), `/AIS` (`alpha-is-shape`), transfer functions that do
 not read (`smask-transfer`), soft masks past 4 levels of nesting or 1024
 per page (`smask-budget`, drawn empty).
 
@@ -196,7 +221,7 @@ recorded as architecture decisions in [`docs/adr`](docs/adr/README.md).
 | ✓ | M4 text | fonts via pdffont and opentype, stand-ins, per-worker glyph mask cache, Type 3, all render modes incl. text clips, TextDevice, `Page.Run`, `Page.Text` |
 | ✓ | M5 images | image XObjects and inline images, JPEG/JPEG 2000/JBIG2/CCITT, soft, stencil and colour-key masks at their own resolution, one-bit and palette planes, lazy mip levels with bilinear sampling, per-document image cache |
 | ✓ | M6 transparency | groups (isolated, non-isolated, knockout) in pooled layers per band, all blend modes exact at antialiased edges, soft masks (luminosity, alpha, backdrop, transfer functions), trivial and single-object groups dropped from the display list |
-| | M7 shadings and colour | types 1–7, function LUTs, Separation/DeviceN, simplified ICC |
+| ◐ | M7 shadings and colour | shadings types 1–7 (ADR 0001) ✓, tiling and shading patterns (ADR 0002) ✓; Separation/DeviceN, simplified ICC |
 | ◐ | M7½ layers, annotations, forms | optional content (ADR 0004) ✓, annotations (ADR 0005) ✓; interactive forms |
 | | M8 robustness | fuzzing, large corpora, budgets (started: CI below) |
 | | M9 GPU backend | GGDevice on gogpu/gg, glyph atlas, lux |

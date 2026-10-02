@@ -1,6 +1,6 @@
 # 0001. Shadings through `Device.FillShading`
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-01
 - Milestone: M7
 - Depends on: stilus ADR 0001 (shading shaders)
@@ -89,6 +89,29 @@ for `sh` the current clip box, intersected with `BBox` when present.
 
 **Anti-aliasing flag and smoothness tolerance** (`/AntiAlias`, `SM`) are
 ignored; the LUT resolution is fixed.
+
+### As implemented
+
+- **Device operation.** `FillShading(sh *Shading, m Matrix, alpha uint8)`
+  paints over the current clip. The area of a shading pattern is a clip the
+  interpreter pushes before (see ADR 0002), so the operation needs no path;
+  the raster device fills the clip's box, the `BBox` or, for meshes and
+  grids, their own bounds.
+- **Compiled once per document**, in a cache keyed by reference
+  (`shading.go`). Types 2 and 3: 256 evenly spaced samples plus each bound
+  of a stitching function twice, with the colours on either side, as the
+  `Knots` of a stilus ramp; a break falls on the exact device pixel. Type 1:
+  a 64 × 64 grid, 256 × 256 when neighbouring samples differ by more than 4
+  levels, drawn by `ImageShader` and clipped to the domain. Types 4–7:
+  triangles; meshes with a function carry t into a 1024-entry ramp.
+- **Patches** are subdivided to about 6 device pixels per step (at most 32
+  per side), for a power-of-two range of scales, which is part of the
+  cache key.
+- **Mesh shaders.** A `Shading` keeps one stilus `MeshShader` per device
+  matrix and alpha (at most 8): its triangles are binned once and the
+  shader is shared by every band and worker.
+- **Background** is the gradients' `Outside` colour; meshes and grids
+  paint it under themselves.
 
 ## Consequences
 
