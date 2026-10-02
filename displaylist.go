@@ -605,16 +605,29 @@ func (l *displayList) drawAll(dev Device, ds *drawState, r image.Rectangle, vis 
 }
 
 // ocTag is a membership of optional content, nested in the tag parent:
-// its content is visible when both are.
+// its content is visible when both are. The tag of an annotation has
+// annot set to its index + 1 and its flags; its content is visible when
+// the render shows the annotation too.
 type ocTag struct {
 	parent int32
-	expr   *ocExpr
+	expr   *ocExpr // nil: always
+	annot  int32
+	flags  AnnotFlags
 }
 
 // ocTag returns the tag of content of membership e inside content tagged
 // parent.
 func (l *displayList) ocTag(parent int32, e *ocExpr) int32 {
-	k := ocTag{parent, e}
+	return l.addTag(ocTag{parent: parent, expr: e})
+}
+
+// annotTag returns the tag of the appearance of annotation index with
+// flags f and membership e (nil if none), drawn after the page content.
+func (l *displayList) annotTag(index int, f AnnotFlags, e *ocExpr) int32 {
+	return l.addTag(ocTag{expr: e, annot: int32(index) + 1, flags: f})
+}
+
+func (l *displayList) addTag(k ocTag) int32 {
 	if t, ok := l.ocIndex[k]; ok {
 		return t
 	}
@@ -627,11 +640,15 @@ func (l *displayList) ocTag(parent int32, e *ocExpr) int32 {
 	return t
 }
 
-// visibleTags evaluates the tags of the list under v into dst.
-func (l *displayList) visibleTags(dst []bool, v *Visibility) []bool {
+// visibleTags evaluates the tags of the list under v and af into dst.
+func (l *displayList) visibleTags(dst []bool, v *Visibility, af *annotFilter) []bool {
 	dst = append(dst[:0], true)
 	for _, t := range l.ocTags[1:] {
-		dst = append(dst, dst[t.parent] && t.expr.eval(v, l.scale))
+		on := dst[t.parent] && (t.expr == nil || t.expr.eval(v, l.scale))
+		if t.annot != 0 && on {
+			on = af.shows(int(t.annot-1), t.flags)
+		}
+		dst = append(dst, on)
 	}
 	return dst
 }

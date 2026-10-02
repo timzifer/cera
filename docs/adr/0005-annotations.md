@@ -1,6 +1,6 @@
 # 0005. Annotations from appearance streams
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-01
 - Milestone: M7½
 
@@ -94,6 +94,41 @@ can be extracted and searched.
   viewers build it on `Page.Annotations()` and ADR 0006.
 - Default output changes for every file with annotations; corpus reference
   images are regenerated once.
+
+## Implementation notes
+
+Implemented in `annot.go` (reading, links, drawing) and `annotgen.go`
+(generated appearances). Where it refines the decision above:
+
+- **Tags are shared with ADR 0004.** An annotation's tag is an entry of
+  the display list's optional-content tags with the annotation's index and
+  flags (and its `/OC` as membership); optional content inside its
+  appearance nests under it. One evaluation per tag and render covers
+  layers, `RenderOptions.Annotations` and `SkipAnnotation`, so changing
+  the mode or the skip function draws the cached list again.
+- `Hidden` and `Popup` are never recorded; `NoView` and `Print` are
+  evaluated per render. `Invisible` and `ToggleNoView` are ignored.
+- `/CA` of every annotation, and the Multiply blend of generated
+  highlights, apply to the annotation as one isolated group.
+- `NoRotate` rotates the annotation about the upper-left corner of its
+  `Rect` so that it stays upright on screen; `NoZoom` scales it by
+  1/`Scale` about the same corner.
+- Generated appearances are content streams run through the interpreter
+  in default user space. Sizes the specification leaves open: line
+  endings 6 × the border width (at least 6), underline and strike-out
+  1/14 of the quad's height, strike-out at 3/8 of it. Highlights without
+  `/C` are yellow, other types black; an empty `/C` is transparent.
+  Quad points are accepted in either order writers use.
+- Links: `Annotation.Link` holds URI and GoTo targets, explicit and named
+  destinations (catalog `/Dests` and the `/Dests` name tree); other
+  actions leave it nil.
+- `annot-no-ap` counts annotations without `/AP` that cera does not
+  generate (except `Link`, `Widget` and `Popup`). Annotations without a
+  readable `/Rect` count as content errors, except those with an empty one,
+  which writers use for invisible annotations. `annot-bad` is not used.
+- `Page.Run`/`RunWith` and `Page.Text` take `RunOptions.Annotations` and
+  `SkipAnnotation`; the default (`AnnotsView`) includes the text of
+  appearances.
 
 ## Alternatives considered
 

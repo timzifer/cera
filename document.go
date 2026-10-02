@@ -29,6 +29,9 @@ type Document struct {
 
 	ocOnce sync.Once
 	oc     *ocProps // optional content, read on first use
+
+	pageIdxOnce sync.Once
+	pageIdx     map[reader.Ref]int // page index by reference, for links
 }
 
 // Open parses a PDF file. Damaged cross-reference tables, wrong stream
@@ -98,6 +101,10 @@ type Page struct {
 
 	mu sync.Mutex
 	dl *displayList // cached by Render; see Release
+
+	annOnce sync.Once
+	annots  []Annotation
+	annBad  int // unreadable entries of /Annots
 }
 
 // Index returns the 0-based page number.

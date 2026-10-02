@@ -64,6 +64,19 @@ vis := cfg.Visibility().With(cfg.Layers[0], false)
 err = page.Render(ctx, dst, cera.RenderOptions{Scale: 150.0 / 72, Layers: &vis})
 ```
 
+Annotations are drawn over the page content, as on screen by default;
+`RenderOptions.Annotations` selects `AnnotsPrint` or `AnnotsNone`, and
+`SkipAnnotation` leaves single ones out (a viewer drawing form fields
+itself). Both only redraw the cached display list:
+
+```go
+for _, a := range page.Annotations() {
+	if a.Link != nil {
+		fmt.Println(a.Rect, a.Link.URI, a.Link.Page)
+	}
+}
+```
+
 `dst` may be any sub-rectangle of the page (a tile or viewport): only that
 region is drawn. `RenderOptions.Region` narrows it further. Errors in the
 content never stop a page; a non-nil error means a partial image
@@ -145,14 +158,21 @@ Optional content (layers): groups and membership dictionaries (`/P` and
 visibility expressions), marked content `BDC /OC` and XObjects with `/OC`,
 the default and alternate configurations with `/Order`, radio-button
 groups, locked layers, intents and automatic states for view, print and
-export (`/AS`, including zoom ranges); see below.
+export (`/AS`, including zoom ranges); see below. Annotations: drawn from
+their normal appearance streams (with `/AS` states, `/CA`, `NoZoom`,
+`NoRotate`, `/OC`), and generated for Square, Circle, Line (with endings
+and leader lines), PolyLine, Polygon, Ink, Highlight, Underline, StrikeOut
+and Squiggly without one; `Page.Annotations` exposes them with link
+targets.
 
 Not yet, and counted in `Stats.Unsupported` so the corpus report shows what
 matters most: shadings, patterns, tint transforms
 (Separation/DeviceN are drawn as grey), Lab; fonts neither embedded nor
 standing in (`font-missing`: Symbol, ZapfDingbats, non-embedded composite
 fonts), vertical writing (`vertical-text`, drawn with default metrics),
-Type 3 glyphs in clipping modes (`type3-clip`), `/Matte` of soft masks
+Type 3 glyphs in clipping modes (`type3-clip`), annotations without
+appearance that cera does not generate (`annot-no-ap`: FreeText, Text,
+Stamp …), `/Matte` of soft masks
 (`smask-matte`, drawn without), image filters the reader does not know
 (`image-filter`), images larger than 256 MB decoded (`image-too-large`);
 a non-isolated group with blend modes inside that is itself blended or an
@@ -177,7 +197,7 @@ recorded as architecture decisions in [`docs/adr`](docs/adr/README.md).
 | ✓ | M5 images | image XObjects and inline images, JPEG/JPEG 2000/JBIG2/CCITT, soft, stencil and colour-key masks at their own resolution, one-bit and palette planes, lazy mip levels with bilinear sampling, per-document image cache |
 | ✓ | M6 transparency | groups (isolated, non-isolated, knockout) in pooled layers per band, all blend modes exact at antialiased edges, soft masks (luminosity, alpha, backdrop, transfer functions), trivial and single-object groups dropped from the display list |
 | | M7 shadings and colour | types 1–7, function LUTs, Separation/DeviceN, simplified ICC |
-| ◐ | M7½ layers, annotations, forms | optional content (ADR 0004) ✓; annotations, interactive forms |
+| ◐ | M7½ layers, annotations, forms | optional content (ADR 0004) ✓, annotations (ADR 0005) ✓; interactive forms |
 | | M8 robustness | fuzzing, large corpora, budgets (started: CI below) |
 | | M9 GPU backend | GGDevice on gogpu/gg, glyph atlas, lux |
 
