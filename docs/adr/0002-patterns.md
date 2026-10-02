@@ -3,6 +3,7 @@
 - Status: proposed
 - Date: 2026-10-01
 - Milestone: M7
+- Depends on: ADR 0001 (shadings), stilus ADR 0002 (repeating textures)
 
 ## Context
 
@@ -41,9 +42,11 @@ the painted area covers:
 1. **Tile image** (the default): the cell is interpreted once into its own
    small display list and rasterized into an RGBA tile (or an alpha tile for
    `PaintType 2`) at device resolution, in pattern space scaled to the
-   device, at most 1024 × 1024. The fill uses a shader that maps each device
-   pixel through the inverse pattern matrix and wraps modulo
-   `XStep`/`YStep`, sampled bilinearly. Rotated and skewed patterns stay
+   device, at most 1024 × 1024, one tile per `XStep` × `YStep` step (cells
+   larger than a step are drawn at their wrapped offsets). The fill uses
+   stilus's `ImageShader` in wrap mode ([stilus ADR 0002](https://github.com/timzifer/stilus/blob/main/docs/adr/0002-repeating-textures.md)),
+   which maps each device pixel through the inverse pattern matrix and wraps
+   it into the tile, sampled bilinearly. Rotated and skewed patterns stay
    exact up to resampling. Tiles are cached per pattern, scale and colour
    (for uncoloured patterns the colour is applied at fill time, so one alpha
    tile serves every colour).

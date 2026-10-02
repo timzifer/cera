@@ -22,7 +22,9 @@
 
 **Accuracy.**
 
-1. Add a cera engine to the stilus harness and render the pinned corpus at
+1. Add a cera engine to the stilus harness (`stilus/harness`, a module of
+   its own, so importing cera there makes no cycle; the work lands in the
+   stilus repository) and render the pinned corpus at
    150 dpi with cera and PDFium.
 2. Per page, record: the share of pixels differing by more than 16 levels
    in any channel, and the 99th percentile of the difference. Report both in

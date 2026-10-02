@@ -12,6 +12,12 @@ counted in `Stats.Unsupported` today, unless the record says otherwise; a
 record is done when its keys disappear from the corpus report or only count
 files that are themselves broken.
 
+Rasterizer and compositing work these records need — shaders for shadings,
+repeating textures for patterns, group compositing kernels — is decided in
+[stilus's ADRs](https://github.com/timzifer/stilus/tree/main/docs/adr),
+because stilus knows nothing of PDF; the records here name the stilus ADR
+they depend on.
+
 | ADR | title | milestone | status |
 |---|---|---|---|
 | [0001](0001-shadings.md) | Shadings through `Device.FillShading` | M7 | proposed |

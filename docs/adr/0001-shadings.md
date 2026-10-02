@@ -3,6 +3,7 @@
 - Status: proposed
 - Date: 2026-10-01
 - Milestone: M7
+- Depends on: stilus ADR 0001 (shading shaders)
 
 ## Context
 
@@ -72,15 +73,15 @@ display list has seen (re-subdivided only if a later scale needs more than
 4× finer; bounded at 2¹⁶ triangles per shading, beyond which
 `shading-mesh-budget` is counted and the coarser mesh used).
 
-**Raster: one shader, not one fill per triangle.** A mesh is not drawn as
-thousands of antialiased triangles; that leaves hairline seams where their
-edges meet and costs a pass per triangle. It is drawn as one fill of the
-mesh's outline (or the path, or the clip) with a shader that, for each device
-pixel, finds the triangle under it through a uniform bucket grid built at
-compile time, and interpolates (Gouraud) barycentrically. Axial and radial
-shaders compute t per pixel analytically (radial: the two-circle form of the
-spec, larger root first, with `Extend`), then read the LUT. All shaders write
-spans, like the image shader of M5.
+**Raster: stilus shaders, one fill per shading.** The shaders are stilus's
+and know nothing of PDF ([stilus ADR 0001](https://github.com/timzifer/stilus/blob/main/docs/adr/0001-shading-shaders.md)):
+types 2 and 3 use `LinearGradient` and `RadialGradient` (the two-circle form,
+larger root first, with `Extend`) with the LUT as a ramp whose knots carry
+the stitching bounds; type 1 is the sampled grid as a texture under
+`ImageShader`; types 4–7 use `MeshShader`. A mesh is not drawn as thousands
+of antialiased triangles, which leaves hairline seams and costs a pass per
+triangle, but as one fill of the mesh's outline (or the path, or the clip)
+with the mesh shader. cera keeps one shader per shading and raster worker.
 
 **Display list.** A new item `dlShading` carries the path range (or none for
 `sh`), the matrices, an index into the list's shadings, and the device box:
