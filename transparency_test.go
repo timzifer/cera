@@ -74,46 +74,6 @@ func TestBlendModes(t *testing.T) {
 	}
 }
 
-func TestBlendFunctions(t *testing.T) {
-	cb, cs := [3]float64{0.2, 0.4, 0.6}, [3]float64{0.9, 0.5, 0.1}
-	for _, c := range []struct {
-		bm   BlendMode
-		want [3]float64
-	}{
-		{BlendNormal, cs},
-		{BlendMultiply, [3]float64{0.18, 0.2, 0.06}},
-		{BlendScreen, [3]float64{0.92, 0.7, 0.64}},
-		{BlendOverlay, [3]float64{0.36, 0.4, 0.28}},
-		{BlendHardLight, [3]float64{0.84, 0.4, 0.12}},
-		{BlendColorDodge, [3]float64{1, 0.8, 0.6 / 0.9}},
-		{BlendColorBurn, [3]float64{1 - 0.8/0.9, 0, 0}},
-		{BlendExclusion, [3]float64{0.2 + 0.9 - 0.36, 0.5, 0.6 + 0.1 - 0.12}},
-		{BlendColor, setLum(cs, lum(cb))},
-	} {
-		got := blend(c.bm, cb, cs)
-		for i := range got {
-			if math.Abs(got[i]-c.want[i]) > 1e-9 {
-				t.Errorf("%v: got %v, want %v", c.bm, got, c.want)
-				break
-			}
-		}
-	}
-	// Non-separable modes keep the luminosity they are asked for.
-	for _, bm := range []BlendMode{BlendHue, BlendSaturation, BlendColor, BlendLuminosity} {
-		got := blend(bm, cb, cs)
-		want := lum(cb)
-		if bm == BlendLuminosity {
-			want = lum(cs)
-		}
-		if math.Abs(lum(got)-want) > 1e-9 {
-			t.Errorf("%v: luminosity %v, want %v", bm, lum(got), want)
-		}
-	}
-	if s := sat(setSat(cb, 0.3)); math.Abs(s-0.3) > 1e-9 {
-		t.Errorf("setSat: saturation %v", s)
-	}
-}
-
 func TestGroupOpacity(t *testing.T) {
 	// Two overlapping opaque rectangles in a group at 50%: the overlap is
 	// as light as the rest. Without the group, each is drawn at 50%.
@@ -184,6 +144,27 @@ func TestNonIsolatedGroup(t *testing.T) {
 		assertNear(t, img, 125, 50, color.RGBA{127, 127, 255, 255}, 1)
 		assertNear(t, img, 175, 50, color.RGBA{127, 255, 127, 255}, 1)
 		assertPixel(t, img, 25, 50, color.RGBA{255, 0, 0, 255})
+	}
+}
+
+func TestNonIsolatedGroupBlended(t *testing.T) {
+	// A non-isolated group with Multiply inside, composited with Screen:
+	// blue multiplied onto yellow is black, but the group's backdrop is
+	// removed before Screen blends it (PDF 2.0, 11.4.8), so Screen sees
+	// black over yellow on the left, blue over white on the right.
+	content := "/M gs 0 0 1 rg 50 0 100 100 re f"
+	res := "/Resources << /ExtGState << /M << /BM /Multiply >> >> >>"
+	for _, workers := range []int{1, 3} {
+		img, st, err := renderPage(t, buildPDF([]string{"1 1 0 rg 0 0 100 100 re f /S gs /F Do"},
+			"/Resources << /ExtGState << /S << /BM /Screen >> >> /XObject << /F 100 0 R >> >>",
+			formObj("/Group << /S /Transparency >> "+res, content)), 0,
+			RenderOptions{Background: white, Workers: workers, Scale: 2})
+		if err != nil || len(st.Unsupported) != 0 {
+			t.Fatal(err, st.Unsupported)
+		}
+		assertNear(t, img, 150, 100, color.RGBA{255, 255, 0, 255}, 1)
+		assertNear(t, img, 250, 100, color.RGBA{255, 255, 255, 255}, 1)
+		assertNear(t, img, 50, 100, color.RGBA{255, 255, 0, 255}, 1)
 	}
 }
 

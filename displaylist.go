@@ -113,6 +113,8 @@ type displayList struct {
 	bandStart []int32
 	bandItems []int32
 	bandFill  []int32
+	// allItems lists the items that draw, for drawing without bands.
+	allItems []int32
 
 	// What the list was recorded for, and what recording did.
 	scale    float64
@@ -496,8 +498,10 @@ func (l *displayList) EndGroup() {
 		switch {
 		case !o.blends:
 			g.Isolated = true
-		case g.Blend != BlendNormal || inKnockout:
-			l.stats.unsupported("non-isolated-blend") // approximated
+		case inKnockout:
+			l.stats.unsupported("non-isolated-blend") // drawn isolated
+		case g.Blend != BlendNormal:
+			g.alone = true // its backdrop is removed when it is drawn
 		}
 	}
 	// What the parent sees drawn into it.
@@ -583,10 +587,12 @@ func (l *displayList) finish() {
 	total := int(l.bandStart[nb])
 	l.bandItems = slices.Grow(l.bandItems[:0], total)[:total]
 	l.bandFill = append(l.bandFill[:0], l.bandStart[:nb]...)
+	l.allItems = l.allItems[:0]
 	for i := range l.items {
 		if l.items[i].op == dlNop {
 			continue
 		}
+		l.allItems = append(l.allItems, int32(i))
 		b0, b1 := l.bandRange(l.items[i].bbox)
 		for b := b0; b < b1; b++ {
 			l.bandItems[l.bandFill[b]] = int32(i)
@@ -636,31 +642,58 @@ type drawState struct {
 // drawBand replays the items of band b that touch r and whose tags vis
 // shows onto dev.
 func (l *displayList) drawBand(dev Device, ds *drawState, b int, r image.Rectangle, vis []bool, lim *limit) bool {
-	defer func() { *ds = drawState{} }() // keep no references to the list
-	for k, i := range l.bandItems[l.bandStart[b]:l.bandStart[b+1]] {
-		if k%checkEvery == checkEvery-1 && lim.expired() {
-			return false
-		}
-		if it := &l.items[i]; it.bbox.Overlaps(r) && vis[it.tag] {
-			l.drawItem(dev, ds, it)
-		}
-	}
-	return true
+	return l.drawItems(dev, ds, l.bandItems[l.bandStart[b]:l.bandStart[b+1]], r, vis, lim)
 }
 
 // drawAll replays the items that touch r and whose tags vis shows onto
 // dev in one pass.
 func (l *displayList) drawAll(dev Device, ds *drawState, r image.Rectangle, vis []bool, lim *limit) bool {
-	defer func() { *ds = drawState{} }()
-	for k := range l.items {
+	return l.drawItems(dev, ds, l.allItems, r, vis, lim)
+}
+
+// drawItems replays the items idx that touch r and whose tags vis shows
+// onto dev. A raster device gets the groups whose backdrop it removes
+// twice: on their own first.
+func (l *displayList) drawItems(dev Device, ds *drawState, idx []int32, r image.Rectangle, vis []bool, lim *limit) bool {
+	defer func() { *ds = drawState{} }() // keep no references to the list
+	rd, _ := dev.(*RasterDevice)
+	for k, i := range idx {
 		if k%checkEvery == checkEvery-1 && lim.expired() {
 			return false
 		}
-		if it := &l.items[k]; it.bbox.Overlaps(r) && vis[it.tag] {
-			l.drawItem(dev, ds, it)
+		it := &l.items[i]
+		if !it.bbox.Overlaps(r) || !vis[it.tag] {
+			continue
 		}
+		if it.op == dlBeginGroup && rd != nil && rd.t.base != nil && l.groups[it.style].alone {
+			l.drawAlone(rd, ds, idx[k:], r, vis)
+		}
+		l.drawItem(dev, ds, it)
 	}
 	return true
+}
+
+// drawAlone draws the group that begins at idx[0] on its own, into a
+// layer rd keeps for drawing the group again.
+func (l *displayList) drawAlone(rd *RasterDevice, ds *drawState, idx []int32, r image.Rectangle, vis []bool) {
+	rd.t.aloneNext = true
+	depth := 0
+	for _, i := range idx {
+		it := &l.items[i]
+		if !it.bbox.Overlaps(r) || !vis[it.tag] {
+			continue
+		}
+		l.drawItem(rd, ds, it)
+		switch it.op {
+		case dlBeginGroup, dlBeginMask:
+			depth++
+		case dlEndGroup, dlEndMask:
+			depth--
+		}
+		if depth == 0 {
+			return
+		}
+	}
 }
 
 // ocTag is a membership of optional content, nested in the tag parent:
