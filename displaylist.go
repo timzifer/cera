@@ -267,8 +267,8 @@ func (l *displayList) FillShading(sh *Shading, m Matrix, alpha uint8) {
 		return
 	}
 	bb := l.clipBox()
-	if sh.hasBBox {
-		bb = l.rectBox(sh.bbox, m)
+	if r, ok := sh.paintRect(); ok {
+		bb = l.rectBox(r, m)
 	}
 	if bb.Empty() {
 		return

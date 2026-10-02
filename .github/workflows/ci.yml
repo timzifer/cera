@@ -88,6 +88,8 @@ jobs:
         run: go test -run '^$' -fuzz FuzzImage -fuzztime 30s .
       - name: Fuzz transparency
         run: go test -run '^$' -fuzz FuzzTransparency -fuzztime 30s .
+      - name: Fuzz mesh shadings
+        run: go test -run '^$' -fuzz FuzzMeshShading -fuzztime 30s .
       - name: Fuzz the content scanner
         run: go test -run '^$' -fuzz FuzzScan -fuzztime 30s ./internal/content
       - name: Keep crashers

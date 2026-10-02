@@ -320,3 +320,20 @@ func TestPaintSteadyStateAllocations(t *testing.T) {
 		t.Errorf("%v allocations per cached render", allocs)
 	}
 }
+
+func FuzzMeshShading(f *testing.F) {
+	f.Add(uint8(4), []byte{0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 255, 0, 0, 0, 255, 0, 0, 255})
+	f.Add(uint8(6), make([]byte, 60))
+	f.Add(uint8(7), []byte{0, 1, 2, 3, 255, 255, 1, 2, 3})
+	f.Fuzz(func(t *testing.T, typ uint8, data []byte) {
+		typ = 4 + typ%4
+		sh := streamObj(fmt.Sprintf("/ShadingType %d /ColorSpace /DeviceRGB /BitsPerCoordinate 8 /BitsPerComponent 4"+
+			" /BitsPerFlag 2 /VerticesPerRow 3 /Decode [0 200 0 100 0 1 0 1 0 1]", typ), data)
+		_, _, err := renderPage(t, buildPDF([]string{"/S sh /Pattern cs /P scn 0 0 200 100 re f"},
+			"/Resources << /Shading << /S 100 0 R >> /Pattern << /P << /PatternType 2 /Shading 100 0 R >> >> >>", sh), 0,
+			RenderOptions{Workers: 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+}
