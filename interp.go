@@ -82,6 +82,8 @@ type interp struct {
 	ocCur  int32   // the list's tag; for other devices 1 while hidden
 	mc     []int32 // ocCur before each open BMC or BDC
 	mcBase int     // len(mc) when the running content stream started
+
+	annotBuf []byte // generated appearance streams
 }
 
 func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
@@ -89,7 +91,7 @@ func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
 		doc: doc, dev: dev, st: st, lim: lim,
 		stack: in.stack[:0], path: in.path, clip: -1,
 		scanners: in.scanners, dashes: in.dashes[:0], dashBuf: in.dashBuf,
-		text: in.text.keep(), objs: in.objs[:0], mc: in.mc[:0],
+		text: in.text.keep(), objs: in.objs[:0], mc: in.mc[:0], annotBuf: in.annotBuf[:0],
 		out: dev, ocVis: &noLayers, ocZoom: 1,
 	}
 	in.path.Reset()

@@ -67,6 +67,14 @@
 // switching layers draws again without interpreting the page. Page.RunWith
 // gives other devices only the content a Visibility shows.
 //
+// # Annotations
+//
+// Page.Annotations lists the annotations of a page with their flags and
+// link targets. Rendering draws them after the page content from their
+// appearance streams, or from appearances cera generates for markup
+// annotations that have none; RenderOptions.Annotations and
+// SkipAnnotation choose which, without interpreting the page again.
+//
 // # Robustness
 //
 // Broken content is skipped, not fatal: unknown or malformed operators are

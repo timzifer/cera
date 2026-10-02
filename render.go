@@ -46,6 +46,14 @@ type RenderOptions struct {
 	// selects the automatic states (/AS) of the default configuration and
 	// applies only when Layers is nil.
 	Usage Usage
+	// Annotations selects the annotations drawn over the page content:
+	// AnnotsView (the default), AnnotsPrint, or AnnotsNone.
+	Annotations AnnotMode
+	// SkipAnnotation, when set, is asked once per render for each
+	// annotation the mode shows, by its index in /Annots; those it
+	// returns true for are not drawn (a form overlay drawing its own
+	// widgets). Changing it does not interpret the page again.
+	SkipAnnotation func(index int) bool
 }
 
 // Stats describes what rendering a page did.
@@ -213,7 +221,8 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 	if vis == nil && len(dl.ocTags) > 1 {
 		vis = p.doc.defaultVisibility(opt.Usage)
 	}
-	if derr := dl.render(dst, region, opt.Workers, vis, lim); derr != nil && err == nil {
+	af := annotFilter{mode: opt.Annotations, skip: opt.SkipAnnotation}
+	if derr := dl.render(dst, region, opt.Workers, vis, &af, lim); derr != nil && err == nil {
 		err = derr
 	}
 	return err
@@ -244,7 +253,7 @@ func (p *Page) list(scale float64, lim *limit) (dl *displayList, reused bool) {
 				dl.panic = &PanicError{Value: v, Stack: debug.Stack()}
 			}
 		}()
-		dl.complete = p.record(in, dl, &dl.stats, scale, nil, lim)
+		dl.complete = p.record(in, dl, &dl.stats, scale, nil, nil, lim)
 	}()
 	if in != nil {
 		in.release()
@@ -265,9 +274,10 @@ func (p *Page) list(scale float64, lim *limit) (dl *displayList, reused bool) {
 }
 
 // record interprets the page into dev at scale and reports whether it got
-// to the end. A display list records all optional content; any other
-// device sees what vis shows.
-func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, vis *Visibility, lim *limit) bool {
+// to the end. A display list records all optional content and all
+// annotations that can be drawn; any other device sees what vis and af
+// show.
+func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, vis *Visibility, af *annotFilter, lim *limit) bool {
 	base := p.deviceMatrix(scale)
 	dev.ClipRect(p.Box, base)
 	in.reset(p.doc, dev, st, lim)
@@ -284,6 +294,9 @@ func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, vis *Vis
 			st.Errors++
 		}
 		in.run(dec.Data, res, base, 0)
+	}
+	if in.err == nil {
+		in.drawAnnots(p, base, scale, af)
 	}
 	return in.err == nil
 }
@@ -310,6 +323,10 @@ type RunOptions struct {
 	// a TextDevice does not see its text.
 	Layers *Visibility
 	Usage  Usage
+	// Annotations and SkipAnnotation select the annotations, as for
+	// RenderOptions. A TextDevice sees the text of their appearances.
+	Annotations    AnnotMode
+	SkipAnnotation func(index int) bool
 }
 
 // RunWith is Run with options.
@@ -330,7 +347,8 @@ func (p *Page) RunWith(ctx context.Context, dev Device, opt RunOptions) (err err
 	}
 	lim := &limit{ctx: ctx}
 	in := recorders.Get().(*interp)
-	ok := p.record(in, dev, st, normScale(opt.Scale), vis, lim)
+	af := annotFilter{mode: opt.Annotations, skip: opt.SkipAnnotation}
+	ok := p.record(in, dev, st, normScale(opt.Scale), vis, &af, lim)
 	dev.PopClip()
 	in.release()
 	recorders.Put(in)
@@ -363,9 +381,10 @@ func (p *Page) Release() {
 }
 
 // render draws the part of the list inside region into dst, with the
-// optional content vis shows (nil: all). One worker draws the region in
+// optional content vis and the annotations af show (vis nil: all layers).
+// One worker draws the region in
 // one pass; several share the bands that touch it.
-func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers int, vis *Visibility, lim *limit) error {
+func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers int, vis *Visibility, af *annotFilter, lim *limit) error {
 	b0, b1 := l.bandRange(region)
 	if b0 >= b1 {
 		return nil
@@ -377,7 +396,7 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers in
 	if vis == nil {
 		vis = &noLayers
 	}
-	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1, vis: l.visibleTags(j.vis, vis)}
+	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1, vis: l.visibleTags(j.vis, vis, af)}
 	if workers = min(workers, b1-b0); workers == 1 {
 		j.work(true)
 	} else {

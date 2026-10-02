@@ -27,6 +27,7 @@ func main() {
 	timeout := flag.Duration("timeout", time.Minute, "deadline per page")
 	verbose := flag.Bool("v", false, "print timing and statistics per page")
 	workers := flag.Int("workers", 0, "goroutines drawing one page (0 = all cores)")
+	annots := flag.String("annots", "view", "annotations to draw: view, print or none")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: cera [flags] input.pdf")
 		flag.PrintDefaults()
@@ -36,13 +37,19 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
-	if err := run(flag.Arg(0), *dpi, *page, *out, *password, *transparent, *timeout, *verbose, *workers); err != nil {
+	modes := map[string]cera.AnnotMode{"view": cera.AnnotsView, "print": cera.AnnotsPrint, "none": cera.AnnotsNone}
+	mode, ok := modes[*annots]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "cera: -annots %q: want view, print or none\n", *annots)
+		os.Exit(2)
+	}
+	if err := run(flag.Arg(0), *dpi, *page, *out, *password, *transparent, *timeout, *verbose, *workers, mode); err != nil {
 		fmt.Fprintln(os.Stderr, "cera:", err)
 		os.Exit(1)
 	}
 }
 
-func run(in string, dpi float64, page int, out, password string, transparent bool, timeout time.Duration, verbose bool, workers int) error {
+func run(in string, dpi float64, page int, out, password string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode) error {
 	data, err := os.ReadFile(in)
 	if err != nil {
 		return err
@@ -76,7 +83,7 @@ func run(in string, dpi float64, page int, out, password string, transparent boo
 		t0 := time.Now()
 		err = p.Render(context.Background(), dst, cera.RenderOptions{
 			Scale: dpi / 72, Background: bg, Deadline: time.Now().Add(timeout), Stats: &st,
-			Workers: workers,
+			Workers: workers, Annotations: annots,
 		})
 		p.Release()
 		elapsed := time.Since(t0)
