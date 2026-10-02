@@ -3,6 +3,7 @@
 - Status: proposed
 - Date: 2026-10-01
 - Milestone: M8
+- Depends on: stilus ADR 0003 (group compositing), for items 3 and 4
 
 ## Context
 
@@ -33,12 +34,16 @@ These are rare in the corpus but visible when they occur.
 3. **Non-isolated groups with blending, blended or knocked out**: draw the
    group's layer twice — the backdrop-included composite (as today) and the
    group alone (shape and alpha) — and use the second to remove the
-   backdrop's contribution as in PDF 2.0 11.4.8. Costs one extra layer for
+   backdrop's contribution as in PDF 2.0 11.4.8. The removal is a stilus
+   compositing kernel (`LayerShader` with `Initial` and `Alone`,
+   [stilus ADR 0003](https://github.com/timzifer/stilus/blob/main/docs/adr/0003-group-compositing.md));
+   cera draws the second layer and passes both. Costs one extra layer for
    these groups only; implemented only if the corpus shows files beyond
    synthetic tests.
 4. **`AIS`**: carry a separate shape channel only inside groups that use
-   it; otherwise unchanged. Lowest priority; stays counted until a real
-   file needs it.
+   it (an `image.Alpha` cera keeps, composited by stilus's `LayerShader`
+   with `Shape`, stilus ADR 0003); otherwise unchanged. Lowest priority;
+   stays counted until a real file needs it.
 5. **Budgets** (`smask-budget`, `image-too-large`, and new ones from other
    ADRs) stay; they are robustness limits, listed in ADR 0010.
 
