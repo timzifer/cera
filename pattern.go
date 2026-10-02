@@ -8,17 +8,36 @@ import (
 
 	"github.com/go-pdfkit/reader"
 	"github.com/timzifer/stilus"
+
+	"github.com/timzifer/cera/internal/content"
 )
 
-// Patterns (PDF 2.0, 8.7.3). An object painted with a pattern reaches the
-// device as a clip of its shape followed by the pattern over the clip:
-// FillShading for a shading pattern, and for a tiling pattern either
-// FillTile, one step of the pattern rasterized at device resolution and
-// repeated by stilus's wrapping sampler, or, when one cell covers the
-// object or a few cells too large for a tile do, the drawing operations
-// of each cell (exact vector output).
-// The pattern matrix maps pattern space to the default space of the
-// content stream whose resources name the pattern.
+// Patterns (PDF 2.0, 8.7). A pattern paints through the shape it fills: a
+// path, a stroke or the glyphs of a text operator arrive at the device as
+// a clip of that shape, the pattern painted over it, and the clip's pop. A
+// shading pattern is its shading filled over the clip. A tiling pattern is
+// FillTile: one step of the pattern rasterized at device resolution and
+// repeated by stilus's wrapping sampler, without seams; when one cell
+// covers the shape, or a few cells too large for a tile do, the drawing
+// operations of each cell are replayed instead (exact vector output).
+
+// patternEntry is a pattern as read, once per document when it is named by
+// reference.
+type patternEntry struct {
+	shading *shadingEntry // nil for a tiling pattern
+	matrix  Matrix
+	tiling  *tilingPattern
+}
+
+// tilingPattern is the cell of a tiling pattern: its box, step and
+// content.
+type tilingPattern struct {
+	colored      bool
+	bbox         Rect
+	xstep, ystep float64
+	content      []byte
+	res          reader.Dict
+}
 
 // Tile is one step of a tiling pattern, XStep × YStep in pattern space,
 // rasterized at device resolution into W × H pixels. It is immutable and
@@ -31,29 +50,184 @@ type Tile struct {
 	tex     *stilus.Texture
 }
 
-// pattern is a pattern dictionary, read once per document.
-type pattern struct {
-	typ    int // 1 tiling, 2 shading
-	matrix Matrix
-
-	// Tiling patterns: the cell, its step and its content.
-	colored      bool
-	bbox         Rect
-	xstep, ystep float64
-	content      []byte
-	res          reader.Dict
-
-	// Shading patterns: the shading, compiled where it is used.
-	shading reader.Object
+// patternPaint is the pattern of a fill or stroke colour: the pattern and
+// its space mapped to device space.
+type patternPaint struct {
+	e *patternEntry
+	m Matrix
 }
 
-// patRef is the pattern of a colour: the pattern, unresolved so that a
-// reference serves as a cache key, the default space and the resources of
-// the content stream that named it.
-type patRef struct {
-	o    reader.Object
-	base Matrix
-	res  reader.Dict
+func (d *Document) pattern(o reader.Object, res reader.Dict) *patternEntry {
+	ref, isRef := o.(reader.Ref)
+	if isRef {
+		d.shMu.Lock()
+		e := d.patterns[ref]
+		d.shMu.Unlock()
+		if e != nil {
+			return e
+		}
+	}
+	e := d.readPattern(d.resolve(o), res)
+	if e != nil && isRef {
+		d.shMu.Lock()
+		if d.patterns == nil {
+			d.patterns = map[reader.Ref]*patternEntry{}
+		}
+		d.patterns[ref] = e
+		d.shMu.Unlock()
+	}
+	return e
+}
+
+func (d *Document) readPattern(o reader.Object, res reader.Dict) *patternEntry {
+	dict, ok := reader.ToDict(o)
+	if s, isStream := reader.ToStream(o); isStream {
+		dict, ok = s.Dict, true
+	}
+	if !ok {
+		return nil
+	}
+	e := &patternEntry{matrix: identity}
+	if m := d.floats(dict["Matrix"]); len(m) == 6 {
+		e.matrix = Matrix(m)
+	}
+	switch t, _ := d.integer(dict["PatternType"]); t {
+	case 1:
+		st, isStream := reader.ToStream(o)
+		if !isStream {
+			return nil
+		}
+		tp := &tilingPattern{}
+		pt, _ := d.integer(dict["PaintType"])
+		tp.colored = pt != 2
+		var ok1, ok2, ok3 bool
+		tp.bbox, ok1 = d.rect(dict["BBox"])
+		tp.xstep, ok2 = d.num(dict["XStep"])
+		tp.ystep, ok3 = d.num(dict["YStep"])
+		if !ok1 || !ok2 || !ok3 || tp.xstep == 0 || tp.ystep == 0 {
+			return nil
+		}
+		if tp.res = d.dict(dict["Resources"]); tp.res == nil {
+			tp.res = res
+		}
+		tp.content = d.r.DecodeStreamRecovering(st).Data
+		e.tiling = tp
+	case 2:
+		sub := d.dict(dict["Resources"])
+		if sub == nil {
+			sub = res
+		}
+		sh, ok := dict["Shading"]
+		if !ok {
+			return nil
+		}
+		e.shading = d.shading(sh, sub)
+	default:
+		return nil
+	}
+	return e
+}
+
+// setPattern sets the pattern named by the last operand as the colour of
+// dst, in the space of the content stream running.
+func (in *interp) setPattern(sc *content.Scanner, res reader.Dict, dst *patternPaint) {
+	*dst = patternPaint{}
+	o := in.lookupRef(res, "Pattern", sc, sc.Last())
+	if o == nil {
+		in.st.Errors++
+		return
+	}
+	e := in.doc.pattern(o, res)
+	if e == nil {
+		in.st.Errors++
+		return
+	}
+	*dst = patternPaint{e: e, m: e.matrix.Mul(in.base)}
+}
+
+// patternReady reports whether pattern p paints anything with alpha,
+// counting what it cannot paint.
+func (in *interp) patternReady(p *patternPaint, alpha float64) bool {
+	e := p.e
+	if e == nil || unit8(alpha) == 0 {
+		return false
+	}
+	if e.tiling != nil {
+		return true
+	}
+	if e.shading.feature != "" {
+		in.st.unsupported(e.shading.feature)
+	}
+	if e.shading.full == nil {
+		if e.shading.feature == "" {
+			in.st.Errors++
+		}
+		return false
+	}
+	return true
+}
+
+// paintPattern paints the pattern of the fill or stroke, for which
+// patternReady was true, over the clip the caller pushed: the shape of an
+// object within the device pixels box.
+func (in *interp) paintPattern(stroke bool, box image.Rectangle) {
+	p, cs, v, alpha := &in.gs.fillPat, in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha
+	if stroke {
+		p, cs, v, alpha = &in.gs.strokePat, in.gs.strokeCS, in.gs.stroke[:], in.gs.strokeAlp
+	}
+	a := unit8(alpha)
+	if tp := p.e.tiling; tp != nil {
+		var comps [maxComps]float64 // drawing the cells changes the state
+		copy(comps[:], v)
+		var col color.RGBA
+		if !tp.colored {
+			if cs.base == nil {
+				in.st.Errors++
+				return
+			}
+			r, g, b := cs.base.rgb(comps[:cs.base.n])
+			col = premul(r, g, b, alpha)
+		}
+		in.tiling(tp, p.e, p.m, cs.base, comps[:], col, a, box)
+		return
+	}
+	in.paint = Paint{Color: color.RGBA{A: a}}
+	in.st.Shadings++
+	in.dev.FillShading(p.e.shading.full, p.m, &in.paint)
+}
+
+// shadingOp runs sh: the named shading painted over the clip.
+func (in *interp) shadingOp(sc *content.Scanner, res reader.Dict) {
+	o := in.lookupRef(res, "Shading", sc, sc.Last())
+	if o == nil {
+		in.st.Errors++
+		return
+	}
+	e := in.doc.shading(o, res)
+	if e.feature != "" {
+		in.st.unsupported(e.feature)
+	}
+	if e.plain == nil {
+		if e.feature == "" {
+			in.st.Errors++
+		}
+		return
+	}
+	a := unit8(in.gs.fillAlpha)
+	if a == 0 {
+		return
+	}
+	in.paint = Paint{Color: color.RGBA{A: a}}
+	in.st.Shadings++
+	if in.transparent() {
+		r, m := Rect{-1 << 20, -1 << 20, 1 << 20, 1 << 20}, identity
+		if e.plain.HasBBox {
+			r, m = e.plain.BBox, in.gs.ctm
+		}
+		in.beginObject(r, m)
+		defer in.dev.EndGroup()
+	}
+	in.dev.FillShading(e.plain, in.gs.ctm, &in.paint)
 }
 
 // Pattern limits.
@@ -65,134 +239,9 @@ const (
 	maxTileBytes    = 64 << 20 // tiles made for one page
 )
 
-// pattern reads the pattern o, nil if it cannot.
-func (d *Document) pattern(o reader.Object) *pattern {
-	ref, isRef := o.(reader.Ref)
-	if isRef {
-		d.shMu.Lock()
-		p, ok := d.patterns[ref]
-		d.shMu.Unlock()
-		if ok {
-			return p
-		}
-	}
-	p := d.readPattern(d.resolve(o))
-	if isRef {
-		d.shMu.Lock()
-		if d.patterns == nil {
-			d.patterns = map[reader.Ref]*pattern{}
-		}
-		d.patterns[ref] = p
-		d.shMu.Unlock()
-	}
-	return p
-}
-
-func (d *Document) readPattern(o reader.Object) *pattern {
-	dict, ok := reader.ToDict(o)
-	s, isStream := reader.ToStream(o)
-	if isStream {
-		dict, ok = s.Dict, true
-	}
-	if !ok {
-		return nil
-	}
-	p := &pattern{matrix: stilus.Identity}
-	if m := d.floats(dict["Matrix"]); len(m) == 6 {
-		p.matrix = Matrix(m)
-	}
-	p.typ, _ = d.integer(dict["PatternType"])
-	switch p.typ {
-	case 1:
-		if s == nil {
-			return nil
-		}
-		pt, _ := d.integer(dict["PaintType"])
-		p.colored = pt != 2
-		var ok1, ok2, ok3 bool
-		p.bbox, ok1 = d.rect(dict["BBox"])
-		p.xstep, ok2 = d.num(dict["XStep"])
-		p.ystep, ok3 = d.num(dict["YStep"])
-		if !ok1 || !ok2 || !ok3 || p.xstep == 0 || p.ystep == 0 {
-			return nil
-		}
-		p.res = d.dict(dict["Resources"])
-		p.content = d.r.DecodeStreamRecovering(s).Data
-	case 2:
-		if p.shading = dict["Shading"]; p.shading == nil {
-			return nil
-		}
-	default:
-		return nil
-	}
-	return p
-}
-
-// patternPaint returns the pattern, colour space, components and alpha
-// of the fill or stroke.
-func (in *interp) patternPaint(stroke bool) (*patRef, *colorSpace, []float64, float64) {
-	if stroke {
-		return &in.gs.strokePat, in.gs.strokeCS, in.gs.stroke[:], in.gs.strokeAlp
-	}
-	return &in.gs.fillPat, in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha
-}
-
-// paintPattern paints the pattern of the fill or stroke over the clip the
-// caller pushed: the shape of an object within the device pixels box.
-func (in *interp) paintPattern(stroke bool, box image.Rectangle) {
-	pr, cs, v, alpha := in.patternPaint(stroke)
-	var comps [maxComps]float64 // drawing the cells changes the state
-	copy(comps[:], v)
-	a := unit8(alpha)
-	if pr.o == nil || a == 0 {
-		return
-	}
-	p := in.doc.pattern(pr.o)
-	if p == nil {
-		in.st.unsupported("pattern-bad")
-		return
-	}
-	pm := p.matrix.Mul(pr.base)
-	switch p.typ {
-	case 2:
-		sh := in.compileShading(p.shading, pr.res, pm)
-		if sh == nil {
-			return
-		}
-		if sh.withBg != nil {
-			sh = sh.withBg
-		}
-		in.dev.FillShading(sh, pm, a)
-	case 1:
-		var col color.RGBA
-		if !p.colored {
-			if cs.base == nil {
-				in.st.unsupported("pattern-bad")
-				return
-			}
-			r, g, b := cs.base.rgb(comps[:])
-			col = premul(r, g, b, alpha)
-		}
-		in.tiling(p, pr.o, pm, cs.base, comps[:], col, a, box)
-	}
-}
-
-// compileShading compiles a shading to be drawn under m, counting what
-// it cannot read; nil means nothing is drawn.
-func (in *interp) compileShading(o reader.Object, res reader.Dict, m Matrix) *Shading {
-	sh, bad, budget := in.doc.shading(o, res, m)
-	if budget {
-		in.st.unsupported("shading-mesh-budget")
-	}
-	if bad {
-		in.st.unsupported("shading-bad")
-	}
-	return sh
-}
-
-// tiling paints tiling pattern p (o) under pm: a replay of its cells if
+// tiling paints tiling pattern p (entry e) under pm: a replay of its cells if
 // few cover box, else its tile.
-func (in *interp) tiling(p *pattern, o reader.Object, pm Matrix, base *colorSpace, comps []float64, col color.RGBA, a uint8, box image.Rectangle) {
+func (in *interp) tiling(p *tilingPattern, e *patternEntry, pm Matrix, base *colorSpace, comps []float64, col color.RGBA, a uint8, box image.Rectangle) {
 	if in.patDepth >= maxPatternDepth {
 		in.st.unsupported("pattern-budget")
 		return
@@ -220,7 +269,7 @@ func (in *interp) tiling(p *pattern, o reader.Object, pm Matrix, base *colorSpac
 		in.replayCells(p, pm, base, comps, a, box, i0, i1, j0, j1)
 		return
 	}
-	t := in.tile(p, o, pm)
+	t := in.tile(p, e, pm)
 	if t == nil {
 		return
 	}
@@ -248,7 +297,7 @@ func cellRange(a0, a1, b0, b1, step float64) (k0, k1 int) {
 
 // replayCells draws cells [i0, i1] × [j0, j1] of p as drawing operations,
 // in a group of opacity a.
-func (in *interp) replayCells(p *pattern, pm Matrix, base *colorSpace, comps []float64, a uint8, box image.Rectangle, i0, i1, j0, j1 int) {
+func (in *interp) replayCells(p *tilingPattern, pm Matrix, base *colorSpace, comps []float64, a uint8, box image.Rectangle, i0, i1, j0, j1 int) {
 	depth := in.depth + 1
 	if depth >= maxFormDepth || len(in.stack)+1 >= maxStateDepth {
 		in.st.Errors++
@@ -288,7 +337,7 @@ func (in *interp) replayCells(p *pattern, pm Matrix, base *colorSpace, comps []f
 
 // cellState prepares the state a cell starts in: an uncoloured cell
 // paints in the pattern's colour (or white for a stencil tile, base nil).
-func (in *interp) cellState(p *pattern, base *colorSpace, comps []float64) {
+func (in *interp) cellState(p *tilingPattern, base *colorSpace, comps []float64) {
 	if p.colored {
 		return
 	}
@@ -305,27 +354,22 @@ func (in *interp) cellState(p *pattern, base *colorSpace, comps []float64) {
 // tileKey identifies a tile: a pattern drawn under the linear part of a
 // matrix (the translation only moves the tile).
 type tileKey struct {
-	o          reader.Object
+	e          *patternEntry
 	a, b, c, d float64
 }
 
-// tile returns the tile of p under pm, rasterizing it on first use; nil if
-// it cannot be made.
-func (in *interp) tile(p *pattern, o reader.Object, pm Matrix) *Tile {
-	_, isRef := o.(reader.Ref)
-	key := tileKey{o, pm[0], pm[1], pm[2], pm[3]}
-	if isRef {
-		if t, ok := in.tiles[key]; ok {
-			return t
-		}
+// tile returns the tile of pattern e under pm, rasterizing it on first
+// use; nil if it cannot be made.
+func (in *interp) tile(p *tilingPattern, e *patternEntry, pm Matrix) *Tile {
+	key := tileKey{e, pm[0], pm[1], pm[2], pm[3]}
+	if t, ok := in.tiles[key]; ok {
+		return t
 	}
 	t := in.makeTile(p, pm)
-	if isRef {
-		if in.tiles == nil {
-			in.tiles = map[tileKey]*Tile{}
-		}
-		in.tiles[key] = t
+	if in.tiles == nil {
+		in.tiles = map[tileKey]*Tile{}
 	}
+	in.tiles[key] = t
 	return t
 }
 
@@ -339,7 +383,7 @@ func tileSide(x, y, step float64) int {
 	return int(min(n, maxTileSide))
 }
 
-func (in *interp) makeTile(p *pattern, pm Matrix) *Tile {
+func (in *interp) makeTile(p *tilingPattern, pm Matrix) *Tile {
 	w, h := tileSide(pm[0], pm[1], p.xstep), tileSide(pm[2], pm[3], p.ystep)
 	if in.tileBytes += 4 * w * h; in.tileBytes > maxTileBytes {
 		in.st.unsupported("pattern-budget")
@@ -404,4 +448,23 @@ func (in *interp) makeTile(p *pattern, pm Matrix) *Tile {
 	}
 	t.tex = stilus.NewTexture(pl)
 	return t
+}
+
+// rectUnder returns the bounding box of r under m.
+func rectUnder(r Rect, m Matrix) Rect {
+	out := Rect{math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)}
+	for _, c := range [4][2]float64{{r.X0, r.Y0}, {r.X1, r.Y0}, {r.X0, r.Y1}, {r.X1, r.Y1}} {
+		x, y := m.Apply(c[0], c[1])
+		out = Rect{min(out.X0, x), min(out.Y0, y), max(out.X1, x), max(out.Y1, y)}
+	}
+	return out
+}
+
+func finite(m Matrix) bool {
+	for _, v := range m {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return false
+		}
+	}
+	return true
 }

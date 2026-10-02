@@ -13,7 +13,9 @@
 //     boxes and a band index, so a page is interpreted once and only the
 //     visible part is drawn, by several cores;
 //   - rasterization: github.com/timzifer/stilus, a sparse CPU rasterizer
-//     whose cost per path is edge length plus covered spans.
+//     whose cost per path is edge length plus covered spans, with the
+//     shaders cera paints through: images, glyph masks, layers, gradients
+//     and meshes.
 //
 // # Use
 //
@@ -33,11 +35,10 @@
 //
 // Filled text reaches a device as GlyphRuns (Device.FillGlyphs): glyph
 // outlines in em units with their device matrices. The raster device keeps
-// a coverage mask per glyph, size and subpixel position (stilus's
-// GlyphCache). Page.Run drives any Device without a display list, and a
-// device implementing TextDevice also receives the text shown in every
-// render mode; Page.Text extracts the characters of a page with their
-// boxes.
+// a coverage mask per glyph, size and subpixel position. Page.Run drives
+// any Device without a display list, and a device implementing TextDevice
+// also receives the text shown in every render mode; Page.Text extracts
+// the characters of a page with their boxes.
 //
 // # Images
 //
@@ -45,21 +46,9 @@
 // A document decodes each image once and keeps it in a bounded cache; an
 // Image holds its samples as compactly as they come (one bit or one byte
 // a pixel with a palette where it can) and its mask at the mask's own
-// resolution, as stilus textures. The raster device samples the mip level
-// that fits the device resolution, so an image drawn small costs what its
-// device pixels cost, not what its samples do.
-//
-// # Shadings and patterns
-//
-// A Shading is compiled once per document into what stilus's shaders
-// draw: a colour ramp with knots at the bounds of stitching functions, a
-// sampled grid, or Gouraud triangles; no PDF function is evaluated per
-// pixel. The sh operator reaches a device as Device.FillShading over the
-// current clip. An object painted with a pattern arrives as a clip of its
-// shape (ClipPath, ClipStroke, or its glyph outlines) and the paint over
-// it: FillShading for a shading pattern, FillTile for a tiling pattern
-// (one step rasterized at device resolution, repeated with wrap-around),
-// or, for a few large cells, the drawing operations of each cell.
+// resolution. The raster device samples the mip level that fits the
+// device resolution, so an image drawn small costs what its device pixels
+// cost, not what its samples do.
 //
 // # Transparency
 //
@@ -67,10 +56,23 @@
 // and BeginMask/EndMask; an object painted with a blend mode or a soft
 // mask arrives as a group of its own. The raster device draws a group into
 // a layer covering only what the group can touch in the band being drawn
-// and composites it through the clips around it with stilus's LayerShader,
-// removing the backdrop of non-isolated groups that are themselves blended.
-// The display list drops the groups that need no layer, which are most of
-// them.
+// and composites it through the clips around it. The display list drops
+// the groups that need no layer, which are most of them.
+//
+// # Shadings and colour
+//
+// Shadings reach a device as FillShading, painting the current clip; a
+// path, stroke or text painted with a pattern arrives as the pattern
+// painted through a clip of its shape: FillShading for a shading pattern,
+// FillTile for a tiling pattern (one step rasterized at device resolution
+// and repeated with wrap-around). A document reads each
+// shading once into what a device draws without PDF functions: a colour
+// ramp for axial and radial shadings, a sampled texture for function-based
+// ones and Gouraud-shaded triangles for the four mesh kinds. Colour spaces
+// are converted to sRGB: Separation and DeviceN through their tint
+// transforms (tabulated for one ink), CalGray, CalRGB, Lab and ICC
+// profiles of the matrix/TRC kind through CIE XYZ; other ICC profiles
+// fall back on the device space of as many components.
 //
 // # Optional content
 //

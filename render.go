@@ -65,6 +65,9 @@ type Stats struct {
 	Glyphs  int // glyphs filled, and Type 3 glyphs run
 	Images  int // images drawn, inline images and stencil masks included
 	Groups  int // transparency groups and soft masks, of forms and objects
+	// Shadings counts shadings painted, by sh and as the paint of a
+	// pattern.
+	Shadings int
 	// Unsupported counts features that were skipped or approximated, keyed
 	// by feature ("shading", "font-missing", "image-filter", ...).
 	Unsupported map[string]int
@@ -167,6 +170,7 @@ type painter struct {
 	canvas *stilus.Canvas
 	dev    RasterDevice
 	ds     drawState
+	page   image.RGBA // a transparent band, for a page that blends
 }
 
 // noImage is what idle painters point at.
@@ -222,7 +226,8 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 		vis = p.doc.defaultVisibility(opt.Usage)
 	}
 	af := annotFilter{mode: opt.Annotations, skip: opt.SkipAnnotation}
-	if derr := dl.render(dst, region, opt.Workers, vis, &af, lim); derr != nil && err == nil {
+	iso := dl.blends && opt.Background.A != 0
+	if derr := dl.render(dst, region, opt.Workers, vis, &af, lim, iso); derr != nil && err == nil {
 		err = derr
 	}
 	return err
@@ -281,6 +286,7 @@ func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, vis *Vis
 	base := p.deviceMatrix(scale)
 	dev.ClipRect(p.Box, base)
 	in.reset(p.doc, dev, st, lim)
+	in.devBox = p.Bounds(scale)
 	if vis != nil {
 		in.ocVis, in.ocZoom = vis, scale
 	}
@@ -382,9 +388,10 @@ func (p *Page) Release() {
 
 // render draws the part of the list inside region into dst, with the
 // optional content vis and the annotations af show (vis nil: all layers).
-// One worker draws the region in
-// one pass; several share the bands that touch it.
-func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers int, vis *Visibility, af *annotFilter, lim *limit) error {
+// One worker draws the region in one pass; several share the bands that
+// touch it. With iso set, each band is drawn onto a transparent image
+// first and then composited onto dst, which holds the background.
+func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers int, vis *Visibility, af *annotFilter, lim *limit, iso bool) error {
 	b0, b1 := l.bandRange(region)
 	if b0 >= b1 {
 		return nil
@@ -396,7 +403,7 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers in
 	if vis == nil {
 		vis = &noLayers
 	}
-	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1, vis: l.visibleTags(j.vis, vis, af)}
+	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1, iso: iso, vis: l.visibleTags(j.vis, vis, af)}
 	if workers = min(workers, b1-b0); workers == 1 {
 		j.work(true)
 	} else {
@@ -423,7 +430,8 @@ type job struct {
 	region image.Rectangle
 	lim    *limit
 	b1     int
-	vis    []bool       // per tag of the list: drawn
+	vis    []bool // per tag of the list: drawn
+	iso    bool
 	next   atomic.Int32 // next band to draw
 	wg     sync.WaitGroup
 	mu     sync.Mutex
@@ -478,7 +486,18 @@ func (j *job) work(whole bool) {
 
 // paint draws r, band b of the list or the whole region if b < 0.
 func (j *job) paint(pt *painter, b int, r image.Rectangle) {
-	pt.dev.Reset(j.dst, r)
+	dst := j.dst
+	if j.iso {
+		n := 4 * r.Dx() * r.Dy()
+		if cap(pt.page.Pix) < n {
+			pt.page.Pix = make([]uint8, n)
+		}
+		pt.page = image.RGBA{Pix: pt.page.Pix[:n], Stride: 4 * r.Dx(), Rect: r}
+		clear(pt.page.Pix)
+		dst = &pt.page
+		defer compositeOver(j.dst, &pt.page)
+	}
+	pt.dev.Reset(dst, r)
 	var ok bool
 	if b < 0 {
 		ok = j.l.drawAll(&pt.dev, &pt.ds, r, j.vis, j.lim)
@@ -489,6 +508,28 @@ func (j *job) paint(pt *painter, b int, r image.Rectangle) {
 		j.report(err)
 	} else if !ok {
 		j.report(ErrDeadline)
+	}
+}
+
+// compositeOver composites src over dst within src's rectangle.
+func compositeOver(dst, src *image.RGBA) {
+	r := src.Rect
+	n := 4 * r.Dx()
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		s := src.Pix[src.PixOffset(r.Min.X, y):][:n:n]
+		d := dst.Pix[dst.PixOffset(r.Min.X, y):][:n:n]
+		for i := 0; i < n; i += 4 {
+			switch a := uint32(s[i+3]); a {
+			case 0:
+			case 255:
+				copy(d[i:i+4], s[i:i+4])
+			default:
+				k := 255 - a
+				for c := i; c < i+4; c++ {
+					d[c] = s[c] + mulByte(d[c], k)
+				}
+			}
+		}
 	}
 }
 

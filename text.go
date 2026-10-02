@@ -277,10 +277,21 @@ func (in *interp) flushText() {
 		defer in.dev.EndGroup()
 	}
 	if mode == TextFill || mode == TextFillStroke || mode == TextFillClip || mode == TextFillStrokeClip {
-		switch {
-		case in.gs.fillCS.kind == csPattern:
-			in.patternGlyphs(run)
-		case in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha):
+		if in.gs.fillCS.kind == csPattern {
+			// The glyphs as a clip, in device space.
+			if in.patternReady(&in.gs.fillPat, in.gs.fillAlpha) {
+				in.st.Glyphs += len(run.Glyphs)
+				in.tmp.Reset()
+				for i := range run.Glyphs {
+					if o := run.Glyphs[i].Outline; o != nil {
+						appendTransformed(&in.tmp, o, run.Glyphs[i].M)
+					}
+				}
+				in.dev.ClipPath(&in.tmp, identity, NonZero)
+				in.paintPattern(false, deviceBox(&in.tmp, identity, 1))
+				in.dev.PopClip()
+			}
+		} else if in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
 			in.st.Glyphs += len(run.Glyphs)
 			in.dev.FillGlyphs(run, &in.paint)
 		}
@@ -292,8 +303,18 @@ func (in *interp) flushText() {
 				appendTransformed(&tx.path, o, tx.user[i])
 			}
 		}
-		if !tx.path.Empty() {
-			in.strokeWith(&tx.path, Rect{}, false) // the run's group, if any, is open
+		switch {
+		case tx.path.Empty():
+		case in.gs.strokeCS.kind == csPattern:
+			if in.patternReady(&in.gs.strokePat, in.gs.strokeAlp) {
+				in.st.Strokes++
+				in.dev.ClipStroke(&tx.path, in.gs.ctm, &in.gs.style)
+				in.paintPattern(true, strokeBox(&tx.path, in.gs.ctm, &in.gs.style))
+				in.dev.PopClip()
+			}
+		case in.setPaint(in.gs.strokeCS, in.gs.stroke[:], in.gs.strokeAlp):
+			in.st.Strokes++
+			in.dev.StrokePath(&tx.path, in.gs.ctm, &in.gs.style, &in.paint)
 		}
 	}
 	if mode >= TextFillClip && len(tx.t3) == 0 {
@@ -305,28 +326,6 @@ func (in *interp) flushText() {
 		}
 	}
 	run.Font = nil
-}
-
-// patternGlyphs fills the glyphs of run with the fill pattern: their
-// outlines in device space become the clip the pattern is painted in.
-func (in *interp) patternGlyphs(run *GlyphRun) {
-	if in.gs.fillPat.o == nil || in.gs.fillAlpha == 0 {
-		return
-	}
-	p := &in.gpath
-	p.Reset()
-	for i := range run.Glyphs {
-		if o := run.Glyphs[i].Outline; o != nil {
-			appendTransformed(p, o, run.Glyphs[i].M)
-		}
-	}
-	if p.Empty() {
-		return
-	}
-	in.st.Glyphs += len(run.Glyphs)
-	in.dev.ClipPath(p, identity, NonZero)
-	in.paintPattern(false, deviceBox(p, identity, 1))
-	in.dev.PopClip()
 }
 
 // runBox returns the device box of the glyphs of the run, stroked or not.

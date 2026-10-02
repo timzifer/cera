@@ -1,24 +1,14 @@
 package cera
 
 import (
-	"math"
-
 	"github.com/timzifer/stilus"
 )
 
 // A raster device draws an image by filling the parallelogram the unit
-// square maps to with a shader that maps every device pixel back into the
-// image: so an image goes through the clip stack and gets antialiased
-// edges like any fill, and a band or tile samples only its own pixels.
-
-func finite(m Matrix) bool {
-	for _, v := range m {
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return false
-		}
-	}
-	return true
-}
+// square maps to with a stilus.ImageShader, which maps every device pixel
+// back into the image: so an image goes through the clip stack and gets
+// antialiased edges like any fill, and a band or tile samples only its own
+// pixels.
 
 // imageDraw is the per-device state of DrawImage, reused between images.
 type imageDraw struct {
@@ -65,16 +55,12 @@ func (d *RasterDevice) drawImage(img *Image, m Matrix, paint *Paint) {
 		}
 		s.SetColor(stilus.PackRGBA(paint.Color))
 	} else {
-		if paint.Color.A == 0 {
-			return
-		}
-		if !s.SetImage(img.color, toUnit(img.W, img.H).Mul(m), img.Interpolate, paint.Color.A) {
+		if paint.Color.A == 0 || !s.SetImage(img.color, toUnit(img.W, img.H).Mul(m), img.Interpolate, paint.Color.A) {
 			return
 		}
 	}
 	if t := img.mask; t != nil {
-		b := t.Base()
-		if !s.SetMask(t, toUnit(b.W, b.H).Mul(m), img.Interpolate) {
+		if !s.SetMask(t, toUnit(t.Base().W, t.Base().H).Mul(m), img.Interpolate) {
 			return
 		}
 	}

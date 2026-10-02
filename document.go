@@ -27,16 +27,18 @@ type Document struct {
 	imgLRU   list.List
 	imgBytes int
 
-	// Compiled shadings and patterns by reference.
-	shMu     sync.Mutex
-	shades   map[shadeKey]*Shading
-	patterns map[reader.Ref]*pattern
-
 	ocOnce sync.Once
 	oc     *ocProps // optional content, read on first use
 
 	pageIdxOnce sync.Once
 	pageIdx     map[reader.Ref]int // page index by reference, for links
+
+	// Colour spaces and shadings by reference.
+	csMu     sync.Mutex
+	spaces   map[reader.Ref]csEntry
+	shMu     sync.Mutex
+	shadings map[reader.Ref]*shadingEntry
+	patterns map[reader.Ref]*patternEntry
 }
 
 // Open parses a PDF file. Damaged cross-reference tables, wrong stream

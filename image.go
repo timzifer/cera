@@ -7,32 +7,18 @@ import (
 	"github.com/timzifer/stilus"
 )
 
-// Images are held the way their samples come: a picture of one component
-// of at most eight bits (a scan, a grey or indexed image) keeps one byte a
-// pixel and a palette, a one-bit picture (a fax, a JBIG2 page, a stencil
-// mask) one bit a pixel and two palette entries, and only colour pictures
-// take four bytes a pixel. A 600 dpi bilevel A4 scan is 4 MB this way
-// instead of 140.
-//
-// Drawing an image much smaller than its samples reads a mip level: the
-// picture averaged over blocks of 2^k × 2^k samples, made once when first
-// needed and kept with the image. Sampling a level that is at most twice
-// as fine as the device, bilinearly, gives a downscaled image without
-// aliasing at a cost per device pixel that does not grow with the image.
-// Levels of a grey or alpha picture stay one byte a pixel.
+// Images are held as stilus textures, the way their samples come: a
+// picture of one component of at most eight bits (a scan, a grey or
+// indexed image) keeps one byte a pixel and a palette, a one-bit picture
+// (a fax, a JBIG2 page, a stencil mask) one bit a pixel, and only colour
+// pictures take four bytes a pixel. Drawing an image much smaller than its
+// samples reads a mip level of the texture, made once when first needed
+// and kept with the image (see stilus.Texture).
 
-// Planes, palettes and textures are stilus's: an image is drawn by its
-// ImageShader, which picks and makes the mip levels.
 type (
 	plane   = stilus.Plane
 	palette = stilus.Palette
-)
-
-// Plane kinds.
-const (
-	planeRGBA  = stilus.PlaneRGBA  // Pix32, premultiplied, native layout
-	planeIndex = stilus.PlaneIndex // Pix8, indexes into Pal
-	planeBits  = stilus.PlaneBits  // Pix8, one bit a pixel (MSB first) indexing Pal[0] or Pal[1]
+	texture = stilus.Texture
 )
 
 // pack returns r, g, b, a (premultiplied) as a native pixel.
@@ -65,11 +51,11 @@ type Image struct {
 	// smoothing when the image is magnified.
 	Interpolate bool
 
-	color *stilus.Texture // nil for a stencil
+	color *texture // nil for a stencil
 	// mask is the image's alpha at its own resolution: the stencil
 	// itself, a soft mask (/SMask), a stencil mask (/Mask stream) or a
 	// colour key (/Mask array). Its colours are levels of alpha.
-	mask *stilus.Texture
+	mask *texture
 	size int // bytes, including mip levels, for the cache
 }
 

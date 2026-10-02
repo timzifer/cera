@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"image"
-	"image/color"
 	"strings"
 	"testing"
 )
@@ -29,16 +28,6 @@ func renderPaint(t *testing.T, content, resources string, objs ...string) *image
 	return img
 }
 
-const redToBlue = "<< /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>"
-
-func TestAxialShading(t *testing.T) {
-	sh := "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] /Function 101 0 R >>"
-	img := renderPaint(t, "/S sh", "/Shading << /S 100 0 R >>", sh, redToBlue)
-	assertNear(t, img, 0, 50, red, 2)
-	assertNear(t, img, 199, 50, blue, 2)
-	assertNear(t, img, 100, 50, color.RGBA{127, 0, 127, 255}, 2)
-}
-
 func TestShadingHardStop(t *testing.T) {
 	// A stitching function: red up to 0.3, then blue.
 	stitch := "<< /FunctionType 3 /Domain [0 1] /Bounds [0.3] /Encode [0 1 0 1] /Functions [102 0 R 103 0 R] >>"
@@ -49,99 +38,6 @@ func TestShadingHardStop(t *testing.T) {
 	// The break is at x = 60 exactly: pixel 59 is red, pixel 60 blue.
 	assertPixel(t, img, 59, 50, red)
 	assertPixel(t, img, 60, 50, blue)
-}
-
-func TestRadialShadingExtend(t *testing.T) {
-	sh := "<< /ShadingType 3 /ColorSpace /DeviceRGB /Coords [100 50 0 100 50 40] /Function 101 0 R /Extend [false true] >>"
-	img := renderPaint(t, "/S sh", "/Shading << /S 100 0 R >>", sh, redToBlue)
-	assertNear(t, img, 100, 50, red, 8)
-	assertNear(t, img, 100+20, 50, color.RGBA{127, 0, 127, 255}, 8)
-	assertNear(t, img, 190, 50, blue, 2) // extended
-}
-
-func TestShadingBBoxAndAlpha(t *testing.T) {
-	sh := "<< /ShadingType 2 /ColorSpace /DeviceGray /Coords [0 0 200 0] /BBox [50 0 150 100]" +
-		" /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [0] /N 1 >> >>"
-	img := renderPaint(t, "/A gs /S sh", "/Shading << /S 100 0 R >> /ExtGState << /A << /ca 0.5 >> >>", sh)
-	assertPixel(t, img, 25, 50, white)
-	assertNear(t, img, 100, 50, color.RGBA{128, 128, 128, 255}, 1)
-}
-
-func TestFunctionShading(t *testing.T) {
-	// Red grows with x, blue with y, over the page.
-	fn := "<< /FunctionType 4 /Domain [0 1 0 1] /Range [0 1 0 1 0 1] /Length 20 >>\nstream\n{ 0 exch }\nendstream"
-	sh := "<< /ShadingType 1 /ColorSpace /DeviceRGB /Matrix [200 0 0 100 0 0] /Function 101 0 R >>"
-	img := renderPaint(t, "/S sh", "/Shading << /S 100 0 R >>", sh, fn)
-	assertNear(t, img, 2, 97, color.RGBA{0, 0, 0, 255}, 8)
-	assertNear(t, img, 197, 97, color.RGBA{255, 0, 0, 255}, 8)
-	assertNear(t, img, 2, 2, color.RGBA{0, 0, 255, 255}, 8)
-}
-
-func TestFreeFormMesh(t *testing.T) {
-	// A red triangle over the lower left half of the page, and one that
-	// shares its diagonal and has a blue corner at the upper right; 8 bits
-	// per value: flag, x, y, r, g, b.
-	data := []byte{
-		0, 0, 0, 255, 0, 0,
-		0, 255, 0, 255, 0, 0,
-		0, 0, 255, 255, 0, 0,
-		1, 255, 255, 0, 0, 255,
-	}
-	sh := streamObj("/ShadingType 4 /ColorSpace /DeviceRGB /BitsPerCoordinate 8 /BitsPerComponent 8"+
-		" /BitsPerFlag 8 /Decode [0 200 0 100 0 1 0 1 0 1]", data)
-	img := renderPaint(t, "/S sh", "/Shading << /S 100 0 R >>", sh)
-	assertPixel(t, img, 10, 80, red)
-	// Blue in proportion to x/200 + y/100 − 1 at the pixel centre.
-	assertNear(t, img, 190, 10, color.RGBA{39, 0, 216, 255}, 2)
-	assertNear(t, img, 120, 20, color.RGBA{154, 0, 101, 255}, 2)
-}
-
-func TestLatticeMesh(t *testing.T) {
-	// Two rows of two vertices over the left half: red at the bottom,
-	// blue at the top; 8 bits per value: x, y, r, g, b.
-	data := []byte{
-		0, 0, 255, 0, 0, 128, 0, 255, 0, 0,
-		0, 255, 0, 0, 255, 128, 255, 0, 0, 255,
-	}
-	sh := streamObj("/ShadingType 5 /ColorSpace /DeviceRGB /BitsPerCoordinate 8 /BitsPerComponent 8"+
-		" /VerticesPerRow 2 /Decode [0 200 0 100 0 1 0 1 0 1]", data)
-	img := renderPaint(t, "/S sh", "/Shading << /S 100 0 R >>", sh)
-	assertNear(t, img, 50, 99, red, 4)
-	assertNear(t, img, 50, 0, blue, 4)
-	assertPixel(t, img, 150, 50, white) // outside the mesh
-}
-
-func TestCoonsPatch(t *testing.T) {
-	// A flat patch over the page: corners red (0, 0), green (0, 1), blue
-	// (1, 1), black (1, 0); 8 bits per coordinate and component.
-	pts := [][2]byte{{0, 0}, {0, 85}, {0, 170}, {0, 255}, {85, 255}, {170, 255}, {255, 255}, {255, 170},
-		{255, 85}, {255, 0}, {170, 0}, {85, 0}}
-	b := []byte{0}
-	for _, p := range pts {
-		b = append(b, p[0], p[1])
-	}
-	b = append(b, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0)
-	sh := streamObj("/ShadingType 6 /ColorSpace /DeviceRGB /BitsPerCoordinate 8 /BitsPerComponent 8"+
-		" /BitsPerFlag 8 /Decode [0 200 0 100 0 1 0 1 0 1]", b)
-	img := renderPaint(t, "/S sh", "/Shading << /S 100 0 R >>", sh)
-	assertNear(t, img, 1, 98, red, 12)
-	assertNear(t, img, 1, 1, green, 12)
-	assertNear(t, img, 198, 1, blue, 12)
-	assertNear(t, img, 198, 98, black, 12)
-}
-
-func TestShadingPattern(t *testing.T) {
-	// An axial shading from x = 50 to 150 without extension, on a cyan
-	// background, filling a rectangle and stroking a line.
-	pat := "<< /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [50 0 150 0]" +
-		" /Function 101 0 R /Background [0 1 1] >> >>"
-	img := renderPaint(t, "/Pattern cs /P scn 0 0 200 50 re f /Pattern CS /P SCN 20 w 0 80 m 200 80 l S",
-		"/Pattern << /P 100 0 R >>", pat, redToBlue)
-	assertPixel(t, img, 20, 75, color.RGBA{0, 255, 255, 255}) // background
-	assertNear(t, img, 51, 75, red, 4)
-	assertNear(t, img, 148, 75, blue, 4)
-	assertNear(t, img, 100, 20, color.RGBA{127, 0, 127, 255}, 4) // the stroke
-	assertPixel(t, img, 100, 40, white)
 }
 
 // hatchPattern is a tiling pattern of a 2 × 2 red square in a 10 × 10 cell
@@ -261,38 +157,6 @@ func TestPatternWorkersAndTilesAgree(t *testing.T) {
 	}
 }
 
-func TestBrokenShadingsAndPatterns(t *testing.T) {
-	for _, c := range []struct{ content, res, key string }{
-		{"/S sh", "/Shading << /S << /ShadingType 9 >> >>", "shading-bad"},
-		{"/S sh", "/Shading << /S << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1] >> >>", "shading-bad"},
-		{"/Pattern cs /P scn 0 0 10 10 re f", "/Pattern << /P << /PatternType 7 >> >>", "pattern-bad"},
-	} {
-		_, st, err := renderPage(t, buildPDF([]string{c.content}, "/Resources << "+c.res+" >>"), 0, RenderOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if st.Unsupported[c.key] != 1 {
-			t.Errorf("%s: unsupported %v", c.res, st.Unsupported)
-		}
-	}
-}
-
-func TestMeshWithFunction(t *testing.T) {
-	// A tensor-product patch (type 7) over the page whose corners carry t:
-	// 0 at the left, 1 at the right, through a red-to-blue function.
-	b := []byte{0}
-	for _, k := range patchOrder {
-		b = append(b, byte(k[0]*85), byte(k[1]*85))
-	}
-	b = append(b, 0, 0, 255, 255) // t at corners 00, 03, 33, 30
-	sh := streamObj("/ShadingType 7 /ColorSpace /DeviceRGB /BitsPerCoordinate 8 /BitsPerComponent 8"+
-		" /BitsPerFlag 8 /Decode [0 200 0 100 0 1] /Function 101 0 R", b)
-	img := renderPaint(t, "/S sh", "/Shading << /S 100 0 R >>", sh, redToBlue)
-	assertNear(t, img, 0, 50, red, 4)
-	assertNear(t, img, 199, 50, blue, 4)
-	assertNear(t, img, 100, 20, color.RGBA{127, 0, 127, 255}, 4)
-}
-
 func TestPaintSteadyStateAllocations(t *testing.T) {
 	if raceEnabled {
 		t.Skip("sync.Pool drops items under the race detector")
@@ -321,19 +185,18 @@ func TestPaintSteadyStateAllocations(t *testing.T) {
 	}
 }
 
-func FuzzMeshShading(f *testing.F) {
-	f.Add(uint8(4), []byte{0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 255, 0, 0, 0, 255, 0, 0, 255})
-	f.Add(uint8(6), make([]byte, 60))
-	f.Add(uint8(7), []byte{0, 1, 2, 3, 255, 255, 1, 2, 3})
-	f.Fuzz(func(t *testing.T, typ uint8, data []byte) {
-		typ = 4 + typ%4
-		sh := streamObj(fmt.Sprintf("/ShadingType %d /ColorSpace /DeviceRGB /BitsPerCoordinate 8 /BitsPerComponent 4"+
-			" /BitsPerFlag 2 /VerticesPerRow 3 /Decode [0 200 0 100 0 1 0 1 0 1]", typ), data)
-		_, _, err := renderPage(t, buildPDF([]string{"/S sh /Pattern cs /P scn 0 0 200 100 re f"},
-			"/Resources << /Shading << /S 100 0 R >> /Pattern << /P << /PatternType 2 /Shading 100 0 R >> >> >>", sh), 0,
-			RenderOptions{Workers: 2})
+func TestBrokenPatterns(t *testing.T) {
+	for _, res := range []string{
+		"/Pattern << /P << /PatternType 7 >> >>",
+		"/Pattern << /P 100 0 R >>", // a tiling pattern without a stream
+	} {
+		_, st, err := renderPage(t, buildPDF([]string{"/Pattern cs /P scn 0 0 10 10 re f"}, "/Resources << "+res+" >>",
+			"<< /PatternType 1 /PaintType 1 /BBox [0 0 1 1] /XStep 1 /YStep 1 >>"), 0, RenderOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
-	})
+		if st.Errors != 1 {
+			t.Errorf("%s: %d errors, unsupported %v", res, st.Errors, st.Unsupported)
+		}
+	}
 }

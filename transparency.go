@@ -17,21 +17,15 @@ import (
 // An isolated group starts transparent. EndGroup fills the layer's
 // rectangle below with a shader that reads the layer and the backdrop: so
 // the group is composited through the clip stack, antialiased at its
-// edges, like any fill. Blend modes are exact under partial coverage: the
-// canvas composites the shader's colour s over the backdrop d with
-// coverage a as a·s + d·(1−a·αs), and the shader returns
-// s = cs·(1−αb) + αs·αb·B(Cb, Cs) with alpha αs, which makes that the PDF
-// compositing formula interpolated by coverage.
+// edges, like any fill (stilus.LayerShader, which keeps blend modes exact
+// under partial coverage).
 //
 // A non-isolated group starts as a copy of its backdrop, so that blend
 // modes inside it see what is below, and is composited by interpolating
 // from the backdrop to the layer by opacity, soft mask and clip coverage;
 // this is exact for the Normal blend mode (PDF 2.0, 11.4.8). The display
 // list marks non-isolated groups without blend modes inside as isolated,
-// which composites the same. A non-isolated group with blend modes inside
-// that is itself blended is drawn twice: first on its own, then onto its
-// backdrop; stilus's layer shader removes the backdrop from the second
-// with the alpha of the first (PDF 2.0, 11.4.8) and blends the result.
+// which composites the same.
 //
 // A knockout group has two more images: a scratch the canvas draws every
 // object into, prepared with the group's initial backdrop, and a shape the
@@ -57,7 +51,6 @@ type layers struct {
 	clips  []clipRec
 	verbs  []stilus.Verb
 	points []stilus.Point
-	dashes []float64
 	// pending is the mask made by the last EndMask, for the next group.
 	pending softPlane
 	// knockout says that the canvas draws into a knockout layer's scratch.
@@ -73,22 +66,19 @@ type layers struct {
 	err       error // of the canvas before a retarget
 
 	comp  stilus.LayerShader
-	mask  image.Alpha
+	alpha image.Alpha // the soft mask of comp
 	rect  Path
 	paint Paint
 }
 
 type clipRec struct {
 	rect           bool
+	stroke         bool
+	st             StrokeStyle
 	r              Rect
 	m              Matrix
 	rule           FillRule
 	v0, v1, p0, p1 int32
-	// stroke marks a stroke clip of style st, whose dashes are
-	// dashes[d0:d1].
-	stroke bool
-	st     StrokeStyle
-	d0, d1 int32
 }
 
 type layer struct {
@@ -129,7 +119,7 @@ func (t *layers) reset(dst *image.RGBA, region image.Rectangle) {
 	clear(t.stack)
 	t.stack = t.stack[:0]
 	t.clips = t.clips[:0]
-	t.verbs, t.points, t.dashes = t.verbs[:0], t.points[:0], t.dashes[:0]
+	t.verbs, t.points = t.verbs[:0], t.points[:0]
 	t.release(t.pending.pix)
 	t.pending = softPlane{}
 	t.release(t.alone.Pix)
@@ -186,31 +176,23 @@ func (t *layers) image(area image.Rectangle) image.RGBA {
 	return image.RGBA{Pix: t.buf(4 * area.Dx() * area.Dy()), Stride: 4 * area.Dx(), Rect: area}
 }
 
-func (t *layers) pushClip(p *Path, r Rect, m Matrix, rule FillRule, rect bool) {
+func (t *layers) pushClip(p *Path, r Rect, m Matrix, rule FillRule, rect bool, st *StrokeStyle) {
 	if t.base == nil {
 		return
 	}
 	c := clipRec{rect: rect, r: r, m: m, rule: rule}
+	if st != nil {
+		// The dash pattern belongs to the display list or the
+		// interpreter's arena, which outlive the clip.
+		c.stroke, c.st = true, *st
+	}
 	c.v0, c.p0 = int32(len(t.verbs)), int32(len(t.points))
 	if p != nil {
 		t.verbs = append(t.verbs, p.Verbs...)
 		t.points = append(t.points, p.Points...)
 	}
 	c.v1, c.p1 = int32(len(t.verbs)), int32(len(t.points))
-	c.d0, c.d1 = int32(len(t.dashes)), int32(len(t.dashes))
 	t.clips = append(t.clips, c)
-}
-
-func (t *layers) pushStroke(p *Path, m Matrix, st *StrokeStyle) {
-	if t.base == nil {
-		return
-	}
-	t.pushClip(p, Rect{}, m, 0, false)
-	c := &t.clips[len(t.clips)-1]
-	c.stroke, c.st = true, *st
-	c.st.Dash = nil
-	t.dashes = append(t.dashes, st.Dash...)
-	c.d1 = int32(len(t.dashes))
 }
 
 func (t *layers) popClip() {
@@ -224,7 +206,7 @@ func (t *layers) popClip() {
 func (t *layers) truncClips(n int) {
 	if n < len(t.clips) {
 		c := &t.clips[n]
-		t.verbs, t.points, t.dashes = t.verbs[:c.v0], t.points[:c.p0], t.dashes[:c.d0]
+		t.verbs, t.points = t.verbs[:c.v0], t.points[:c.p0]
 		t.clips = t.clips[:n]
 	}
 }
@@ -277,17 +259,15 @@ func (d *RasterDevice) retargetOn(i int, dst *image.RGBA) {
 	d.C.Reset(dst, region)
 	for k := t.clipsOf(i); k < len(t.clips); k++ {
 		c := &t.clips[k]
-		switch {
-		case c.rect:
+		if c.rect {
 			d.C.ClipRect(stilus.Rect{X0: c.r.X0, Y0: c.r.Y0, X1: c.r.X1, Y1: c.r.Y1}, c.m)
-		case c.stroke:
+		} else {
 			p := Path{Verbs: t.verbs[c.v0:c.v1:c.v1], Points: t.points[c.p0:c.p1:c.p1]}
-			st := c.st
-			st.Dash = t.dashes[c.d0:c.d1:c.d1]
-			d.C.ClipStroke(&p, c.m, &st)
-		default:
-			p := Path{Verbs: t.verbs[c.v0:c.v1:c.v1], Points: t.points[c.p0:c.p1:c.p1]}
-			d.C.ClipPath(&p, c.m, c.rule)
+			if c.stroke {
+				d.C.ClipStroke(&p, c.m, &c.st)
+			} else {
+				d.C.ClipPath(&p, c.m, c.rule)
+			}
 		}
 	}
 }
@@ -456,23 +436,21 @@ func copyRect(dst, src *image.RGBA, r image.Rectangle) {
 }
 
 // composite draws isolated layer l onto dst, the canvas's target, through
-// the canvas's clips, with stilus's layer shader: the layer times the
-// group's opacity and soft mask, blended with the backdrop. A layer drawn
-// onto its backdrop (l.alone set) has the backdrop removed first.
+// the canvas's clips.
 func (d *RasterDevice) composite(l *layer, dst *image.RGBA) {
 	t := &d.t
 	c := &t.comp
 	*c = stilus.LayerShader{Src: &l.img, Dst: dst, Alpha: l.g.Alpha, Blend: l.g.Blend}
 	if l.g.Masked {
-		t.mask = l.mask.alpha()
-		c.Mask = &t.mask
+		t.alpha = *l.mask.alpha()
+		c.Mask = &t.alpha
 	}
 	if l.alone.Pix != nil {
 		c.Initial, c.Alone = &l.initial, &l.alone
 	}
 	d.fillArea(l.area, c)
 	*c = stilus.LayerShader{}
-	t.mask = image.Alpha{}
+	t.alpha = image.Alpha{}
 }
 
 // fillArea fills the pixels of a with shader s through the canvas.
@@ -666,7 +644,7 @@ func (m *softPlane) at(x, y int) uint8 {
 	return m.pix[(y-m.area.Min.Y)*m.area.Dx()+x-m.area.Min.X]
 }
 
-// alpha returns the plane as an alpha image.
-func (m *softPlane) alpha() image.Alpha {
-	return image.Alpha{Pix: m.pix, Stride: m.area.Dx(), Rect: m.area}
+// alpha returns the plane as an image for stilus.LayerShader.
+func (m *softPlane) alpha() *image.Alpha {
+	return &image.Alpha{Pix: m.pix, Stride: m.area.Dx(), Rect: m.area}
 }

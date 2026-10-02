@@ -147,11 +147,12 @@ func TestNonIsolatedGroup(t *testing.T) {
 	}
 }
 
+// A non-isolated group with Multiply inside, composited with Screen:
+// blue multiplied onto yellow is black, but the group's backdrop is
+// removed before Screen blends it (PDF 2.0, 11.4.8), so Screen sees
+// black over yellow on the left; on the right the page's backdrop is
+// transparent (the paper comes after it), so the blue stays.
 func TestNonIsolatedGroupBlended(t *testing.T) {
-	// A non-isolated group with Multiply inside, composited with Screen:
-	// blue multiplied onto yellow is black, but the group's backdrop is
-	// removed before Screen blends it (PDF 2.0, 11.4.8), so Screen sees
-	// black over yellow on the left, blue over white on the right.
 	content := "/M gs 0 0 1 rg 50 0 100 100 re f"
 	res := "/Resources << /ExtGState << /M << /BM /Multiply >> >> >>"
 	for _, workers := range []int{1, 3} {
@@ -163,7 +164,7 @@ func TestNonIsolatedGroupBlended(t *testing.T) {
 			t.Fatal(err, st.Unsupported)
 		}
 		assertNear(t, img, 150, 100, color.RGBA{255, 255, 0, 255}, 1)
-		assertNear(t, img, 250, 100, color.RGBA{255, 255, 255, 255}, 1)
+		assertNear(t, img, 250, 100, color.RGBA{0, 0, 255, 255}, 1)
 		assertNear(t, img, 50, 100, color.RGBA{255, 255, 0, 255}, 1)
 	}
 }
@@ -422,4 +423,15 @@ func FuzzTransparency(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestPageBackdropIsTransparent(t *testing.T) {
+	// Blended onto the page, a colour over nothing stays itself (the
+	// paper comes after the page group); over red it blends.
+	c := "1 0 0 rg 0 0 100 100 re f /G0 gs 0 0 1 rg 50 0 100 100 re f"
+	img, _ := renderTransparent(t, c, "/ExtGState << /G0 100 0 R >>", "<< /BM /Difference >>")
+	assertPixel(t, img, 25, 50, rgba(255, 0, 0, 255))
+	assertPixel(t, img, 75, 50, rgba(255, 0, 255, 255))
+	assertPixel(t, img, 125, 50, rgba(0, 0, 255, 255))
+	assertPixel(t, img, 175, 50, white)
 }

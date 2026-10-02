@@ -25,7 +25,7 @@ type gstate struct {
 
 	fillCS, strokeCS     *colorSpace
 	fill, stroke         [maxComps]float64
-	fillPat, strokePat   patRef // in a Pattern colour space
+	fillPat, strokePat   patternPaint // in a Pattern colour space
 	fillAlpha, strokeAlp float64
 	// blend and smask composite what is painted (see group.go).
 	blend BlendMode
@@ -53,6 +53,9 @@ type interp struct {
 
 	gs    gstate
 	stack []gstate
+	// base is the CTM at the start of the content stream running: the
+	// space of the patterns it sets.
+	base Matrix
 
 	path       Path
 	cur, start stilus.Point
@@ -61,6 +64,15 @@ type interp struct {
 
 	text textObject
 	td   TextDevice // dev, if it wants the text
+	tmp  Path       // glyph outlines filled with a pattern
+
+	// Tiling patterns: the device pixels drawn (empty: unknown), the
+	// depth of pattern cells being drawn, the tiles made for this page
+	// and their bytes.
+	devBox    image.Rectangle
+	patDepth  int
+	tiles     map[tileKey]*Tile
+	tileBytes int
 
 	paint Paint
 
@@ -86,29 +98,16 @@ type interp struct {
 	mcBase int     // len(mc) when the running content stream started
 
 	annotBuf []byte // generated appearance streams
-
-	// base is the CTM the running content stream started with, the
-	// default space of the patterns it names; devBox the device pixels
-	// drawn (empty: unknown).
-	base   Matrix
-	devBox image.Rectangle
-	// Patterns: the depth of pattern cells being drawn, the tiles made
-	// for this page and their bytes.
-	patDepth  int
-	tiles     map[tileKey]*Tile
-	tileBytes int
-	gpath     Path // glyph outlines painted with a pattern
 }
 
 func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
 	*in = interp{
 		doc: doc, dev: dev, st: st, lim: lim,
-		stack: in.stack[:0], path: in.path, clip: -1,
+		stack: in.stack[:0], path: in.path, clip: -1, tmp: in.tmp,
 		scanners: in.scanners, dashes: in.dashes[:0], dashBuf: in.dashBuf,
 		text: in.text.keep(), objs: in.objs[:0], mc: in.mc[:0], annotBuf: in.annotBuf[:0],
-		out: dev, ocVis: &noLayers, ocZoom: 1, gpath: in.gpath,
+		out: dev, ocVis: &noLayers, ocZoom: 1,
 	}
-	in.gpath.Reset()
 	in.path.Reset()
 	in.td, _ = dev.(TextDevice)
 	in.rec, _ = dev.(*displayList)
@@ -141,6 +140,7 @@ func (in *interp) initState(ctm Matrix) {
 // stack afterwards.
 func (in *interp) run(data []byte, res reader.Dict, ctm Matrix, depth int) {
 	in.initState(ctm)
+	in.base = ctm
 	in.exec(data, res, depth)
 	in.unwind(0)
 	in.popClips(in.gs.clips)
@@ -154,8 +154,8 @@ func (in *interp) exec(data []byte, res reader.Dict, depth int) {
 	}
 	sc := in.scanners[depth]
 	sc.Reset(data)
-	outer, mcBase, base := in.depth, in.mcBase, in.base
-	in.depth, in.mcBase, in.base = depth, len(in.mc), in.gs.ctm
+	outer, mcBase := in.depth, in.mcBase
+	in.depth, in.mcBase = depth, len(in.mc)
 	for in.err == nil {
 		op, ok := sc.Next()
 		if !ok {
@@ -170,7 +170,7 @@ func (in *interp) exec(data []byte, res reader.Dict, depth int) {
 	in.st.Errors += sc.Errors()
 	sc.Reset(nil)
 	in.endMarked(in.mcBase) // marked content does not outlive its stream
-	in.depth, in.mcBase, in.base = outer, mcBase, base
+	in.depth, in.mcBase = outer, mcBase
 }
 
 func (in *interp) expired() bool {
@@ -366,7 +366,7 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 	case "BI":
 		in.inlineImage(sc, res)
 	case "sh":
-		in.sh(in.lookupRef(res, "Shading", sc, sc.Last()), res)
+		in.shadingOp(sc, res)
 
 	// Text.
 	case "BT", "ET", "Tc", "Tw", "Tz", "TL", "Tf", "Tr", "Ts", "Td", "TD", "Tm", "T*",
@@ -403,16 +403,24 @@ func (in *interp) color(sc *content.Scanner, op []byte, res reader.Dict) {
 			return
 		}
 		if op[0] == 'C' {
-			in.gs.strokeCS, in.gs.strokePat = cs, patRef{}
+			in.gs.strokeCS = cs
 			cs.initial(in.gs.stroke[:])
+			in.gs.strokePat = patternPaint{}
 		} else {
-			in.gs.fillCS, in.gs.fillPat = cs, patRef{}
+			in.gs.fillCS = cs
 			cs.initial(in.gs.fill[:])
+			in.gs.fillPat = patternPaint{}
 		}
 	case "SC", "SCN":
-		in.setColor(sc, in.gs.strokeCS, in.gs.stroke[:], &in.gs.strokePat, res)
+		in.setColor(sc, in.gs.strokeCS, in.gs.stroke[:])
+		if in.gs.strokeCS.kind == csPattern {
+			in.setPattern(sc, res, &in.gs.strokePat)
+		}
 	case "sc", "scn":
-		in.setColor(sc, in.gs.fillCS, in.gs.fill[:], &in.gs.fillPat, res)
+		in.setColor(sc, in.gs.fillCS, in.gs.fill[:])
+		if in.gs.fillCS.kind == csPattern {
+			in.setPattern(sc, res, &in.gs.fillPat)
+		}
 	default: // G g RG rg K k
 		cs := spaceGray
 		switch op[0] {
@@ -529,7 +537,7 @@ func (in *interp) fillPath(rule FillRule) {
 		return
 	}
 	if in.gs.fillCS.kind == csPattern {
-		if in.gs.fillPat.o == nil || in.gs.fillAlpha == 0 {
+		if !in.patternReady(&in.gs.fillPat, in.gs.fillAlpha) {
 			return
 		}
 		in.st.Fills++
@@ -557,23 +565,17 @@ func (in *interp) strokePath() {
 	if in.path.Empty() {
 		return
 	}
-	in.strokeWith(&in.path, in.pathBox(in.strokePad()), in.transparent())
-}
-
-// strokeWith strokes p in the current state, in a group of its own
-// bounded by box (in user space, stroke included) if grouped.
-func (in *interp) strokeWith(p *Path, box Rect, grouped bool) {
 	if in.gs.strokeCS.kind == csPattern {
-		if in.gs.strokePat.o == nil || in.gs.strokeAlp == 0 {
+		if !in.patternReady(&in.gs.strokePat, in.gs.strokeAlp) {
 			return
 		}
 		in.st.Strokes++
-		if grouped {
-			in.beginObject(box, in.gs.ctm)
+		if in.transparent() {
+			in.beginObject(in.pathBox(in.strokePad()), in.gs.ctm)
 			defer in.dev.EndGroup()
 		}
-		in.dev.ClipStroke(p, in.gs.ctm, &in.gs.style)
-		in.paintPattern(true, strokeBox(p, in.gs.ctm, &in.gs.style))
+		in.dev.ClipStroke(&in.path, in.gs.ctm, &in.gs.style)
+		in.paintPattern(true, strokeBox(&in.path, in.gs.ctm, &in.gs.style))
 		in.dev.PopClip()
 		return
 	}
@@ -581,17 +583,21 @@ func (in *interp) strokeWith(p *Path, box Rect, grouped bool) {
 		return
 	}
 	in.st.Strokes++
-	if grouped {
-		in.beginObject(box, in.gs.ctm)
+	if in.transparent() {
+		in.beginObject(in.pathBox(in.strokePad()), in.gs.ctm)
 		defer in.dev.EndGroup()
 	}
-	in.dev.StrokePath(p, in.gs.ctm, &in.gs.style, &in.paint)
+	in.dev.StrokePath(&in.path, in.gs.ctm, &in.gs.style, &in.paint)
 }
 
-// setPaint prepares in.paint with a solid colour; false means nothing is
-// painted.
+// setPaint prepares in.paint; false means nothing is painted. Patterns
+// are painted by the callers that can (fills, strokes, text).
 func (in *interp) setPaint(cs *colorSpace, v []float64, alpha float64) bool {
 	if cs.kind == csPattern {
+		in.st.unsupported("pattern")
+		return false
+	}
+	if cs.none {
 		return false
 	}
 	r, g, b := cs.rgb(v)
@@ -599,20 +605,11 @@ func (in *interp) setPaint(cs *colorSpace, v []float64, alpha float64) bool {
 	return in.paint.Color.A != 0
 }
 
-// setColor runs SC, SCN, sc or scn in colour space cs: the components
-// into dst, and in a Pattern space the pattern named last into pat.
-func (in *interp) setColor(sc *content.Scanner, cs *colorSpace, dst []float64, pat *patRef, res reader.Dict) {
+func (in *interp) setColor(sc *content.Scanner, cs *colorSpace, dst []float64) {
 	if cs.kind == csPattern {
-		last := sc.Last()
-		if last == nil || last.Kind != content.Name {
-			in.st.Errors++
-			return
-		}
-		*pat = patRef{o: in.lookupRef(res, "Pattern", sc, last), base: in.base, res: res}
-		if pat.o == nil {
-			in.st.Errors++
-		}
-		for i := range cs.n { // an uncoloured pattern's colour
+		// The components of an uncoloured pattern's colour come before
+		// the name (see setPattern).
+		for i := range cs.n {
 			o := sc.FromEnd(cs.n - i)
 			if o == nil || o.Kind != content.Number {
 				break
@@ -627,32 +624,6 @@ func (in *interp) setColor(sc *content.Scanner, cs *colorSpace, dst []float64, p
 		return
 	}
 	copy(dst, v[:cs.n])
-}
-
-// sh paints the shading o over the current clip (the sh operator).
-func (in *interp) sh(o reader.Object, res reader.Dict) {
-	if o == nil {
-		in.st.Errors++
-		return
-	}
-	a := unit8(in.gs.fillAlpha)
-	if a == 0 {
-		return
-	}
-	sh := in.compileShading(o, res, in.gs.ctm)
-	if sh == nil {
-		return
-	}
-	in.st.Fills++
-	if in.transparent() {
-		r := Rect{-1 << 20, -1 << 20, 1 << 20, 1 << 20}
-		if b, ok := sh.paintRect(); ok {
-			r = b
-		}
-		in.beginObject(r, in.gs.ctm)
-		defer in.dev.EndGroup()
-	}
-	in.dev.FillShading(sh, in.gs.ctm, a)
 }
 
 // setDash sets the dash pattern from arr, which the caller may reuse.
@@ -784,9 +755,9 @@ func (c *clipsOnly) StrokePath(*Path, Matrix, *StrokeStyle, *Paint) {}
 func (c *clipsOnly) ClipPath(p *Path, m Matrix, rule FillRule)      { c.d.ClipPath(p, m, rule) }
 func (c *clipsOnly) ClipRect(r Rect, m Matrix)                      { c.d.ClipRect(r, m) }
 func (c *clipsOnly) ClipStroke(p *Path, m Matrix, st *StrokeStyle)  { c.d.ClipStroke(p, m, st) }
-func (c *clipsOnly) PopClip()                                       { c.d.PopClip() }
-func (c *clipsOnly) FillShading(*Shading, Matrix, uint8)            {}
+func (c *clipsOnly) FillShading(*Shading, Matrix, *Paint)           {}
 func (c *clipsOnly) FillTile(*Tile, Matrix, *Paint)                 {}
+func (c *clipsOnly) PopClip()                                       { c.d.PopClip() }
 func (c *clipsOnly) FillGlyphs(*GlyphRun, *Paint)                   {}
 func (c *clipsOnly) DrawImage(*Image, Matrix, *Paint)               {}
 func (c *clipsOnly) BeginGroup(Rect, Matrix, *Group)                {}
@@ -914,10 +885,6 @@ func (in *interp) drawImage(r *imageResult) {
 		return
 	}
 	if img.Stencil {
-		if in.gs.fillCS.kind == csPattern {
-			in.st.unsupported("pattern-stencil") // not drawn
-			return
-		}
 		if !in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
 			return
 		}

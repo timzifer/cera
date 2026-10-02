@@ -7,17 +7,13 @@ import (
 	"github.com/timzifer/stilus"
 )
 
-// A raster device draws filled glyphs through stilus's glyph cache, which
-// keeps the coverage mask of every glyph it has drawn per size and subpixel
-// position, so a glyph is rasterized once and then composited: the text of
-// a page repeats a few dozen glyphs thousands of times. Composition honours
-// the clip stack like every other fill.
-//
-// Each raster device (one per worker) has its own cache: no locks while
-// drawing, and a mask costs about as much to make as one direct fill of
-// the glyph, so a worker that meets a glyph twice has already gained.
-// Keys hold a font id, not the font, so a pooled device keeps no document
-// alive.
+// Glyphs are drawn through a stilus.GlyphCache: the coverage mask of every
+// glyph a raster device has drawn is kept per size and subpixel position,
+// so a glyph is rasterized once and then composited. Each raster device
+// (one per worker) has its own cache, so drawing takes no locks; keys hold
+// a font id, not the font, so a pooled device keeps no document alive.
+
+type glyphCache = stilus.GlyphCache
 
 // glyphCaches keeps the caches of idle painters, most recently used last,
 // so that a serial renderer gets its own back. sync.Pool drops its items at
@@ -25,18 +21,18 @@ import (
 // painter around it.
 var glyphCaches struct {
 	sync.Mutex
-	free []*stilus.GlyphCache
+	free []*glyphCache
 }
 
 const maxIdleGlyphCaches = 64
 
-func getGlyphCache() *stilus.GlyphCache {
+func getGlyphCache() *glyphCache {
 	gcs := &glyphCaches
 	gcs.Lock()
 	defer gcs.Unlock()
 	n := len(gcs.free)
 	if n == 0 {
-		return new(stilus.GlyphCache)
+		return new(glyphCache)
 	}
 	gc := gcs.free[n-1]
 	gcs.free[n-1] = nil
@@ -44,7 +40,7 @@ func getGlyphCache() *stilus.GlyphCache {
 	return gc
 }
 
-func putGlyphCache(gc *stilus.GlyphCache) {
+func putGlyphCache(gc *glyphCache) {
 	gcs := &glyphCaches
 	gcs.Lock()
 	if gc != nil && len(gcs.free) < maxIdleGlyphCaches {
@@ -79,17 +75,18 @@ func (d *RasterDevice) fillGlyphs(run *GlyphRun, paint *Paint) {
 		return
 	}
 	if d.glyphs == nil {
-		d.glyphs = new(stilus.GlyphCache)
+		d.glyphs = new(glyphCache)
 	}
 	for i := range run.Glyphs {
 		g := &run.Glyphs[i]
-		switch {
-		case g.Outline == nil:
-		case run.Font == nil:
-			d.C.Fill(g.Outline, g.M, NonZero, paint)
-		default:
-			d.glyphs.FillGlyph(d.C, run.Font.id, int32(g.GID), g.Outline, g.M, paint)
+		if g.Outline == nil {
+			continue
 		}
+		if run.Font == nil {
+			d.C.Fill(g.Outline, g.M, NonZero, paint)
+			continue
+		}
+		d.glyphs.FillGlyph(d.C, run.Font.id, int32(g.GID), g.Outline, g.M, paint)
 	}
 }
 
