@@ -88,6 +88,15 @@ details { margin: 8px 0; } summary { cursor: pointer; color: var(--text-secondar
 .shot img { width: 100%; border: 1px solid var(--rule); border-radius: 4px; background: #fff; }
 .shot .cap { font-size: 12px; color: var(--text-muted); text-align: center; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
+.fig { margin: 8px 0; }
+.fig svg { width: 100%; height: auto; display: block; }
+.fig-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .fig-light { display: none; }
+  :root:not([data-theme="light"]) .fig-dark { display: block; }
+}
+:root[data-theme="dark"] .fig-light { display: none; }
+:root[data-theme="dark"] .fig-dark { display: block; }
 #tip { position: fixed; pointer-events: none; background: var(--text-primary); color: var(--surface-1);
   padding: 6px 8px; border-radius: 6px; font-size: 12px; max-width: 320px; display: none; z-index: 10; }
 @media (max-width: 640px) { .shot .imgs { grid-template-columns: 1fr; } }
@@ -118,8 +127,7 @@ any rendering. The synthetic drawings are also compared with an exact rendering.
 <p class="note"><strong>{{$v.Name}}</strong> compares {{$v.What}}.</p>
 <h2>Where all the others agree, who differs?</h2>
 <p class="note">Share of the inked area on which an engine differs from the median of the other engines while those agree. Lower is better; one scale for all panels.</p>
-{{$.Legend}}
-<div class="facets">{{$v.Bars}}</div>
+{{$v.Bars}}
 <details><summary>Table</summary><div class="scroll"><table class="sortable">
 <thead><tr><th>category</th><th>pages</th>{{range $v.Engines}}<th>{{.}}</th>{{end}}<th>contested</th></tr></thead>
 <tbody><tr><td>all</td><td>{{$v.V.Compared}}</td>{{range $v.Engines}}<td>{{get $v.V.Outlier .}}</td>{{end}}<td>{{pct $v.V.Contested}}</td></tr>
@@ -148,8 +156,7 @@ any rendering. The synthetic drawings are also compared with an exact rendering.
 
 {{if .R.Exact}}
 <h2>Against the exact drawings</h2>
-<p class="note">The synthetic drawings rendered exactly: each pixel's area covered by the geometry (sampled at 64 rows per pixel, exact along them). The dot is an engine's ink relative to the exact ink: right of 1× draws heavier lines, left lighter. Hairlines are one device pixel wide in the exact rendering; engines differ there by design.</p>
-{{.Legend}}
+<p class="note">The synthetic drawings rendered exactly: each pixel's area covered by the geometry (sampled at 64 rows per pixel, exact along them). The dot is an engine's ink relative to the exact ink: right of 1× draws heavier lines, left lighter; within a row the engines are set slightly apart so that equal values stay visible. Hairlines are one device pixel wide in the exact rendering; engines differ there by design.</p>
 {{.Ink}}
 <details><summary>Table</summary><div class="scroll"><table class="sortable">
 <thead><tr><th>drawing</th><th>engine</th><th>ink</th><th>&gt;16</th><th>mean error (1/255)</th><th>p99</th></tr></thead>

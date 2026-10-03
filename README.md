@@ -445,6 +445,10 @@ go run . -dir ../../testdata/borb -pages 3 -dpi 72 -sample 200
 go run . -engines cera,pdfium,mupdf -match synthetic/       # a subset of engines and files
 ```
 
+The charts are drawn with [figure](https://github.com/timzifer/figure)
+(SVG, once with light and once with dark tokens, the page showing the one
+its colour scheme asks for); the tables below them hold every value.
+
 The references' renderings are cached in `testdata/reference-cache` by
 engine version, file content, resolution and page; cera is always rendered.
 MuPDF is AGPL and Ghostscript AGPL as well: they are linked into or run by

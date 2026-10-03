@@ -49,6 +49,8 @@ github.com/tannevaled/gobig2 v0.2.0 h1:yx97/ltljALrIWDFVqHjPUIjAp3bfUUhH8Z8UROvN
 github.com/tannevaled/gobig2 v0.2.0/go.mod h1:X0S1H+N35kg6zYgVYRqGMsGj3C35zs+iA2r1MXyPcV4=
 github.com/tetratelabs/wazero v1.12.0 h1:DuWcpNu/FzgEXgGBDp8J1Spc+CWOvvtvVyjKlaZopYU=
 github.com/tetratelabs/wazero v1.12.0/go.mod h1:LvKtzl2RqO4gyF27BiXU+nKAjcV8f38U+kP/q2vgxh0=
+github.com/timzifer/figure v0.14.1-0.20260929122627-5c067d67d2c9 h1:VkJaMs7ud22FvXj+HQqPkeCckUIeLfDxtGpVs9Ntsb0=
+github.com/timzifer/figure v0.14.1-0.20260929122627-5c067d67d2c9/go.mod h1:q8KmlPjxcoOTgAe9gR4RNdTCwTb2bzA9CDlNIyzbXtE=
 github.com/timzifer/stilus v0.7.0 h1:sLKqyCMlViEnd/hHP93zNXBfcpQbUqjX8+Wv3NbaWFo=
 github.com/timzifer/stilus v0.7.0/go.mod h1:J8uybarHVrCcMUgRwrEkZOw5USCYqbIcfqjTGm2pB2o=
 go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=

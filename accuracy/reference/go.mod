@@ -6,6 +6,7 @@ require (
 	github.com/gen2brain/go-fitz v1.28.2
 	github.com/timzifer/cera v0.0.0
 	github.com/timzifer/cera/accuracy v0.0.0
+	github.com/timzifer/figure v0.14.1-0.20260929122627-5c067d67d2c9
 )
 
 require (
