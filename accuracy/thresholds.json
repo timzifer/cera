@@ -1,0 +1,119 @@
+{
+ "arxiv/1406.2661v1.pdf": {
+  "over": 9.48
+ },
+ "arxiv/1512.03385v1.pdf": {
+  "over": 11.45
+ },
+ "arxiv/1706.03762v7.pdf": {
+  "over": 8.81
+ },
+ "arxiv/2010.11929v2.pdf": {
+  "over": 9.68
+ },
+ "pdfjs/TrueType_without_cmap.pdf": {
+  "over": 1.08
+ },
+ "pdfjs/annotation-caret-ink.pdf": {
+  "over": 0.11
+ },
+ "pdfjs/bitmap-composite-and-xnor-text.pdf": {
+  "over": 0.83
+ },
+ "pdfjs/blendmode.pdf": {
+  "over": 5.19
+ },
+ "pdfjs/ccitt_EndOfBlock_false.pdf": {
+  "over": 1.47
+ },
+ "pdfjs/cid_cff.pdf": {
+  "over": 0.2
+ },
+ "pdfjs/clippath.pdf": {
+  "over": 1
+ },
+ "pdfjs/cmykjpeg.pdf": {
+  "over": 4.42
+ },
+ "pdfjs/devicen.pdf": {
+  "over": 0.05
+ },
+ "pdfjs/function_based_shading.pdf": {
+  "over": 0.68
+ },
+ "pdfjs/function_based_shading_cmyk.pdf": {
+  "over": 97.9
+ },
+ "pdfjs/issue7847_radial.pdf": {
+  "over": 0.05
+ },
+ "pdfjs/jbig2_symbol_offset.pdf": {
+  "over": 0.21
+ },
+ "pdfjs/jp2k-resetprob.pdf": {
+  "over": 12.89
+ },
+ "pdfjs/jpx_smaskindata.pdf": {
+  "over": 13.43
+ },
+ "pdfjs/knockout_blend_multiply.pdf": {
+  "over": 1.37
+ },
+ "pdfjs/knockout_nested.pdf": {
+  "over": 14.49
+ },
+ "pdfjs/mmtype1.pdf": {
+  "over": 3.95
+ },
+ "pdfjs/nonisolated_blend_smask.pdf": {
+  "over": 3.39
+ },
+ "pdfjs/pattern_text_embedded_font.pdf": {
+  "over": 2.99
+ },
+ "pdfjs/radial_gradients.pdf": {
+  "over": 2
+ },
+ "pdfjs/simpletype3font.pdf": {
+  "over": 0.05
+ },
+ "pdfjs/smask_alpha_bc.pdf": {
+  "over": 0.06
+ },
+ "pdfjs/smaskdim.pdf": {
+  "over": 0.12
+ },
+ "pdfjs/text_clip_cff_cid.pdf": {
+  "over": 20.99
+ },
+ "pdfjs/tiling-pattern-box.pdf": {
+  "over": 0.06
+ },
+ "pdfjs/tiling_patterns_variations.pdf": {
+  "over": 3.05
+ },
+ "pdfjs/tracemonkey.pdf": {
+  "over": 14.11
+ },
+ "pdfjs/transparency_group.pdf": {
+  "over": 0.07
+ },
+ "synthetic/contours-3000.pdf": {
+  "over": 0.79
+ },
+ "synthetic/hatch-2000-0.35mm.pdf": {
+  "over": 0.1
+ },
+ "synthetic/hatch-2000-hairline.pdf": {
+  "over": 0.1
+ },
+ "synthetic/hatch-2000-maskclip.pdf": {
+  "over": 0.06
+ },
+ "synthetic/short-20000-0.35mm.pdf": {
+  "over": 0.06
+ },
+ "synthetic/short-20000-hairline.pdf": {
+  "over": 0.06
+ }
+}

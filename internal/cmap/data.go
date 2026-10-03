@@ -98,7 +98,7 @@ func predefined(name string, depth int) *CMap {
 	if ok {
 		return c
 	}
-	if depth > maxDepth {
+	if depth > MaxDepth {
 		return nil
 	}
 	b := inflate(name)
@@ -315,7 +315,7 @@ func unmarshal(b []byte) (*CMap, string) {
 	c.Supplement = int(r.uvarint())
 	parent := r.str()
 	ns := r.uvarint()
-	for i := uint64(0); i < ns && r.err == nil && i < maxSpaces; i++ {
+	for i := uint64(0); i < ns && r.err == nil && i < MaxSpaces; i++ {
 		var sp space
 		sp.n = r.byte()
 		if sp.n < 1 || sp.n > 4 {
@@ -328,7 +328,7 @@ func unmarshal(b []byte) (*CMap, string) {
 	}
 	for k := range 2 {
 		count := r.uvarint()
-		if count > maxSpans {
+		if count > MaxSpans {
 			r.err = errCorrupt
 		}
 		var list []span

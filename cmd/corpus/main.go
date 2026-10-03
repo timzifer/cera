@@ -12,12 +12,18 @@
 //	go run ./cmd/corpus get -source ccmain -sample 500 -seed 42
 //	go run ./cmd/corpus run -dir testdata/borb -runs 0 -pages 3 -fail-open=false
 //
+// CI renders random batches of the large corpora (-sample files chosen by
+// -seed); the whole of them is run locally. Every report lists the slowest
+// pages and those with the most allocations (-top), to catch inputs the
+// budgets do not yet cover.
+//
 // run exits with status 1 when any page panics, hangs or exceeds its
 // deadline, and (with -fail-open, the default) when a file does not open,
 // so CI blocks on robustness regressions.
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/csv"
 	"errors"
@@ -28,6 +34,7 @@ import (
 	"image/png"
 	"io"
 	"io/fs"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -134,6 +141,9 @@ func run(args []string) error {
 	out := fl.String("out", "", "directory for report.md and results.csv (default: report to stdout)")
 	images := fl.String("images", "", "directory to write every rendered page as PNG")
 	workers := fl.Int("workers", 1, "goroutines drawing one page (0 = all cores)")
+	sample := fl.Int("sample", 0, "render a random batch of this many files (0 = all)")
+	seed := fl.Uint64("seed", uint64(time.Now().YearDay()), "seed for -sample (default: day of year)")
+	top := fl.Int("top", 20, "slowest pages and pages with the most allocations listed")
 	fl.Parse(args)
 
 	cats := corpus.Categories()
@@ -165,6 +175,14 @@ func run(args []string) error {
 	}
 	if len(files) == 0 {
 		return fmt.Errorf("no PDFs in %s (run fetch and scenes first)", *dirs)
+	}
+	if *sample > 0 && *sample < len(files) {
+		// A batch reproducible from its seed, printed for reruns.
+		r := rand.New(rand.NewPCG(*seed, 0x6365726120))
+		r.Shuffle(len(files), func(i, j int) { files[i], files[j] = files[j], files[i] })
+		files = files[:*sample]
+		slices.SortFunc(files, func(a, b struct{ path, rel, cat string }) int { return strings.Compare(a.path, b.path) })
+		fmt.Fprintf(os.Stderr, "batch of %d files, seed %d\n", *sample, *seed)
 	}
 
 	cfg := runConfig{scale: *dpi / 72, runs: *runs, pages: *pages, timeout: *timeout, images: *images, workers: *workers}
@@ -207,7 +225,7 @@ func run(args []string) error {
 			return err
 		}
 	}
-	writeReport(w, results, *dpi, *runs, *workers)
+	writeReport(w, results, *dpi, *runs, *workers, *top)
 
 	var fatal, unopened int
 	for i := range results {
@@ -304,15 +322,23 @@ func (c runConfig) render(data []byte, rel, cat string) ([]result, error) {
 			})
 		}
 		// Warm-up render: fills caches and pools, reports stats and errors.
+		// Without timed runs its allocations are the page's.
+		var m0, m1 runtime.MemStats
+		if c.runs == 0 {
+			runtime.ReadMemStats(&m0)
+		}
 		t0 := time.Now()
 		r.err = render(&r.stats)
 		r.min, r.median = time.Since(t0), time.Since(t0)
+		if c.runs == 0 {
+			runtime.ReadMemStats(&m1)
+			r.allocs, r.bytes = m1.Mallocs-m0.Mallocs, m1.TotalAlloc-m0.TotalAlloc
+		}
 		if !r.fatal() && c.runs > 0 {
 			// A first render interprets the page into a display list; a
 			// render again at the same scale (another tile, a scrolled
 			// viewport) only draws it. Both are timed.
 			var times, again []time.Duration
-			var m0, m1 runtime.MemStats
 			for k := range c.runs {
 				p.Release()
 				if k == 0 {
@@ -360,7 +386,7 @@ func errString(err error) string {
 	return err.Error()
 }
 
-func writeReport(w io.Writer, rs []result, dpi float64, runs, workers int) {
+func writeReport(w io.Writer, rs []result, dpi float64, runs, workers, top int) {
 	ws := fmt.Sprintf("%d workers", workers)
 	if workers <= 0 {
 		ws = "all cores"
@@ -439,6 +465,8 @@ func writeReport(w io.Writer, rs []result, dpi float64, runs, workers int) {
 		}
 	}
 
+	writeTop(w, rs, top)
+
 	fmt.Fprintf(w, "\n## Pages\n\n| file | page | size | ms (min) | ms (median) | ms again | allocs | ops | content errors | note |\n|---|---:|---|---:|---:|---:|---:|---:|---:|---|\n")
 	for i := range rs {
 		r := &rs[i]
@@ -495,4 +523,31 @@ func writePNG(path string, img image.Image) error {
 		return err
 	}
 	return f.Close()
+}
+
+// writeTop lists the n slowest pages and the n with the most allocations.
+func writeTop(w io.Writer, rs []result, n int) {
+	if n <= 0 {
+		return
+	}
+	var pages []*result
+	for i := range rs {
+		if rs[i].page > 0 {
+			pages = append(pages, &rs[i])
+		}
+	}
+	table := func(title string, cmp func(a, b *result) int) {
+		slices.SortStableFunc(pages, cmp)
+		fmt.Fprintf(w, "\n## %s (top %d)\n\n| file | page | ms | allocs | MB allocated | unsupported | note |\n|---|---:|---:|---:|---:|---|---|\n", title, n)
+		for _, r := range pages[:min(n, len(pages))] {
+			note := errString(r.err)
+			if r.fatal() {
+				note = "**FAIL** " + note
+			}
+			fmt.Fprintf(w, "| %s | %d | %.1f | %d | %.1f | %s | %s |\n", r.file, r.page, ms(r.median), r.allocs,
+				float64(r.bytes)/(1<<20), strings.Join(r.stats.UnsupportedKeys(), " "), strings.ReplaceAll(note, "|", "\\|"))
+		}
+	}
+	table("Slowest pages", func(a, b *result) int { return cmp.Compare(b.median, a.median) })
+	table("Most allocations", func(a, b *result) int { return cmp.Compare(b.allocs, a.allocs) })
 }

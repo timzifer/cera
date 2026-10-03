@@ -39,3 +39,4 @@ go.work.sum
 /corpus
 /cera
 /*.png
+/report-accuracy/

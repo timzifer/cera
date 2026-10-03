@@ -73,8 +73,6 @@ type shadingEntry struct {
 const (
 	rampSize        = 512
 	functionTexSize = 128
-	maxMeshTris     = 1 << 20
-	maxPatches      = 1 << 16
 )
 
 // shading reads the shading o (a dictionary or, for meshes, a stream),
@@ -165,12 +163,16 @@ func (d *Document) readShading(o reader.Object, res reader.Dict) *shadingEntry {
 		if !isStream {
 			return e
 		}
-		if !d.readMesh(sh, s, cs, fn) {
+		ok, capped := d.readMesh(sh, s, cs, fn)
+		if capped {
+			e.feature = "mesh-budget"
+		}
+		if !ok {
 			return e
 		}
 		sh.meshes = new(meshCache)
 	}
-	if approx != "" {
+	if approx != "" && e.feature == "" {
 		e.feature = approx
 	}
 	e.full = sh
@@ -277,10 +279,6 @@ type meshEntry struct {
 	s     *stilus.MeshShader
 }
 
-// maxMeshShaders bounds the shaders kept per mesh; beyond, each draw sets
-// up its own.
-const maxMeshShaders = 8
-
 // meshShader returns a shader for the mesh of sh under m with alpha, nil
 // if it cannot be drawn so.
 func (sh *Shading) meshShader(m Matrix, alpha uint8) *stilus.MeshShader {
@@ -330,6 +328,7 @@ type meshReader struct {
 	cs     *colorSpace
 	param  bool
 	t0, t1 float64 // decode range of the parameter
+	capped bool    // stopped at a budget with data left
 }
 
 func (r *meshReader) bits(n int) uint64 {
@@ -386,7 +385,7 @@ func (r *meshReader) color(v *stilus.MeshVertex) {
 
 // readMesh reads the vertices of a mesh shading (types 4 to 7) into
 // triangles.
-func (d *Document) readMesh(sh *Shading, s *reader.Stream, cs *colorSpace, fn function) bool {
+func (d *Document) readMesh(sh *Shading, s *reader.Stream, cs *colorSpace, fn function) (ok, capped bool) {
 	dict := s.Dict
 	r := &meshReader{cs: cs, ncomp: cs.n, param: fn != nil}
 	if fn != nil {
@@ -398,19 +397,19 @@ func (d *Document) readMesh(sh *Shading, s *reader.Stream, cs *colorSpace, fn fu
 	switch r.bpc {
 	case 1, 2, 4, 8, 12, 16, 24, 32:
 	default:
-		return false
+		return false, false
 	}
 	switch r.bpcomp {
 	case 1, 2, 4, 8, 12, 16:
 	default:
-		return false
+		return false, false
 	}
 	if sh.Type != 5 && r.bpf != 2 && r.bpf != 4 && r.bpf != 8 {
-		return false
+		return false, false
 	}
 	r.decode = d.floats(dict["Decode"])
 	if len(r.decode) < 4+2*r.ncomp {
-		return false
+		return false, false
 	}
 	if fn != nil {
 		r.t0, r.t1 = r.decode[4], r.decode[5]
@@ -423,14 +422,14 @@ func (d *Document) readMesh(sh *Shading, s *reader.Stream, cs *colorSpace, fn fu
 	case 5:
 		perRow, _ := d.integer(dict["VerticesPerRow"])
 		if perRow < 2 {
-			return false
+			return false, false
 		}
 		r.lattice(sh, perRow)
 	default:
 		r.patches(sh)
 	}
 	if len(sh.Mesh) == 0 {
-		return false
+		return false, r.capped
 	}
 	b := Rect{math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)}
 	for i := range sh.Mesh {
@@ -440,7 +439,7 @@ func (d *Document) readMesh(sh *Shading, s *reader.Stream, cs *colorSpace, fn fu
 		}
 	}
 	sh.Bounds = b
-	return true
+	return true, r.capped
 }
 
 // freeForm reads a type 4 mesh: each vertex starts a triangle (flag 0,
@@ -480,12 +479,14 @@ func (r *meshReader) freeForm(sh *Shading) {
 			sh.Mesh = append(sh.Mesh, stilus.MeshTriangle{a, b, c})
 		}
 	}
+	r.capped = len(sh.Mesh) >= maxMeshTris && r.more()
 }
 
 // lattice reads a type 5 mesh: rows of perRow vertices, two triangles
 // between neighbours of consecutive rows.
 func (r *meshReader) lattice(sh *Shading, perRow int) {
-	if perRow > 1<<16 {
+	if perRow > maxMeshRow {
+		r.capped = true
 		return
 	}
 	prev := make([]stilus.MeshVertex, 0, perRow)
@@ -508,6 +509,7 @@ func (r *meshReader) lattice(sh *Shading, perRow int) {
 		}
 		prev, row = row, prev
 	}
+	r.capped = len(sh.Mesh) >= maxMeshTris && r.more()
 }
 
 // patch is a Coons or tensor-product patch: its 4 × 4 control net p[i][j]
@@ -566,6 +568,7 @@ func (r *meshReader) patches(sh *Shading) {
 		}
 		list = append(list, p)
 	}
+	r.capped = len(list) >= maxPatches && r.more()
 	steps := 16
 	switch n := len(list); {
 	case n > 4096:

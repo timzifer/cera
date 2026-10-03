@@ -1,8 +1,17 @@
 name: Large corpora
 
-# Robustness against large external corpora: no panic, no hang, no deadline
-# overrun on any page. Too slow for every pull request, so it runs weekly and
-# on demand. The unsafe SafeDocs corpus (fuzzer output) only runs on demand.
+# Robustness and accuracy on random batches of the large external corpora
+# (ADR 0010): no panic, no hang, no deadline overrun on any page; the
+# slowest pages, those with the most allocations and the differences to
+# PDFium are reported. Each run draws a new batch per source (the seed is in
+# the summary, to reproduce it); the corpora are run in full locally:
+#
+#   go run ./cmd/corpus get -source borb
+#   go run ./cmd/corpus run -dir testdata/borb -runs 0 -pages 3 -fail-open=false
+#   cd accuracy && go run . -dir ../testdata/borb -pages 3 -out ../report-borb
+#
+# Too slow for every pull request, so it runs weekly and on demand. The
+# unsafe SafeDocs corpus (fuzzer output) only runs on demand.
 
 on:
   schedule:
@@ -13,17 +22,29 @@ on:
         description: "JSON list of sources (see: go run ./cmd/corpus sources)"
         default: '["pdfjs","borb","verapdf","horrors","pdf20","qpdf","ccmain"]'
       sample:
-        description: "PDFs sampled from one zip shard (ccmain, unsafe)"
-        default: "1000"
+        description: "Files per source rendered for robustness (0 = all)"
+        default: "300"
+      accuracy:
+        description: "Files per source compared with PDFium (0 = none)"
+        default: "40"
       seed:
-        description: "Seed for shard and sample (empty = day of year)"
+        description: "Seed for shard and batches (empty = run ID)"
         default: ""
       pages:
         description: "Pages per document (0 = all)"
         default: "3"
+      fuzztime:
+        description: "Time per fuzz target"
+        default: "10m"
 
 permissions:
   contents: read
+
+env:
+  SEED: ${{ github.event.inputs.seed || github.run_id }}
+  SAMPLE: ${{ github.event.inputs.sample || '300' }}
+  ACCURACY: ${{ github.event.inputs.accuracy || '40' }}
+  PAGES: ${{ github.event.inputs.pages || '3' }}
 
 jobs:
   robustness:
@@ -41,19 +62,22 @@ jobs:
       - name: Build
         run: go build -o corpus ./cmd/corpus
       - name: Get ${{ matrix.source }}
+        run: ./corpus get -source "${{ matrix.source }}" -dir "ext/${{ matrix.source }}" -sample "$SAMPLE" -seed "$SEED"
+      - name: Render a batch (robustness)
         run: |
-          seed="${{ github.event.inputs.seed }}"
-          ./corpus get -source "${{ matrix.source }}" -dir "ext/${{ matrix.source }}" \
-            -sample "${{ github.event.inputs.sample || '1000' }}" ${seed:+-seed "$seed"}
-      - name: Render (robustness only)
+          ./corpus run -dir "ext/${{ matrix.source }}" -runs 0 -dpi 72 -timeout 30s -top 20 \
+            -pages "$PAGES" -sample "$SAMPLE" -seed "$SEED" -fail-open=false -out report 2> render.log
+      - name: Compare a batch with PDFium (accuracy, report only)
+        if: always() && env.ACCURACY != '0'
+        working-directory: accuracy
         run: |
-          ./corpus run -dir "ext/${{ matrix.source }}" -runs 0 -dpi 72 -timeout 30s \
-            -pages "${{ github.event.inputs.pages || '3' }}" -fail-open=false -out report 2> render.log
+          go run . -dir "../ext/${{ matrix.source }}" -dpi 72 -pages "$PAGES" \
+            -sample "$ACCURACY" -seed "$SEED" -worst 20 -out ../report-accuracy 2> ../accuracy.log
       - name: Summary
         if: always()
         run: |
           {
-            echo "## ${{ matrix.source }}"
+            echo "## ${{ matrix.source }} (seed $SEED)"
             grep -c '^ok' render.log | sed 's/^/rendered pages: /' || true
             grep -c '^skip' render.log | sed 's/^/files the reader rejects: /' || true
             echo
@@ -61,6 +85,7 @@ jobs:
             grep '^FAIL' render.log | head -100 || true
             echo '```'
             test -f report/report.md && sed -n '/^## Summary/,/^## Pages/p' report/report.md | sed '$d'
+            test -f report-accuracy/report.md && sed '1d' report-accuracy/report.md | sed 's/^## /### /'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: always()
@@ -68,4 +93,41 @@ jobs:
           name: report-${{ matrix.source }}
           path: |
             report
+            report-accuracy
             render.log
+            accuracy.log
+
+  fuzz:
+    if: github.event_name == 'schedule' || github.event.inputs.fuzztime != '0'
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { name: FuzzContent, pkg: . }
+          - { name: FuzzImage, pkg: . }
+          - { name: FuzzTransparency, pkg: . }
+          - { name: FuzzShading, pkg: . }
+          - { name: FuzzPattern, pkg: . }
+          - { name: FuzzICC, pkg: . }
+          - { name: FuzzLayers, pkg: . }
+          - { name: FuzzForm, pkg: . }
+          - { name: FuzzScan, pkg: ./internal/content }
+          - { name: FuzzParse, pkg: ./internal/cmap }
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: ${{ matrix.target.name }}
+        run: go test -run '^$' -fuzz '^${{ matrix.target.name }}$' -fuzztime "${{ github.event.inputs.fuzztime || '10m' }}" ${{ matrix.target.pkg }}
+      - name: Keep crashers
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crashers-${{ matrix.target.name }}
+          path: |
+            testdata/fuzz
+            internal/content/testdata/fuzz
+            internal/cmap/testdata/fuzz

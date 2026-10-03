@@ -24,16 +24,6 @@ import (
 // whole it would cover what the mask was meant to show (the ink layer of
 // a scanned page is a dark rectangle shaped by its mask).
 
-const (
-	// maxImageBytes bounds one decoded plane.
-	maxImageBytes = 256 << 20
-	// maxCodecPixels bounds the size a JPEG or JPEG 2000 codestream may
-	// declare: its decoder allocates the whole picture (and more) first.
-	maxCodecPixels = 64 << 20
-	// imageCacheBytes bounds the decoded images a document keeps.
-	imageCacheBytes = 256 << 20
-)
-
 // imageResult is a decoded image, or why there is none.
 type imageResult struct {
 	img *Image

@@ -37,9 +37,6 @@ import (
 //
 // Layer buffers are kept by the device and reused.
 
-// maxFreeLayerBytes bounds the layer buffers a device keeps for reuse.
-const maxFreeLayerBytes = 64 << 20
-
 // layers is the transparency state of a raster device.
 type layers struct {
 	base   *image.RGBA // nil: no Reset, groups are drawn directly
