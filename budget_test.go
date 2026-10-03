@@ -38,8 +38,10 @@ func TestBudgetsDocumented(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A checkout on Windows may have turned the line ends into CRLF.
+	text := strings.ReplaceAll(string(readme), "\r\n", "\n")
 	want := budgetTable()
-	if !strings.Contains(string(readme), want) {
+	if !strings.Contains(text, want) {
 		t.Errorf("README.md does not carry the table of budgets; it should read:\n\n%s", want)
 	}
 	seen := map[string]bool{}
