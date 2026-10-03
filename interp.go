@@ -103,6 +103,9 @@ type interp struct {
 	mcBase int     // len(mc) when the running content stream started
 
 	annotBuf []byte // generated appearance streams
+	// formVals are the field values that differ from the saved ones, for
+	// the appearances of widgets (RenderOptions.Form).
+	formVals map[*Field]Value
 
 	// overprint simulates overprint (RenderOptions.SimulateOverprint).
 	overprint bool
@@ -129,6 +132,7 @@ func (in *interp) release() {
 	in.stack = in.stack[:0]
 	in.doc, in.dev, in.st, in.lim, in.td = nil, nil, nil, nil, nil
 	in.out, in.rec, in.mute.d, in.ocVis = nil, nil, nil, nil
+	in.formVals = nil
 	in.tiles = nil
 	in.gs = gstate{}
 	in.text = in.text.keep()

@@ -1,6 +1,6 @@
 # 0006. Interactive forms and `FormWidgetProvider`
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-01
 - Milestone: M7½
 - Depends on: ADR 0005 (annotations), ADR 0004 (optional content)
@@ -271,6 +271,74 @@ follow the same pattern.
   that changed.
 - `FormState` is not safe for concurrent `SetValue`; providers call it from
   their UI goroutine. Rendering reads a snapshot.
+
+## Implementation notes
+
+Implemented in `form.go` (model), `formstate.go` (values), `formgen.go`
+(generated appearances), `formlayer.go` (provider and layer) and the
+module `form/fyneform`. Where it refines the decision above:
+
+- **Model.** `Field` also carries `Saved` (the `/V` read once), `TopIndex`
+  and `Options` for buttons with `/Opt`; `Form` has `XFA`, `Field(name)`
+  and `PageWidgets(page)`, and `Widget` the annotation `Flags`. Flags are
+  named after `/Ff` with their bit positions (`FfReadOnly`, `FfComb`,
+  ...). Widgets are found through the pages' `/Annots`, not `/P`; a
+  widget on no page is left out. `HasActions` is set by `/AA` on the
+  field, its ancestors or its widgets.
+- **Values.** `TextValue`, `StateValue` and `ChoiceValue` build values. A
+  text value given to a choice field selects the option of that export
+  value or text; an editable combo box keeps other text. `SetValue`
+  enforces `MaxLen`, the options, `MultiSelect`, the widgets' on states
+  and, for radio buttons, `NoToggleToOff`; it returns `ErrReadOnly` or an
+  error wrapping `ErrInvalidValue`. `Reset` restores `/DV`, or empty.
+  `FormState` is guarded by a mutex, so a render reading its snapshot may
+  run on another goroutine; subscribers run on the goroutine that changed
+  the value.
+- **Which appearance.** Check boxes and radio buttons show the state of
+  their `/AP` that their value selects, also under `/NeedAppearances`; a
+  state missing from `/N` draws nothing, as in other viewers, and only a
+  widget without `/AP` is generated. Push buttons are generated only
+  without `/AP`, signatures never. Text and choice fields follow the
+  three rules of section 5.
+- **Generation.** The `/DA` font comes from the form's `/DR`; when it is
+  missing, composite, Type 3 or cannot encode the value, Helvetica (with
+  its stand-in) is used. Check marks are drawn as shapes for the
+  ZapfDingbats characters of `/MK /CA` (check, circle, cross, diamond,
+  square, star), so they do not wait for ADR 0008. Auto-size fits a
+  single line to the height and shrinks it to the width; multiline text
+  starts at 12 points and shrinks to 4. Comb fields get dividers in the
+  border colour, list boxes highlight their selection in Acrobat's blue,
+  radio buttons are round, beveled and inset borders get their two-tone
+  edges.
+- **No `Page.Invalidate`.** The page's display list is always recorded
+  with the saved values. A render with `RenderOptions.Form` records each
+  widget whose value differs into a display list of its own, cached on
+  the page by widget, scale and value, and draws it over the page's list,
+  which leaves that widget out. Changing a value thus records one widget
+  and never the page, without an explicit invalidation; `Page.Release`
+  drops these lists too. A widget showing a changed value is drawn above
+  later annotations that overlap it. `RunOptions.Form` gives other
+  devices the same values, so `Page.Text`-like extraction sees them.
+- **Layer.** `WidgetPlacement.Rotation` is the page's `/Rotate` less
+  `/MK /R`, since `/R` turns counterclockwise. `Supports` is asked for
+  every widget of the page in `NewFormLayer`. Widgets hidden by their
+  flags (`Hidden`, `NoView`) or their `/OC` under `View.Layers` are not
+  shown. `FormLayer.Focus` sets the widget that gets
+  `WidgetPlacement.Focus`; `Next` passes over hidden widgets and
+  read-only fields and continues on the following pages; `/Tabs /S` and
+  pages without `/Tabs` use the order of `/Annots`. `NoZoom` widgets are
+  placed at their zoomed size.
+- **xfa** is counted once per page render of a document whose
+  `/AcroForm` has `/XFA`.
+- **fyneform** builds against the cera next to it (`replace ../..`) until
+  a release carries this API. Radio buttons are one `widget.Check` per
+  widget, list boxes a `widget.List` with check marks; `Supports` is
+  false for signatures, file selection fields and widgets rotated by
+  `/MK /R`, while widgets of rotated pages are shown upright. Fonts and
+  colours of `Appearance` are not applied: fyne styles widgets through
+  its theme. `PixelScale` converts placements to fyne units, `Canvas`
+  receives the focus, `OnPush` reports push buttons.
+- `cmd/cera -field name=value` renders a filled form.
 
 ## Alternatives considered
 

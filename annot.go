@@ -285,9 +285,10 @@ func (d *Document) nameTree(o reader.Object, key string) reader.Object {
 	return nil
 }
 
-// appearance returns the normal appearance stream of a, nil if it has
-// none (or none for its state).
-func (d *Document) appearance(a *Annotation) *reader.Stream {
+// appearance returns the normal appearance stream of a in state (its
+// /AS, unless a widget's value says otherwise), nil if it has none (or
+// none for the state).
+func (d *Document) appearance(a *Annotation, state reader.Name) *reader.Stream {
 	ap := d.dict(a.dict["AP"])
 	if ap == nil {
 		return nil
@@ -296,8 +297,8 @@ func (d *Document) appearance(a *Annotation) *reader.Stream {
 	if s, ok := reader.ToStream(n); ok {
 		return s
 	}
-	if nd, ok := reader.ToDict(n); ok && a.state != "" {
-		return d.stream(nd[a.state])
+	if nd, ok := reader.ToDict(n); ok && state != "" {
+		return d.stream(nd[state])
 	}
 	return nil
 }
@@ -315,6 +316,9 @@ var generated = map[string]bool{
 func (in *interp) drawAnnots(p *Page, base Matrix, scale float64, af *annotFilter) {
 	annots := p.Annotations()
 	in.st.Errors += p.annBad
+	if p.doc.Form(); p.doc.xfa {
+		in.st.unsupported("xfa")
+	}
 	if in.rec == nil && af.mode == AnnotsNone {
 		return
 	}
@@ -336,8 +340,25 @@ func (in *interp) drawAnnots(p *Page, base Matrix, scale float64, af *annotFilte
 // annotation draws a with its appearance stream or a generated one.
 func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64) {
 	doc := in.doc
-	ap := doc.appearance(a)
-	gen := ap == nil && generated[a.Subtype]
+	var (
+		ap  *reader.Stream
+		gen bool
+		w   *Widget // a widget of the form, drawn with its value wv
+		wv  Value
+	)
+	if a.Subtype == "Widget" {
+		w = doc.Form().widget(p.index, a.Index)
+	}
+	if w != nil {
+		wv = w.Field.Saved
+		if v, ok := in.formVals[w.Field]; ok {
+			wv = v
+		}
+		ap, gen = doc.widgetLook(a, w, wv)
+	} else {
+		ap = doc.appearance(a, a.state)
+		gen = ap == nil && generated[a.Subtype]
+	}
 	if ap == nil && !gen {
 		if _, hasAP := a.dict["AP"]; !hasAP && a.Subtype != "Link" && a.Subtype != "Widget" {
 			in.st.unsupported("annot-no-ap")
@@ -389,7 +410,7 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 	}
 	grouped := g.Alpha != 255 || g.Blend != BlendNormal
 	box := a.Rect
-	if gen {
+	if gen && w == nil {
 		pad := in.annotPad(a)
 		box = Rect{box.X0 - pad, box.Y0 - pad, box.X1 + pad, box.Y1 + pad}
 	}
@@ -400,10 +421,15 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 		in.st.Groups++
 		in.dev.BeginGroup(box, ctm, &g)
 	}
-	if gen {
+	switch {
+	case gen && w != nil:
+		var res reader.Dict
+		in.annotBuf, res = in.generateWidget(in.annotBuf[:0], w, wv)
+		in.exec(in.annotBuf, res, 1)
+	case gen:
 		in.annotBuf = in.generate(in.annotBuf[:0], a)
 		in.exec(in.annotBuf, nil, 1)
-	} else {
+	default:
 		in.gs.ctm = appearanceMatrix(doc, ap, a.Rect).Mul(ctm)
 		in.form(ap, nil, 0)
 	}

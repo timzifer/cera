@@ -30,6 +30,11 @@ type Document struct {
 	ocOnce sync.Once
 	oc     *ocProps // optional content, read on first use
 
+	formOnce sync.Once
+	form     *Form     // the interactive form, read on first use
+	xfa      bool      // the form is an XFA form
+	ff       formFonts // fonts of generated widget appearances
+
 	pageIdxOnce sync.Once
 	pageIdx     map[reader.Ref]int // page index by reference, for links
 
@@ -112,6 +117,9 @@ type Page struct {
 
 	mu sync.Mutex
 	dl *displayList // cached by Render; see Release
+	// wl are the lists of widgets showing values of a FormState, by
+	// annotation index; see Render.
+	wl map[int]*widgetList
 
 	annOnce sync.Once
 	annots  []Annotation

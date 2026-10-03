@@ -77,6 +77,25 @@ for _, a := range page.Annotations() {
 }
 ```
 
+Interactive forms (ADR 0006): `Document.Form` reads the fields of
+`/AcroForm` with their widgets, and a `FormState` the caller owns holds
+the values a user enters. Rendering with `RenderOptions.Form` shows them
+through generated appearances, recorded once per widget and value; the
+page itself is not interpreted again. A `FormLayer` places native widgets
+of a `FormWidgetProvider` over the page image and leaves them out of it;
+[`form/fyneform`](form/fyneform) is such a provider for fyne, a module of
+its own so that cera stays free of toolkits and cgo:
+
+```go
+form := doc.Form() // nil without /AcroForm
+state := form.NewState()
+err = state.SetValue(form.Field("address.street"), cera.TextValue("Main St 1"))
+
+layer := cera.NewFormLayer(page, state, provider)
+layer.Update(cera.View{Scale: scale, Viewport: visible})
+err = page.Render(ctx, dst, cera.RenderOptions{Scale: scale, Form: state, SkipAnnotation: layer.Skip})
+```
+
 `dst` may be any sub-rectangle of the page (a tile or viewport): only that
 region is drawn. `RenderOptions.Region` narrows it further. Errors in the
 content never stop a page; a non-nil error means a partial image
@@ -207,7 +226,15 @@ below. Annotations: drawn from their normal appearance streams (with
 `/AS` states, `/CA`, `NoZoom`, `NoRotate`, `/OC`), and generated for
 Square, Circle, Line (with endings and leader lines), PolyLine, Polygon,
 Ink, Highlight, Underline, StrikeOut and Squiggly without one;
-`Page.Annotations` exposes them with link targets.
+`Page.Annotations` exposes them with link targets. Forms: AcroForm fields
+with inheritance, values in a caller-owned `FormState`, appearances
+generated for text fields (single line, multiline, comb, password,
+auto-size), check boxes, radio buttons, combo and list boxes and push
+buttons when the value changed, `/NeedAppearances` is set or `/AP` is
+missing; native widgets through `FormWidgetProvider` and `FormLayer`
+(tab order, focus), a fyne provider in `form/fyneform`; `cmd/cera -field
+name=value` fills a form. JavaScript actions are not run, XFA forms are
+counted (`xfa`) and drawn from their AcroForm fallback.
 
 Not yet, and counted in `Stats.Unsupported` so the corpus report shows what
 matters most: tiling patterns past their budgets (`pattern-budget`:
@@ -250,7 +277,7 @@ recorded as architecture decisions in [`docs/adr`](docs/adr/README.md).
 | ✓ | M5 images | image XObjects and inline images, JPEG/JPEG 2000/JBIG2/CCITT, soft, stencil and colour-key masks at their own resolution, one-bit and palette planes, lazy mip levels with bilinear sampling, per-document image cache |
 | ✓ | M6 transparency | groups (isolated, non-isolated, knockout) in pooled layers per band, all blend modes exact at antialiased edges, soft masks (luminosity, alpha, backdrop, transfer functions), trivial and single-object groups dropped from the display list |
 | ◐ | M7 shadings and colour | shading types 1–7 and shading patterns, function LUTs (ramps, textures, tint tables), Separation/DeviceN, Lab, CalGray/CalRGB, simplified ICC (matrix/TRC); generic shaders moved to stilus; tiling patterns (ADR 0002) on stilus's wrapping textures, knotted ramps and the mesh shader of stilus v0.7 |
-| ◐ | M7½ layers, annotations, forms | optional content (ADR 0004) ✓, annotations (ADR 0005) ✓; interactive forms |
+| ✓ | M7½ layers, annotations, forms | optional content (ADR 0004), annotations (ADR 0005), interactive forms and `FormWidgetProvider` (ADR 0006) |
 | | M8 robustness | fuzzing, large corpora, budgets (started: CI below) |
 | | M9 GPU backend | GGDevice on gogpu/gg, glyph atlas, lux |
 

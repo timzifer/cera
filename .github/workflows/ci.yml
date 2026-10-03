@@ -145,10 +145,34 @@ jobs:
           name: bench
           path: bench.txt
 
+  # The fyne form provider is a module of its own (ADR 0006), so that cera
+  # never depends on cgo; fyne needs cgo and the GL and X11 headers.
+  fyneform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: form/fyneform
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: form/fyneform/go.mod
+          cache-dependency-path: form/fyneform/go.sum
+      - name: Install fyne's build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev
+      - name: go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Vet and test
+        run: |
+          go vet ./...
+          go test -race ./...
+
   # The single required status check for main (see .github/rulesets).
   ci-ok:
     if: always()
-    needs: [lint, test, cross, fuzz, corpus, bench]
+    needs: [lint, test, cross, fuzz, corpus, bench, fyneform]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed

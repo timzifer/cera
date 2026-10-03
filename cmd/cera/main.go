@@ -2,6 +2,7 @@
 //
 //	cera -dpi 150 -page 1 -o page.png input.pdf
 //	cera -dpi 150 -o 'out-%d.png' input.pdf   # all pages
+//	cera -field name=Ada -field agree=Yes -page 1 form.pdf
 package main
 
 import (
@@ -28,6 +29,14 @@ func main() {
 	verbose := flag.Bool("v", false, "print timing and statistics per page")
 	workers := flag.Int("workers", 0, "goroutines drawing one page (0 = all cores)")
 	annots := flag.String("annots", "view", "annotations to draw: view, print or none")
+	var fields []string
+	flag.Func("field", "set a form field, `name=value` (repeatable); a check box or radio button takes the name of its state", func(s string) error {
+		if !strings.Contains(s, "=") {
+			return fmt.Errorf("%q: want name=value", s)
+		}
+		fields = append(fields, s)
+		return nil
+	})
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: cera [flags] input.pdf")
 		flag.PrintDefaults()
@@ -43,18 +52,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "cera: -annots %q: want view, print or none\n", *annots)
 		os.Exit(2)
 	}
-	if err := run(flag.Arg(0), *dpi, *page, *out, *password, *transparent, *timeout, *verbose, *workers, mode); err != nil {
+	if err := run(flag.Arg(0), *dpi, *page, *out, *password, *transparent, *timeout, *verbose, *workers, mode, fields); err != nil {
 		fmt.Fprintln(os.Stderr, "cera:", err)
 		os.Exit(1)
 	}
 }
 
-func run(in string, dpi float64, page int, out, password string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode) error {
+func run(in string, dpi float64, page int, out, password string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, fields []string) error {
 	data, err := os.ReadFile(in)
 	if err != nil {
 		return err
 	}
 	doc, err := cera.OpenWithPassword(data, password)
+	if err != nil {
+		return err
+	}
+	form, err := fill(doc, fields)
 	if err != nil {
 		return err
 	}
@@ -83,7 +96,7 @@ func run(in string, dpi float64, page int, out, password string, transparent boo
 		t0 := time.Now()
 		err = p.Render(context.Background(), dst, cera.RenderOptions{
 			Scale: dpi / 72, Background: bg, Deadline: time.Now().Add(timeout), Stats: &st,
-			Workers: workers, Annotations: annots,
+			Workers: workers, Annotations: annots, Form: form,
 		})
 		p.Release()
 		elapsed := time.Since(t0)
@@ -111,6 +124,30 @@ func run(in string, dpi float64, page int, out, password string, transparent boo
 		return fmt.Errorf("%d pages rendered partially", failed)
 	}
 	return nil
+}
+
+// fill returns the state of the document's form with the name=value
+// pairs set, nil if there are none.
+func fill(doc *cera.Document, fields []string) (*cera.FormState, error) {
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	form := doc.Form()
+	if form == nil {
+		return nil, fmt.Errorf("-field: the document has no form")
+	}
+	s := form.NewState()
+	for _, kv := range fields {
+		name, value, _ := strings.Cut(kv, "=")
+		f := form.Field(name)
+		if f == nil {
+			return nil, fmt.Errorf("-field: no field %q", name)
+		}
+		if err := s.SetValue(f, cera.TextValue(value)); err != nil {
+			return nil, fmt.Errorf("-field: %w", err)
+		}
+	}
+	return s, nil
 }
 
 func writePNG(name string, img image.Image) error {

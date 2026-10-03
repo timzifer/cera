@@ -92,6 +92,16 @@
 // annotations that have none; RenderOptions.Annotations and
 // SkipAnnotation choose which, without interpreting the page again.
 //
+// # Forms
+//
+// Document.Form reads the fields of an interactive form and their widgets.
+// The values a user enters live in a FormState the caller owns; rendering
+// with RenderOptions.Form draws widgets whose value changed with generated
+// appearances, each recorded once per value and drawn over the page's
+// display list. A FormLayer drives a FormWidgetProvider, which draws
+// widgets natively with a UI toolkit over the page image, and tells a
+// render (FormLayer.Skip) to leave those widgets out of the image.
+//
 // # Robustness
 //
 // Broken content is skipped, not fatal: unknown or malformed operators are

@@ -54,6 +54,11 @@ type Font struct {
 	gids [256]int32
 	// procs are the decoded glyph procedures of a Type 3 font, by name.
 	procs map[string][]byte
+
+	// enc maps characters to the codes of a simple font, for generated
+	// appearances (formgen.go).
+	encOnce sync.Once
+	enc     map[rune]byte
 }
 
 var fontIDs atomic.Uint64
@@ -78,6 +83,9 @@ func (f *Font) composite() bool { return f.pdf.Kind() == pdffont.Composite }
 // font returns the font a font resource stands for. Fonts reached through
 // an indirect reference are loaded once per document.
 func (d *Document) font(o reader.Object) *Font {
+	if fr, ok := o.(*fontRes); ok {
+		return fr.f
+	}
 	ref, isRef := o.(reader.Ref)
 	if isRef {
 		d.fontMu.Lock()

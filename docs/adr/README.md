@@ -25,7 +25,7 @@ they depend on.
 | [0003](0003-colour-spaces.md) | Tint transforms, Lab, ICC and CMYK | M7 | accepted |
 | [0004](0004-optional-content.md) | Optional content (layers) | M7½ | accepted |
 | [0005](0005-annotations.md) | Annotations from appearance streams | M7½ | accepted |
-| [0006](0006-interactive-forms.md) | Interactive forms and `FormWidgetProvider` | M7½ | proposed |
+| [0006](0006-interactive-forms.md) | Interactive forms and `FormWidgetProvider` | M7½ | accepted |
 | [0007](0007-graphics-state.md) | The rest of the graphics state: overprint, text knockout, transfer | M7 | accepted |
 | [0008](0008-font-fallbacks.md) | Font fallbacks and vertical writing | M8 | proposed |
 | [0009](0009-transparency-remainders.md) | Remaining approximations: `/Matte`, `AIS`, non-isolated blending, Type 3 clips | M8 | accepted |
