@@ -10,6 +10,7 @@ import (
 	"math"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -60,6 +61,13 @@ type RenderOptions struct {
 	// off, they are painted over it, as most viewers do for files that
 	// are not PDF/X. The page is interpreted once per setting.
 	SimulateOverprint bool
+	// Form, when set, supplies the values of form fields: widgets whose
+	// value differs from the one the document saved are drawn with a
+	// generated appearance (or, for buttons, the appearance of their
+	// state). Each is recorded once per value and scale and drawn over
+	// the page; the page is not interpreted again. Without it the saved
+	// values are shown.
+	Form *FormState
 }
 
 // Stats describes what rendering a page did.
@@ -232,11 +240,117 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 		vis = p.doc.defaultVisibility(opt.Usage)
 	}
 	af := annotFilter{mode: opt.Annotations, skip: opt.SkipAnnotation}
+	// Widgets showing values of opt.Form are drawn from lists of their
+	// own, over the page; the page's list leaves them out.
+	var overlays []*displayList
+	pageAF := af
+	if vals := opt.Form.snapshot(); len(vals) > 0 && opt.Form.form == p.doc.Form() {
+		var own map[int]bool
+		overlays, own = p.widgetLists(vals, scale, opt.SimulateOverprint, lim)
+		if len(own) > 0 {
+			pageAF.skip = func(i int) bool { return own[i] || af.skip != nil && af.skip(i) }
+		}
+	}
 	iso := dl.blends && opt.Background.A != 0
-	if derr := dl.render(dst, region, opt.Workers, vis, &af, lim, iso); derr != nil && err == nil {
+	if derr := dl.render(dst, region, opt.Workers, vis, &pageAF, lim, iso); derr != nil && err == nil {
 		err = derr
 	}
+	if len(overlays) > 0 {
+		if vis = opt.Layers; vis == nil {
+			vis = p.doc.defaultVisibility(opt.Usage)
+		}
+	}
+	for _, ol := range overlays {
+		if derr := ol.render(dst, region, opt.Workers, vis, &af, lim, false); derr != nil && err == nil {
+			err = derr
+		}
+	}
 	return err
+}
+
+// widgetList is the display list of one widget showing a value other than
+// the saved one.
+type widgetList struct {
+	scale     float64
+	overprint bool
+	val       Value
+	dl        *displayList
+}
+
+// widgetLists returns the lists of the page's widgets whose fields vals
+// gives values, recording those not cached, and the annotation indices
+// they replace in the page's list.
+func (p *Page) widgetLists(vals map[*Field]Value, scale float64, overprint bool, lim *limit) ([]*displayList, map[int]bool) {
+	var lists []*displayList
+	var own map[int]bool
+	for _, w := range p.doc.Form().PageWidgets(p.index) {
+		v, ok := vals[w.Field]
+		if !ok {
+			continue
+		}
+		p.mu.Lock()
+		wl := p.wl[w.Annotation]
+		p.mu.Unlock()
+		if wl == nil || wl.scale != scale || wl.overprint != overprint || !wl.val.Equal(v) {
+			dl := p.recordWidget(w, vals, scale, overprint, lim)
+			if dl == nil {
+				continue
+			}
+			wl = &widgetList{scale: scale, overprint: overprint, val: v, dl: dl}
+			if dl.complete {
+				p.mu.Lock()
+				if p.wl == nil {
+					p.wl = map[int]*widgetList{}
+				}
+				p.wl[w.Annotation] = wl
+				p.mu.Unlock()
+			}
+		}
+		if own == nil {
+			own = map[int]bool{}
+		}
+		own[w.Annotation] = true
+		lists = append(lists, wl.dl)
+	}
+	return lists, own
+}
+
+// recordWidget records the annotation of w alone, with the values vals.
+// Its list is not pooled: renders may still draw it when it is replaced.
+func (p *Page) recordWidget(w *Widget, vals map[*Field]Value, scale float64, overprint bool, lim *limit) (dl *displayList) {
+	annots := p.Annotations()
+	i, ok := slices.BinarySearchFunc(annots, w.Annotation, func(a Annotation, idx int) int { return a.Index - idx })
+	if !ok {
+		return nil
+	}
+	dl = new(displayList)
+	dl.reset(p.Bounds(scale))
+	dl.scale, dl.overprint = scale, overprint
+	base := p.deviceMatrix(scale)
+	dl.ClipRect(p.Box, base)
+	in := recorders.Get().(*interp)
+	func() {
+		defer func() {
+			if v := recover(); v != nil {
+				in = nil // possibly inconsistent; not pooled again
+				dl.complete = false
+			}
+		}()
+		in.reset(p.doc, dl, &dl.stats, lim)
+		in.overprint = overprint
+		in.devBox = p.Bounds(scale)
+		in.formVals = vals
+		if a := &annots[i]; a.Flags&AnnotHidden == 0 {
+			in.annotation(p, a, base, scale)
+		}
+		dl.complete = in.err == nil
+	}()
+	if in != nil {
+		in.release()
+		recorders.Put(in)
+	}
+	dl.finish()
+	return dl
 }
 
 // list returns the display list of the page at scale, with overprint
@@ -265,7 +379,7 @@ func (p *Page) list(scale float64, overprint bool, lim *limit) (dl *displayList,
 				dl.panic = &PanicError{Value: v, Stack: debug.Stack()}
 			}
 		}()
-		dl.complete = p.record(in, dl, &dl.stats, scale, overprint, nil, nil, lim)
+		dl.complete = p.record(in, dl, &dl.stats, scale, overprint, nil, nil, nil, lim)
 	}()
 	if in != nil {
 		in.release()
@@ -288,13 +402,15 @@ func (p *Page) list(scale float64, overprint bool, lim *limit) (dl *displayList,
 // record interprets the page into dev at scale and reports whether it got
 // to the end. A display list records all optional content and all
 // annotations that can be drawn; any other device sees what vis and af
-// show.
-func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, overprint bool, vis *Visibility, af *annotFilter, lim *limit) bool {
+// show. Widgets show the field values vals, and the saved ones for fields
+// it leaves out.
+func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, overprint bool, vis *Visibility, af *annotFilter, vals map[*Field]Value, lim *limit) bool {
 	base := p.deviceMatrix(scale)
 	dev.ClipRect(p.Box, base)
 	in.reset(p.doc, dev, st, lim)
 	in.overprint = overprint
 	in.devBox = p.Bounds(scale)
+	in.formVals = vals
 	if vis != nil {
 		in.ocVis, in.ocZoom = vis, scale
 	}
@@ -343,6 +459,9 @@ type RunOptions struct {
 	SkipAnnotation func(index int) bool
 	// SimulateOverprint is as for RenderOptions.
 	SimulateOverprint bool
+	// Form supplies field values, as for RenderOptions; a TextDevice
+	// sees the text of the generated appearances.
+	Form *FormState
 }
 
 // RunWith is Run with options.
@@ -364,7 +483,11 @@ func (p *Page) RunWith(ctx context.Context, dev Device, opt RunOptions) (err err
 	lim := &limit{ctx: ctx}
 	in := recorders.Get().(*interp)
 	af := annotFilter{mode: opt.Annotations, skip: opt.SkipAnnotation}
-	ok := p.record(in, dev, st, normScale(opt.Scale), opt.SimulateOverprint, vis, &af, lim)
+	var vals map[*Field]Value
+	if opt.Form != nil && opt.Form.form == p.doc.Form() {
+		vals = opt.Form.snapshot()
+	}
+	ok := p.record(in, dev, st, normScale(opt.Scale), opt.SimulateOverprint, vis, &af, vals, lim)
 	dev.PopClip()
 	in.release()
 	recorders.Put(in)
@@ -393,6 +516,7 @@ func (p *Page) Release() {
 			putList(dl)
 		}
 	}
+	p.wl = nil
 	p.mu.Unlock()
 }
 
