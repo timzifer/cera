@@ -232,15 +232,6 @@ func (in *interp) shadingOp(sc *content.Scanner, res reader.Dict) {
 	in.dev.FillShading(e.plain, in.gs.ctm, &in.paint)
 }
 
-// Pattern limits.
-const (
-	maxPatternDepth = 4        // patterns painted inside pattern cells
-	maxReplayCells  = 64       // cells drawn as vector operations
-	maxTileSide     = 1024     // pixels of a tile side
-	maxTileOffsets  = 64       // copies of a cell drawn into one tile
-	maxTileBytes    = 64 << 20 // tiles made for one page
-)
-
 // tiling paints tiling pattern p (entry e) under pm: a replay of its cells if
 // few cover box, else its tile.
 func (in *interp) tiling(p *tilingPattern, e *patternEntry, pm Matrix, base *colorSpace, comps []float64, col color.RGBA, a uint8, box image.Rectangle) {
@@ -270,6 +261,9 @@ func (in *interp) tiling(p *tilingPattern, e *patternEntry, pm Matrix, base *col
 	if cells == 1 || large && cells <= maxReplayCells {
 		in.replayCells(p, pm, base, comps, a, box, i0, i1, j0, j1)
 		return
+	}
+	if large {
+		in.st.unsupported("pattern-budget") // a tile of lower resolution
 	}
 	t := in.tile(p, e, pm)
 	if t == nil {
@@ -302,7 +296,7 @@ func cellRange(a0, a1, b0, b1, step float64) (k0, k1 int) {
 func (in *interp) replayCells(p *tilingPattern, pm Matrix, base *colorSpace, comps []float64, a uint8, box image.Rectangle, i0, i1, j0, j1 int) {
 	depth := in.depth + 1
 	if depth >= maxFormDepth || len(in.stack)+1 >= maxStateDepth {
-		in.st.Errors++
+		in.st.unsupported("nesting-budget")
 		return
 	}
 	grouped := a != 255

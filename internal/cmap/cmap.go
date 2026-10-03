@@ -51,9 +51,9 @@ type span struct {
 
 // Limits keep a hostile CMap program from growing without bound.
 const (
-	maxSpans  = 1 << 17
-	maxSpaces = 64
-	maxDepth  = 4 // usecmap nesting
+	MaxSpans  = 1 << 17
+	MaxSpaces = 64
+	MaxDepth  = 4 // usecmap nesting
 )
 
 // Identity returns Identity-H (vertical false) or Identity-V.

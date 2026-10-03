@@ -12,12 +12,8 @@ import (
 	"github.com/timzifer/cera/internal/content"
 )
 
-// Interpreter limits (spec, "Robustheit und Sicherheit").
-const (
-	maxFormDepth  = 12
-	maxStateDepth = 1 << 12
-	checkEvery    = 256 // operators between deadline checks
-)
+// checkEvery is the number of operators between deadline checks.
+const checkEvery = 256
 
 // gstate is the part of the PDF graphics state the interpreter implements.
 type gstate struct {
@@ -209,7 +205,7 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 	// Graphics state.
 	case "q":
 		if len(in.stack) >= maxStateDepth {
-			bad()
+			in.st.unsupported("nesting-budget")
 			return
 		}
 		in.stack = append(in.stack, in.gs)
@@ -816,7 +812,7 @@ func (in *interp) drawXObject(ref reader.Ref, s *reader.Stream, res reader.Dict,
 // group.
 func (in *interp) form(s *reader.Stream, parent reader.Dict, depth int) {
 	if depth >= maxFormDepth || len(in.stack)+1 >= maxStateDepth {
-		in.st.Errors++
+		in.st.unsupported("nesting-budget")
 		return
 	}
 	doc := in.doc

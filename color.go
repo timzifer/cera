@@ -45,9 +45,6 @@ var (
 	spacePattern = &colorSpace{kind: csPattern, n: 0}
 )
 
-// maxComps bounds the components of a colour value (DeviceN allows 32).
-const maxComps = 32
-
 // initial returns the initial colour of cs (PDF 2.0, 8.6.5).
 func (cs *colorSpace) initial(v []float64) {
 	for i := range v {

@@ -245,8 +245,6 @@ type inherited struct {
 	aa     bool
 }
 
-const maxFieldDepth = 32
-
 // formReader reads the field tree.
 type formReader struct {
 	d     *Document

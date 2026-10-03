@@ -46,13 +46,13 @@ type Operand struct {
 	idx, end int32
 }
 
-// maxNesting bounds nested arrays and dictionaries in one operand.
-const maxNesting = 32
+// MaxNesting bounds nested arrays and dictionaries in one operand.
+const MaxNesting = 32
 
-// maxOperands bounds the operands kept for one operator; producers that
+// MaxOperands bounds the operands kept for one operator; producers that
 // emit more (a runaway TJ array is one operand) are truncated from the
 // front, since operators take their operands from the end.
-const maxOperands = 1 << 12
+const MaxOperands = 1 << 12
 
 // Scanner walks a content stream.
 type Scanner struct {
@@ -249,7 +249,7 @@ func (s *Scanner) Text(o *Operand) []byte {
 }
 
 func (s *Scanner) pushTop() {
-	if len(s.top) >= maxOperands {
+	if len(s.top) >= MaxOperands {
 		// Keep the most recent operands: shift the buffer down by the
 		// first top-level operand.
 		cut := s.vals[s.top[0]].end
@@ -364,7 +364,7 @@ func (s *Scanner) operand(depth int) bool {
 // container parses the elements of an array or dictionary up to its
 // closing delimiter; the opening one has been consumed.
 func (s *Scanner) container(k Kind, close byte, depth int) bool {
-	if depth >= maxNesting {
+	if depth >= MaxNesting {
 		s.errs++
 		s.skipContainer()
 		return false

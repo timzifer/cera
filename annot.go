@@ -326,6 +326,10 @@ func (in *interp) drawAnnots(p *Page, base Matrix, scale float64, af *annotFilte
 		if in.err != nil || in.expired() {
 			return
 		}
+		if i >= maxAnnots {
+			in.st.unsupported("annot-budget")
+			return
+		}
 		a := &annots[i]
 		if a.Flags&AnnotHidden != 0 || a.Subtype == "Popup" {
 			continue

@@ -19,9 +19,6 @@ type function interface {
 	outputs() int
 }
 
-// maxFunctionDepth bounds stitching functions naming functions.
-const maxFunctionDepth = 8
-
 // function reads a function or an array of functions, nil if it cannot.
 func (d *Document) function(o reader.Object, depth int) function {
 	if arr, ok := reader.ToArray(d.resolve(o)); ok {
@@ -379,8 +376,6 @@ type psOp struct {
 	block []psOp
 	isBlk bool
 }
-
-const maxPSStack = 100
 
 func (d *Document) calculatorFunction(base fnBase, s *reader.Stream) function {
 	if s == nil || len(base.rng) < 2 {

@@ -417,7 +417,7 @@ func FuzzShading(f *testing.F) {
 	m.pt(180, 90)
 	m.col(0, 0, 255)
 	for _, s := range []string{
-		"/Sh0 sh /Sh1 sh /Sh2 sh",
+		"/Sh0 sh /Sh1 sh /Sh2 sh /Sh3 sh",
 		"/Pattern cs /P0 scn 0 0 200 100 re f /Pattern CS /P0 SCN 9 w 0 0 m 200 100 l S",
 		"q 0 0 50 50 re W n /G gs /Sh1 sh Q BT /F1 40 Tf /Pattern cs /P0 scn 7 Tr (Hi) Tj ET",
 		"q 1e30 0 0 1 0 0 cm /Sh0 sh Q /S cs 0.5 scn 0 0 10 10 re f",
@@ -425,14 +425,15 @@ func FuzzShading(f *testing.F) {
 		f.Add(s, m.Bytes())
 	}
 	f.Fuzz(func(t *testing.T, c string, mesh []byte) {
-		res := "/Shading << /Sh0 101 0 R /Sh1 102 0 R /Sh2 103 0 R >> /Pattern << /P0 104 0 R >>" +
+		res := "/Shading << /Sh0 101 0 R /Sh1 102 0 R /Sh2 103 0 R /Sh3 105 0 R >> /Pattern << /P0 104 0 R >>" +
 			" /ExtGState << /G << /BM /Screen /ca 0.5 >> >> /Font << /F1 100 0 R >>" +
 			" /ColorSpace << /S [/Separation /X /DeviceRGB " + redToBlue + "] >>"
 		data := buildPDF([]string{c}, "/Resources << "+res+" >>", helvetica,
 			streamObj("/ShadingType 4 "+meshDict, mesh),
 			streamObj("/ShadingType 6 "+meshDict, mesh),
 			streamObj("/ShadingType 5 /VerticesPerRow 2 /BitsPerCoordinate 16 /BitsPerComponent 8 /Decode [0 200 0 100 0 1] /ColorSpace /DeviceRGB /Function "+redToBlue, mesh),
-			"<< /PatternType 2 /Shading << /ShadingType 3 /ColorSpace /DeviceRGB /Coords [100 50 0 120 50 60] /Extend [true false] /Function "+redToBlue+" >> >>")
+			"<< /PatternType 2 /Shading << /ShadingType 3 /ColorSpace /DeviceRGB /Coords [100 50 0 120 50 60] /Extend [true false] /Function "+redToBlue+" >> >>",
+			streamObj("/ShadingType 7 "+meshDict, mesh))
 		doc, err := Open(data)
 		if err != nil {
 			return

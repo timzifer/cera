@@ -24,8 +24,6 @@ var glyphCaches struct {
 	free []*glyphCache
 }
 
-const maxIdleGlyphCaches = 64
-
 func getGlyphCache() *glyphCache {
 	gcs := &glyphCaches
 	gcs.Lock()

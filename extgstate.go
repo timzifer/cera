@@ -195,7 +195,6 @@ func (d *Document) readTransfer(o reader.Object) (*transfer, bool) {
 
 // Text knockout (TK) is applied per text-showing operator, not per text
 // object: glyphs of one Tj or TJ that overlap knock each other out.
-const maxKnockoutGlyphs = 256 // past this, a run is taken to overlap
 
 // textKnockout reports whether the run of the current text-showing
 // operator, in render mode mode, is drawn as a knockout group of its

@@ -140,13 +140,6 @@ func (in *interp) popObject() {
 	in.objs = in.objs[:n]
 }
 
-// Soft masks drawn for one page, and nested in each other: past them a
-// mask is drawn empty.
-const (
-	maxMasks     = 1 << 10
-	maxMaskDepth = 4
-)
-
 // drawSoftMask draws the soft mask of the current state for an object or
 // group bounded by r under m.
 func (in *interp) drawSoftMask(r Rect, m Matrix) {
@@ -157,7 +150,7 @@ func (in *interp) drawSoftMask(r Rect, m Matrix) {
 	in.masks++
 	switch {
 	case depth >= maxFormDepth || len(in.stack) >= maxStateDepth:
-		in.st.Errors++
+		in.st.unsupported("nesting-budget")
 	case in.maskDepth >= maxMaskDepth || in.masks > maxMasks:
 		// Masks whose forms draw masked objects multiply.
 		in.st.unsupported("smask-budget")

@@ -466,7 +466,7 @@ func (in *interp) showType3(f *Font, s []byte, res reader.Dict, depth int) {
 func (in *interp) type3Glyph(f *Font, code int, mu Matrix, parent reader.Dict, depth int, clip bool) {
 	tx := &in.text
 	if depth >= maxFormDepth || len(in.stack) >= maxStateDepth {
-		in.st.Errors++
+		in.st.unsupported("nesting-budget")
 		return
 	}
 	for _, g := range tx.t3 {

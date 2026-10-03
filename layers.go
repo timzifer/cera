@@ -184,8 +184,6 @@ func (d *Document) defaultVisibility(u Usage) *Visibility {
 
 var noLayers Visibility
 
-const maxLayerDepth = 16 // /Order nesting and /VE expressions
-
 func (oc *ocProps) read(d *Document) {
 	cat, err := d.r.Catalog()
 	if err != nil {

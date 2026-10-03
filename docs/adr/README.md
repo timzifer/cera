@@ -29,7 +29,7 @@ they depend on.
 | [0007](0007-graphics-state.md) | The rest of the graphics state: overprint, text knockout, transfer | M7 | accepted |
 | [0008](0008-font-fallbacks.md) | Font fallbacks and vertical writing | M8 | accepted |
 | [0009](0009-transparency-remainders.md) | Remaining approximations: `/Matte`, `AIS`, non-isolated blending, Type 3 clips | M8 | accepted |
-| [0010](0010-accuracy-and-robustness.md) | Accuracy against PDFium and robustness budgets | M8 | proposed |
+| [0010](0010-accuracy-and-robustness.md) | Accuracy against PDFium and robustness budgets | M8 | accepted |
 | [0011](0011-gpu-backend.md) | GPU backend | M9 | proposed |
 
 ## Template

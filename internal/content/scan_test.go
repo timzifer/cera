@@ -143,12 +143,12 @@ func TestDictGet(t *testing.T) {
 }
 
 func TestManyOperandsKeepTheLast(t *testing.T) {
-	in := strings.Repeat("1 ", maxOperands+100) + "2 3 m"
+	in := strings.Repeat("1 ", MaxOperands+100) + "2 3 m"
 	var s Scanner
 	s.Reset([]byte(in))
 	s.Next()
 	var v [2]float64
-	if s.Len() != maxOperands || !s.Nums(v[:]) || v != [2]float64{2, 3} {
+	if s.Len() != MaxOperands || !s.Nums(v[:]) || v != [2]float64{2, 3} {
 		t.Errorf("len %d, %v", s.Len(), v)
 	}
 }

@@ -57,7 +57,7 @@ func parse(data []byte, parent func(name string) *CMap, depth int) (*CMap, error
 				if !ok2 || hi.kind != tokHex {
 					break
 				}
-				if n := len(lo.s); n >= 1 && n <= 4 && len(hi.s) == n && len(c.spaces) < maxSpaces {
+				if n := len(lo.s); n >= 1 && n <= 4 && len(hi.s) == n && len(c.spaces) < MaxSpaces {
 					sp := space{n: uint8(n)}
 					copy(sp.lo[:], lo.s)
 					copy(sp.hi[:], hi.s)
@@ -81,10 +81,10 @@ func parse(data []byte, parent func(name string) *CMap, depth int) (*CMap, error
 					continue
 				}
 				if isNotdef {
-					if len(notdef) < maxSpans {
+					if len(notdef) < MaxSpans {
 						notdef = append(notdef, s)
 					}
-				} else if len(spans) < maxSpans {
+				} else if len(spans) < MaxSpans {
 					s.step = 1
 					spans = append(spans, s)
 				}
@@ -99,13 +99,13 @@ func parse(data []byte, parent func(name string) *CMap, depth int) (*CMap, error
 				if !ok2 || cid.kind != tokNumber {
 					break
 				}
-				if s, ok := makeSpan(code.s, code.s, cid.num); ok && len(spans) < maxSpans {
+				if s, ok := makeSpan(code.s, code.s, cid.num); ok && len(spans) < MaxSpans {
 					s.step = 1
 					spans = append(spans, s)
 				}
 			}
 		case "usecmap":
-			if nops > 0 && ops[nops-1].kind == tokName && depth < maxDepth {
+			if nops > 0 && ops[nops-1].kind == tokName && depth < MaxDepth {
 				name := string(ops[nops-1].s)
 				if p := parent(name); p != nil && p != c {
 					c.parent = p

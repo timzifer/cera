@@ -75,30 +75,37 @@ jobs:
             echo "::endgroup::"
           done
 
+  # Every reader of untrusted structure, 60 s each (ADR 0010); the weekly
+  # workflow fuzzes longer. Crashers land in testdata/fuzz and are kept as
+  # regression inputs.
   fuzz:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { name: FuzzContent, pkg: . }
+          - { name: FuzzImage, pkg: . }
+          - { name: FuzzTransparency, pkg: . }
+          - { name: FuzzShading, pkg: . }
+          - { name: FuzzPattern, pkg: . }
+          - { name: FuzzICC, pkg: . }
+          - { name: FuzzLayers, pkg: . }
+          - { name: FuzzForm, pkg: . }
+          - { name: FuzzScan, pkg: ./internal/content }
+          - { name: FuzzParse, pkg: ./internal/cmap }
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Fuzz the interpreter
-        run: go test -run '^$' -fuzz FuzzContent -fuzztime 60s .
-      - name: Fuzz images
-        run: go test -run '^$' -fuzz FuzzImage -fuzztime 30s .
-      - name: Fuzz transparency
-        run: go test -run '^$' -fuzz FuzzTransparency -fuzztime 30s .
-      - name: Fuzz shadings
-        run: go test -run '^$' -fuzz FuzzShading -fuzztime 30s .
-      - name: Fuzz the content scanner
-        run: go test -run '^$' -fuzz FuzzScan -fuzztime 30s ./internal/content
-      - name: Fuzz CMaps
-        run: go test -run '^$' -fuzz FuzzParse -fuzztime 30s ./internal/cmap
+      - name: ${{ matrix.target.name }}
+        run: go test -run '^$' -fuzz '^${{ matrix.target.name }}$' -fuzztime 60s ${{ matrix.target.pkg }}
       - name: Keep crashers
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: fuzz-crashers
+          name: fuzz-crashers-${{ matrix.target.name }}
           path: |
             testdata/fuzz
             internal/content/testdata/fuzz
@@ -131,6 +138,55 @@ jobs:
         with:
           name: corpus-report
           path: report
+
+  # Accuracy against PDFium on the pinned corpus (ADR 0010): a file whose
+  # worst page differs more than the threshold pinned in
+  # accuracy/thresholds.json fails. PDFium's renderings are cached by corpus.
+  accuracy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: accuracy/go.mod
+          cache-dependency-path: accuracy/go.sum
+      - name: go mod tidy, vet and test
+        working-directory: accuracy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go vet ./...
+          go test ./...
+      # The local reference tool links MuPDF through cgo; without cgo it
+      # builds without it (and go-fitz is not downloaded).
+      - name: Vet and test the reference tool (no cgo)
+        working-directory: accuracy/reference
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go vet ./...
+          go test ./...
+      - uses: actions/cache@v6
+        with:
+          path: |
+            testdata/corpus
+            testdata/pdfium
+          key: pdfium-150dpi-${{ hashFiles('internal/corpus/manifest.json', 'internal/corpus/synthetic.go', 'accuracy/go.sum') }}
+      - name: Fetch corpus (SHA-256 verified)
+        run: go run ./cmd/corpus fetch -dir testdata/corpus
+      - name: Write synthetic drawings
+        run: go run ./cmd/corpus scenes -dir testdata/corpus
+      - name: Compare with PDFium at 150 dpi
+        working-directory: accuracy
+        run: go run . -dir ../testdata/corpus -dpi 150 -thresholds thresholds.json -refs ../testdata/pdfium -out ../report-accuracy
+      - name: Summary
+        if: always()
+        run: test -f report-accuracy/report.md && cat report-accuracy/report.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: accuracy-report
+          path: report-accuracy
 
   bench:
     runs-on: ubuntu-latest
@@ -197,7 +253,7 @@ jobs:
   # The single required status check for main (see .github/rulesets).
   ci-ok:
     if: always()
-    needs: [lint, test, cross, fuzz, corpus, bench, fyneform, cjk]
+    needs: [lint, test, cross, fuzz, corpus, accuracy, bench, fyneform, cjk]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed

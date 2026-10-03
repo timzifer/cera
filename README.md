@@ -285,7 +285,53 @@ per page (`smask-budget`, drawn empty); overprint that is not simulated
 (`overprint`, painted over), transfer functions on images, shadings and
 patterns or that do not read (`transfer`, drawn without), overlapping
 stroked or pattern-filled glyphs that `TK` would knock out
-(`text-knockout`).
+(`text-knockout`). Inputs past a budget (see Budgets) are drawn with less
+and counted as well: `nesting-budget`, `mesh-budget`, `annot-budget`,
+`pattern-budget`, `smask-budget`, `image-too-large`.
+
+## Budgets
+
+Every bound on the work or memory one input may cost is in
+[`budget.go`](budget.go) (ADR 0010). Budgets bound valid input that would
+cost too much: past one, the page is drawn with less, never failed, and the
+key is counted in `Stats.Unsupported`, so the corpus reports show which
+files hit it. Limits bound structures the specification bounds or no
+producer comes near; past them input is malformed and treated like other
+damage. Caches bound memory kept for reuse and do not change what is drawn.
+A test keeps this table in step with the code.
+
+| bound | value | key | what |
+|---|---:|---|---|
+| `maxFormDepth` | 12 | `nesting-budget` | forms, Type 3 glyphs, pattern cells and soft masks nested in each other; deeper ones are not drawn |
+| `maxStateDepth` | 4 Ki | `nesting-budget` | graphics states saved by q; a q past it is ignored |
+| `maxPatternDepth` | 4 | `pattern-budget` | tiling patterns painted inside pattern cells; deeper ones are not drawn |
+| `maxTileBytes` | 64 Mi | `pattern-budget` | bytes of pattern tiles made for one page; further patterns are not drawn |
+| `maxTileOffsets` | 64 | `pattern-budget` | copies of a cell drawn into one tile; only the first 8×8 are drawn |
+| `maxTileSide` | 1 Ki | `pattern-budget` | pixels of a tile side; larger cells, if more than maxReplayCells, are drawn at this resolution |
+| `maxMasks` | 1 Ki | `smask-budget` | soft masks drawn for one page; further masks are empty |
+| `maxMaskDepth` | 4 | `smask-budget` | soft masks nested in each other; deeper masks are empty |
+| `maxMeshTris` | 1 Mi | `mesh-budget` | triangles of one mesh shading; the rest of the mesh is not read |
+| `maxPatches` | 64 Ki | `mesh-budget` | patches of one type 6 or 7 shading; the rest is not read |
+| `maxMeshRow` | 64 Ki | `mesh-budget` | vertices per row of a type 5 shading; a longer row is not drawn |
+| `maxAnnots` | 4 Ki | `annot-budget` | annotations drawn for one page; the rest are not drawn |
+| `maxImageBytes` | 256 Mi | `image-too-large` | bytes of one decoded image plane; a larger image is not drawn |
+| `maxCodecPixels` | 64 Mi | `image-too-large` | pixels a JPEG or JPEG 2000 codestream may declare; a larger image is not drawn |
+| `maxKnockoutGlyphs` | 256 | `text-knockout` | glyphs of one run tested for overlap under text knockout; a longer run is taken to overlap |
+| `maxComps` | 32 | – | components of a colour value; further ones are ignored |
+| `maxFunctionDepth` | 8 | – | stitching functions naming functions; deeper ones do not read (shading-function, tint-transform) |
+| `maxPSStack` | 100 | – | operand stack of a PostScript calculator function; further pushes are dropped |
+| `maxLayerDepth` | 16 | – | /Order nesting and visibility expressions; deeper ones do not read (oc-bad) |
+| `maxFieldDepth` | 32 | – | depth of the AcroForm field tree; deeper fields are not read |
+| `content.MaxNesting` | 32 | – | arrays and dictionaries nested in one operand (Stats.Errors) |
+| `content.MaxOperands` | 4 Ki | – | operands kept for one operator; the first are dropped |
+| `cmap.MaxSpans` | 128 Ki | – | code ranges of one CMap; further ones are ignored |
+| `cmap.MaxSpaces` | 64 | – | codespace ranges of one CMap |
+| `cmap.MaxDepth` | 4 | – | usecmap nesting |
+| `imageCacheBytes` | 256 Mi | – | decoded images a document keeps |
+| `maxFreeLayerBytes` | 64 Mi | – | transparency layer buffers a device keeps |
+| `maxIdleGlyphCaches` | 64 | – | glyph mask caches kept between renders |
+| `maxMeshShaders` | 8 | – | mesh shaders kept per mesh |
+| `maxReplayCells` | 64 | – | pattern cells drawn as vector operations instead of a tile |
 
 ## Roadmap
 
@@ -304,7 +350,7 @@ recorded as architecture decisions in [`docs/adr`](docs/adr/README.md).
 | ✓ | M6 transparency | groups (isolated, non-isolated, knockout) in pooled layers per band, all blend modes exact at antialiased edges, soft masks (luminosity, alpha, backdrop, transfer functions), trivial and single-object groups dropped from the display list |
 | ◐ | M7 shadings and colour | shading types 1–7 and shading patterns, function LUTs (ramps, textures, tint tables), Separation/DeviceN, Lab, CalGray/CalRGB, simplified ICC (matrix/TRC); generic shaders moved to stilus; tiling patterns (ADR 0002) on stilus's wrapping textures, knotted ramps and the mesh shader of stilus v0.7 |
 | ✓ | M7½ layers, annotations, forms | optional content (ADR 0004), annotations (ADR 0005), interactive forms and `FormWidgetProvider` (ADR 0006) |
-| ◐ | M8 robustness | font fallbacks, CMaps and vertical writing (ADR 0008); fuzzing, large corpora, budgets (started: CI below) |
+| ✓ | M8 robustness | font fallbacks, CMaps and vertical writing (ADR 0008), transparency remainders (ADR 0009), accuracy against PDFium with pinned thresholds, fuzzing of every reader, budgets, large corpora in random batches (ADR 0010) |
 | | M9 GPU backend | GGDevice on gogpu/gg, glyph atlas, lux |
 
 ## Corpus and CI
@@ -312,15 +358,16 @@ recorded as architecture decisions in [`docs/adr`](docs/adr/README.md).
 Every push and pull request runs `CI` (`.github/workflows/ci.yml`): lint
 (golangci-lint), tests with race detector on Linux, macOS and Windows, a
 cgo-free build for 14 targets including `js/wasm` and `wasip1/wasm`, 60 s of
-fuzzing of the interpreter, benchmarks, and the pinned corpus. Its single
+fuzzing for each reader of untrusted structure, benchmarks, the pinned
+corpus, and its accuracy against PDFium. Its single
 aggregate job `ci-ok` is the required check for `main`.
 
 Corpora come in two tiers:
 
 | tier | what | when | gate |
 |---|---|---|---|
-| pinned | 33 files from the pdf.js suite and arXiv (SHA-256 in `internal/corpus/manifest.json`, shared with the stilus harness) + 6 synthetic A3 drawings | every push | no panic, hang, deadline or unopened file; report with ms/page, allocations and unsupported features in the job summary |
-| large | pdf.js `test/pdfs` (~980 files), [borb-pdf-corpus](https://github.com/borb-pdf/borb-pdf-corpus), [veraPDF corpus](https://github.com/veraPDF/veraPDF-corpus), [pdfCabinetOfHorrors](https://github.com/openpreserve/format-corpus/tree/master/pdfCabinetOfHorrors), [PDF 2.0 examples](https://github.com/pdf-association/pdf20examples), qpdf test files, all at pinned commits; one sampled zip of [CC-MAIN-2021-31-PDF-UNTRUNCATED](https://digitalcorpora.org/corpora/file-corpora/cc-main-2021-31-pdf-untruncated/) (7.9 M web PDFs, a different shard each week) | weekly and on demand (`Large corpora` workflow) | no panic, hang or deadline; files the reader rejects are listed, not failed |
+| pinned | 33 files from the pdf.js suite and arXiv (SHA-256 in `internal/corpus/manifest.json`, shared with the stilus harness) + 8 synthetic A3 drawings | every push | no panic, hang, deadline or unopened file; report with ms/page, allocations and unsupported features in the job summary; no file differs from PDFium more than its pinned threshold |
+| large | pdf.js `test/pdfs` (~980 files), [borb-pdf-corpus](https://github.com/borb-pdf/borb-pdf-corpus), [veraPDF corpus](https://github.com/veraPDF/veraPDF-corpus), [pdfCabinetOfHorrors](https://github.com/openpreserve/format-corpus/tree/master/pdfCabinetOfHorrors), [PDF 2.0 examples](https://github.com/pdf-association/pdf20examples), qpdf test files, all at pinned commits; one sampled zip of [CC-MAIN-2021-31-PDF-UNTRUNCATED](https://digitalcorpora.org/corpora/file-corpora/cc-main-2021-31-pdf-untruncated/) (7.9 M web PDFs, a different shard each week) | weekly and on demand (`Large corpora` workflow), a random batch per source (300 files, 40 of them compared with PDFium); in full locally | no panic, hang or deadline; files the reader rejects are listed, not failed; the 20 slowest pages, the 20 with the most allocations and the differences to PDFium are reported |
 | unsafe | [CC-MAIN-2021-31-UNSAFE](https://digitalcorpora.org/corpora/file-corpora/unsafe-docs-cc-main-2021-31-unsafe/) `corpora-pdf` (fuzzer output, deliberately malformed files) | on demand only: run the workflow with `sources` = `["unsafe"]` | same |
 
 Locally:
@@ -334,6 +381,7 @@ go run ./cmd/corpus sources                       # the large corpora
 go run ./cmd/corpus get -source borb              # → testdata/borb
 go run ./cmd/corpus get -source ccmain -sample 500 -seed 42
 go run ./cmd/corpus run -dir testdata/borb -runs 0 -pages 3 -fail-open=false
+go run ./cmd/corpus run -dir testdata/borb -runs 0 -sample 50 -seed 7   # a batch, as CI draws it
 ```
 
 Customer drawings stay local: pass their directory as another `-dir`
@@ -343,9 +391,68 @@ Customer drawings stay local: pass their directory as another `-dir`
 of the spec; 0 = all cores). Every page is timed twice per run: a first
 render (interpret and draw) and a render again with its display list cached.
 
-Accuracy against PDFium (WebAssembly, no cgo) is measured by the
-[stilus harness](https://github.com/timzifer/stilus/tree/main/harness); a cera
-engine for it is still to be added there.
+### Accuracy
+
+`accuracy/` compares cera with PDFium (WebAssembly through go-pdfium, no
+cgo; a module of its own, so cera does not depend on it) page by page
+(ADR 0010): the share of pixels differing by more than 16 levels in any
+channel and the 99th percentile of the difference, next to both renderers'
+time and the page's `Stats.Unsupported` keys. Every file of the pinned
+corpus has a threshold for its worst page in `accuracy/thresholds.json`; CI
+fails when a file gets worse. Thresholds only go down, in the pull request
+that improves a file: `-update` pins new files and lowers improved ones.
+Cera, PDFium and difference images of the worst pages are in the job's
+artifact.
+
+```sh
+cd accuracy
+go run . -dir ../testdata/corpus -thresholds thresholds.json -refs ../testdata/pdfium -out ../report-accuracy
+go run . -dir ../testdata/corpus -thresholds thresholds.json -refs ../testdata/pdfium -update   # after an improvement
+go run . -dir ../testdata/borb -pages 3 -out ../report-borb                                     # a large corpus, report only
+```
+
+`-refs` keeps PDFium's renderings between runs; `-sample` and `-seed`
+compare a random batch, as the `Large corpora` workflow does.
+
+PDFium is a reference, not ground truth. For local runs,
+`accuracy/reference` (a module of its own, with cgo) measures cera against
+several references and against an exact rendering, and writes a report
+(`report.html`, `pages.csv`, `summary.json`):
+
+- **Consensus of engines.** PDFium (WebAssembly), MuPDF (linked through cgo
+  with go-fitz, which ships its libraries; without cgo `mutool`), Poppler
+  (`pdftoppm`) and Ghostscript (`gs`), whichever are available. Every
+  engine, cera and each reference alike, is held against the median of all
+  the others on the pixels where those agree; where the references disagree
+  among themselves the pixel is *contested* and says nothing about who is
+  right. Shares are of the inked area (pixels not paper white in some
+  rendering). Each statistic comes twice: per pixel (*edges*: how lines and
+  glyphs are antialiased, where renderers differ by taste) and in boxes of
+  4×4 pixels (*content*: what is drawn).
+- **Exact rendering** of the synthetic drawings (`accuracy/exact`): an
+  independent interpreter for the operators they use computes the area of
+  each pixel the geometry covers (exact along 64 sample rows per pixel,
+  strokes as the union of segments, caps and joins, circles analytically).
+  The report shows each engine's ink against it (1× exact, above heavier)
+  and its error. `joins-caps` and `fills-subpixel` test every cap and join,
+  the miter limit, skewed round caps, both winding rules, sub-pixel
+  rectangles and an even-odd clip.
+
+```sh
+cd accuracy/reference
+go run . -dir ../../testdata/corpus                         # → ../../report-reference/report.html
+go run . -dir ../../testdata/borb -pages 3 -dpi 72 -sample 200
+go run . -engines cera,pdfium,mupdf -match synthetic/       # a subset of engines and files
+```
+
+The charts are drawn with [figure](https://github.com/timzifer/figure)
+(SVG, once with light and once with dark tokens, the page showing the one
+its colour scheme asks for); the tables below them hold every value.
+
+The references' renderings are cached in `testdata/reference-cache` by
+engine version, file content, resolution and page; cera is always rendered.
+MuPDF is AGPL and Ghostscript AGPL as well: they are linked into or run by
+this tool only, never by cera.
 
 ## Repository setup
 
