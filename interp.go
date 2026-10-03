@@ -69,6 +69,7 @@ type interp struct {
 	text textObject
 	td   TextDevice // dev, if it wants the text
 	tmp  Path       // glyph outlines filled with a pattern
+	t3c  t3Clip     // Type 3 glyphs shown in a clipping mode
 
 	// Tiling patterns: the device pixels drawn (empty: unknown), the
 	// depth of pattern cells being drawn, the tiles made for this page
@@ -112,7 +113,7 @@ func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
 		doc: doc, dev: dev, st: st, lim: lim,
 		stack: in.stack[:0], path: in.path, clip: -1, tmp: in.tmp,
 		scanners: in.scanners, dashes: in.dashes[:0], dashBuf: in.dashBuf,
-		text: in.text.keep(), objs: in.objs[:0], mc: in.mc[:0], annotBuf: in.annotBuf[:0],
+		text: in.text.keep(), t3c: t3Clip{clips: in.t3c.clips}, objs: in.objs[:0], mc: in.mc[:0], annotBuf: in.annotBuf[:0],
 		out: dev, ocVis: &noLayers, ocZoom: 1,
 	}
 	in.path.Reset()

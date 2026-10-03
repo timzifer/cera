@@ -142,16 +142,17 @@ func (dc *imageDecoder) decode(dict reader.Dict, raw []byte) {
 	if img.Stencil {
 		img.mask = stilus.NewTexture(p)
 	} else {
-		img.color = stilus.NewTexture(p)
 		switch {
 		case d.stream(dict["SMask"]) != nil:
 			s := d.stream(dict["SMask"])
-			if _, ok := s.Dict["Matte"]; ok {
-				dc.out.approx = "smask-matte"
-			}
 			m, _, ok := dc.plane(s.Dict, s.Raw, useAlpha)
 			if !ok {
 				return
+			}
+			if matte, ok := s.Dict["Matte"]; ok {
+				if p, ok = dc.unmatte(dict, matte, p, &m); !ok {
+					return
+				}
 			}
 			img.mask = stilus.NewTexture(m)
 		case d.stream(dict["Mask"]) != nil:
@@ -164,6 +165,7 @@ func (dc *imageDecoder) decode(dict reader.Dict, raw []byte) {
 		case key != nil:
 			img.mask = stilus.NewTexture(*key)
 		}
+		img.color = stilus.NewTexture(p)
 	}
 	for _, t := range [2]*texture{img.color, img.mask} {
 		if t != nil {
@@ -172,6 +174,133 @@ func (dc *imageDecoder) decode(dict reader.Dict, raw []byte) {
 	}
 	dc.out.img = img
 }
+
+// unmatte undoes the premultiplication of an image whose soft mask has a
+// /Matte colour (PDF 2.0, 11.6.5.3): its samples are c' = m + α·(c − m),
+// and c = m + (c' − m)/α, clamped. It works on the converted pixels, with
+// the matte converted the same way, which is exact for DeviceGray and
+// DeviceRGB, whose conversion to RGB is affine; other spaces are
+// approximated and counted as smask-matte. A mask of
+// another size than the image is sampled at the image's pixels. Done once
+// per decoded image, so drawing is unaffected.
+func (dc *imageDecoder) unmatte(dict reader.Dict, o reader.Object, p plane, m *plane) (plane, bool) {
+	d := dc.d
+	a, ok := reader.ToArray(d.resolve(o))
+	if !ok || len(a) == 0 || len(a) > maxComps {
+		dc.out.approx = "smask-matte"
+		return p, true
+	}
+	var v [maxComps]float64
+	for i := range a {
+		if v[i], ok = d.num(a[i]); !ok {
+			dc.out.approx = "smask-matte"
+			return p, true
+		}
+	}
+	cs, _ := d.colorSpace(dict["ColorSpace"], dc.res, 0)
+	if cs == nil || cs.n != len(a) || cs.kind == csPattern {
+		cs = deviceSpace(len(a))
+	}
+	if cs.kind != csGray && cs.kind != csRGB {
+		dc.out.approx = "smask-matte"
+	}
+	r, g, b := cs.rgb(v[:len(a)])
+	mr, mg, mb := int32(unit8(r)), int32(unit8(g)), int32(unit8(b))
+	w, h := p.W, p.H
+	if p.Kind != stilus.PlaneRGBA {
+		if int64(w)*int64(h)*4 > maxImageBytes {
+			dc.fail("image-too-large")
+			return p, false
+		}
+		q := plane{Kind: stilus.PlaneRGBA, W: w, H: h, Stride: w, Pix32: make([]uint32, w*h)}
+		for y := range h {
+			row := q.Pix32[y*w:][:w]
+			for x := range row {
+				row[x] = p.At(x, y)
+			}
+		}
+		p = q
+	}
+	// The mask column of each image column, the alpha of each mask
+	// sample, and 255·2¹⁶/α rounded.
+	xs := make([]int32, w)
+	for x := range xs {
+		xs[x] = int32(int64(x) * int64(m.W) / int64(w))
+	}
+	var alut [256]uint8
+	if m.Pal != nil {
+		for i, c := range m.Pal {
+			_, _, _, alut[i] = unpack(c)
+		}
+	}
+	var recip [256]int32
+	for i := 1; i < 256; i++ {
+		recip[i] = int32((255<<16 + i/2) / i)
+	}
+	alpha := make([]uint8, w)
+	for y := range h {
+		my := int(int64(y) * int64(m.H) / int64(h))
+		switch m.Kind {
+		case stilus.PlaneIndex:
+			mrow := m.Pix8[my*m.Stride:][:m.W]
+			if m.W == w {
+				for x, i := range mrow {
+					alpha[x] = alut[i]
+				}
+				break
+			}
+			for x, mx := range xs {
+				alpha[x] = alut[mrow[mx]]
+			}
+		case stilus.PlaneBits:
+			mrow := m.Pix8[my*m.Stride:]
+			for x, mx := range xs {
+				alpha[x] = alut[mrow[mx>>3]>>(7-uint(mx)&7)&1]
+			}
+		default:
+			for x, mx := range xs {
+				_, _, _, alpha[x] = unpack(m.At(int(mx), my))
+			}
+		}
+		unmatteRow(p.Pix32[y*p.Stride:][:w], alpha, &recip, mr, mg, mb)
+	}
+	return p, true
+}
+
+// unmatteRow undoes the premultiplication of a row of opaque pixels with
+// the alpha of each pixel, the matte (mr, mg, mb) and recip[α] = 255·2¹⁶/α.
+func unmatteRow(row []uint32, alpha []uint8, recip *[256]int32, mr, mg, mb int32) {
+	// pack stores r, g, b, a in this order in memory.
+	pix := unsafe.Slice((*byte)(unsafe.Pointer(unsafe.SliceData(row))), 4*len(row))
+	alpha = alpha[:len(row)]
+	for x, al := range alpha {
+		if al == 255 {
+			continue
+		}
+		px := pix[4*x:][:4:4]
+		if px[3] != 255 {
+			continue // a codestream's own alpha: left as it is
+		}
+		if al == 0 {
+			// Invisible; the matte is what the samples hold.
+			px[0], px[1], px[2] = uint8(mr), uint8(mg), uint8(mb)
+			continue
+		}
+		k := recip[al]
+		r := mr + ((int32(px[0])-mr)*k+1<<15)>>16
+		g := mg + ((int32(px[1])-mg)*k+1<<15)>>16
+		b := mb + ((int32(px[2])-mb)*k+1<<15)>>16
+		if uint32(r)|uint32(g)|uint32(b) <= 255 {
+			px[0], px[1], px[2] = uint8(r), uint8(g), uint8(b)
+			continue
+		}
+		// Samples that were not premultiplied with this matte.
+		px[0], px[1], px[2] = clamp8(r), clamp8(g), clamp8(b)
+	}
+}
+
+// clamp8 clamps v to [0, 255].
+func clamp8(v int32) uint8 { return uint8(min(max(v, 0), 255)) }
 
 // fail records why an image cannot be drawn; an empty feature means the
 // image is broken.

@@ -218,10 +218,11 @@ lookup tables (CMYK press profiles among them) are drawn as the device
 space of as many components, DeviceCMYK without a profile; fonts neither embedded nor
 standing in (`font-missing`: Symbol, ZapfDingbats, non-embedded composite
 fonts), vertical writing (`vertical-text`, drawn with default metrics),
-Type 3 glyphs in clipping modes (`type3-clip`), annotations without
+strokes, images and unbounded shadings of Type 3 glyphs in clipping modes
+(`type3-clip-approx`, clipping to their boxes), annotations without
 appearance that cera does not generate (`annot-no-ap`: FreeText, Text,
-Stamp …), `/Matte` of soft masks
-(`smask-matte`, drawn without), image filters the reader does not know
+Stamp …), `/Matte` of soft masks over images in other spaces than grey or
+RGB (`smask-matte`, undone in RGB), image filters the reader does not know
 (`image-filter`), images larger than 256 MB decoded (`image-too-large`);
 a non-isolated group with blend modes inside that is an object of a
 knockout group (`non-isolated-blend`: drawn isolated; one that is itself

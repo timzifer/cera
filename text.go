@@ -415,8 +415,10 @@ func (in *interp) showType3(f *Font, s []byte, res reader.Dict, depth int) {
 	fm := Matrix(f.pdf.FontMatrix())
 	em := Matrix{ts.size * ts.scale, 0, 0, ts.size, 0, ts.rise}
 	draw := ts.mode != TextInvisible && ts.mode != TextClip
-	if ts.mode >= TextFillClip {
-		in.st.unsupported("type3-clip")
+	// Glyphs of a Type 3 glyph inherit its mode but clip only at the top.
+	clip := ts.mode >= TextFillClip && len(tx.t3) == 0
+	if clip {
+		tx.clipping = true
 	}
 	for _, b := range s {
 		code := int(b)
@@ -429,7 +431,13 @@ func (in *interp) showType3(f *Font, s []byte, res reader.Dict, depth int) {
 			tx.run.Font = nil
 		}
 		if draw {
-			in.type3Glyph(f, code, fm.Mul(mt), res, depth)
+			in.type3Glyph(f, code, fm.Mul(mt), res, depth, false)
+			if in.err != nil {
+				return
+			}
+		}
+		if clip {
+			in.type3Clip(f, code, fm.Mul(mt), res, depth)
 			if in.err != nil {
 				return
 			}
@@ -443,8 +451,9 @@ func (in *interp) showType3(f *Font, s []byte, res reader.Dict, depth int) {
 }
 
 // type3Glyph runs the glyph procedure of code with glyph space mapped to
-// user space by mu, like a form XObject.
-func (in *interp) type3Glyph(f *Font, code int, mu Matrix, parent reader.Dict, depth int) {
+// user space by mu, like a form XObject. For a clip (see type3Clip) the
+// text it shows is filled, whatever the mode that showed the glyph.
+func (in *interp) type3Glyph(f *Font, code int, mu Matrix, parent reader.Dict, depth int, clip bool) {
 	tx := &in.text
 	if depth >= maxFormDepth || len(in.stack) >= maxStateDepth {
 		in.st.Errors++
@@ -469,6 +478,9 @@ func (in *interp) type3Glyph(f *Font, code int, mu Matrix, parent reader.Dict, d
 	in.gs.clips = 0
 	base := len(in.stack)
 	in.gs.ctm = mu.Mul(in.gs.ctm)
+	if clip {
+		in.gs.text.mode = TextFill
+	}
 	tm, tlm := tx.tm, tx.tlm
 	tx.t3 = append(tx.t3, f)
 	in.path.Reset()

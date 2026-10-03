@@ -283,3 +283,71 @@ func BenchmarkRenderText(b *testing.B) {
 		}
 	})
 }
+
+func TestType3Clip(t *testing.T) {
+	font := "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] " +
+		"/CharProcs << /sq 101 0 R /ln 102 0 R >> /Encoding << /Differences [65 /sq /ln] >> " +
+		"/FirstChar 65 /LastChar 66 /Widths [1000 1000] >>"
+	sq := "1000 0 0 0 1000 1000 d1 0 0 1000 1000 re f"
+	ln := "1000 0 d0 100 w 0 500 m 1000 500 l S"
+	stream := func(s string) string { return fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(s), s) }
+	for _, tc := range []struct {
+		name, content string
+		in, out       color.RGBA
+	}{
+		// Clip only: A covers 10..30 × 10..30 (y up), the red fill shows
+		// only there.
+		{"clip", "BT 7 Tr /F1 20 Tf 10 10 Td (A) Tj ET 1 0 0 rg 0 0 200 100 re f", red, white},
+		// Fill and clip: the glyph is drawn blue, then the green fill is
+		// clipped to it.
+		{"fill+clip", "BT 0 0 1 rg 4 Tr /F1 20 Tf 10 10 Td (A) Tj ET 0 1 0 rg 0 0 200 100 re f", green, white},
+		// Without a clipping mode nothing clips.
+		{"fill", "BT 0 Tr /F1 20 Tf 10 10 Td (A) Tj ET 1 0 0 rg 0 0 200 100 re f", red, red},
+	} {
+		data := textPDF(tc.content, font, stream(sq), stream(ln))
+		img, st, err := renderPage(t, data, 0, RenderOptions{Background: white})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := img.RGBAAt(20, 80); got != tc.in {
+			t.Errorf("%s: inside %v, want %v", tc.name, got, tc.in)
+		}
+		if got := img.RGBAAt(100, 50); got != tc.out {
+			t.Errorf("%s: outside %v, want %v", tc.name, got, tc.out)
+		}
+		if len(st.Unsupported) != 0 {
+			t.Errorf("%s: unsupported %v", tc.name, st.Unsupported)
+		}
+		// Straight to a raster device, without a display list.
+		doc, _ := Open(data)
+		p, _ := doc.Page(0)
+		direct := image.NewRGBA(p.Bounds(1))
+		fillRegion(direct, direct.Rect, white)
+		dev := &RasterDevice{C: stilus.NewCanvas(direct)}
+		if err := p.Run(context.Background(), dev, 1, nil); err != nil {
+			t.Fatal(err)
+		}
+		if got := direct.RGBAAt(20, 80); got != tc.in {
+			t.Errorf("%s, Run: inside %v, want %v", tc.name, got, tc.in)
+		}
+		if got := direct.RGBAAt(100, 50); got != tc.out {
+			t.Errorf("%s, Run: outside %v, want %v", tc.name, got, tc.out)
+		}
+	}
+
+	// A stroked glyph clips to its box, approximated: B's line, 2 wide
+	// at y = 20, clips to about 30..50 × 19..21 at least.
+	data := textPDF("BT 7 Tr /F1 20 Tf 30 10 Td (B) Tj ET 1 0 0 rg 0 0 200 100 re f", font, stream(sq), stream(ln))
+	img, st, err := renderPage(t, data, 0, RenderOptions{Background: white})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unsupported["type3-clip-approx"] != 1 {
+		t.Errorf("unsupported %v", st.Unsupported)
+	}
+	assertPixel(t, img, 40, 80, red)
+	assertPixel(t, img, 100, 50, white)
+	if st.Strokes != 0 {
+		t.Errorf("stats %+v", st)
+	}
+}

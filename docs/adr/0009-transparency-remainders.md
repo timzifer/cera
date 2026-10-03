@@ -1,6 +1,6 @@
 # 0009. Remaining approximations: `/Matte`, `AIS`, non-isolated blending, Type 3 clips
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-01
 - Milestone: M8
 - Depends on: stilus ADR 0003 (group compositing), for items 3 and 4
@@ -49,6 +49,27 @@ These are rare in the corpus but visible when they occur.
 
 ## Implementation notes
 
+- **1** is `imageDecoder.unmatte` in `imagedecode.go`, run once when the
+  image is decoded (and cached with it). It works on the converted pixels
+  with the matte converted the same way: exact for grey and RGB, whose
+  conversion is affine; images in other spaces (CMYK, ICC, Lab) are undone
+  in RGB as well and still counted as `smask-matte`. The mask is sampled
+  at the image's pixels when its size differs. Pixels of alpha 255 are
+  left alone, those of alpha 0 take the matte; the others use a table of
+  255·2¹⁶/α, so the loop has no division and, for samples that were
+  premultiplied with this matte, no clamping. It costs about as much as
+  decoding the samples once more (`BenchmarkDecodeMatte`).
+- **2** is `t3Clip` in `type3clip.go`. A Type 3 glyph shown in modes 4–7
+  runs its procedure once more (after drawing it, for 4–6) against a
+  device that appends what it paints, in device space, to the text
+  object's clip; ET clips with it as for other fonts. Fills and glyphs
+  inside are exact; even-odd fills (joined nonzero), strokes, images,
+  and shadings or tiles that paint more than the innermost clip of the
+  glyph are approximated by their device areas and counted as
+  `type3-clip-approx`; soft masks inside add nothing. The run is left out
+  of the text device, of optional content (a hidden glyph clips like a
+  visible one, as clips do) and of the stats. `type3-clip` is gone.
+
 - **3** is done for groups that are not objects of a knockout group: the
   display list marks such a group and draws it twice for a raster device,
   first on its own into a layer the device keeps, then onto its backdrop;
@@ -59,7 +80,9 @@ These are rare in the corpus but visible when they occur.
 
 ## Consequences
 
-- 1 and 2 are small, local changes and are done with M7.
+- 1 and 2 are small, local changes and are done; `smask-matte` remains
+  only for images outside grey and RGB, `type3-clip-approx` only for
+  glyph procedures that stroke, draw images or paint unbounded shadings.
 - 4 is justified only by corpus evidence; until then the key stays in the
   report as a known approximation.
 
