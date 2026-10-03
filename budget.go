@@ -42,13 +42,15 @@ const (
 
 // Caches bound memory kept for reuse; past them entries are dropped and
 // drawing does not change. maxReplayCells only chooses how pattern cells
-// are drawn.
+// are drawn, maxRunPoints how many strokes or fills of one pen are drawn
+// as one union (displaylist.go); past it, the next run starts.
 const (
 	imageCacheBytes    = 256 << 20 // decoded images a document keeps
 	maxFreeLayerBytes  = 64 << 20  // layer buffers a device keeps
 	maxIdleGlyphCaches = 64
 	maxMeshShaders     = 8 // shaders kept per mesh; beyond, each draw sets up its own
 	maxReplayCells     = 64
+	maxRunPoints       = 1 << 12 // points of strokes or fills drawn as one union
 )
 
 // budget is a row of the table of budgets, limits and caches documented in
@@ -95,4 +97,5 @@ var budgets = []budget{
 	{"maxIdleGlyphCaches", maxIdleGlyphCaches, "", "glyph mask caches kept between renders"},
 	{"maxMeshShaders", maxMeshShaders, "", "mesh shaders kept per mesh"},
 	{"maxReplayCells", maxReplayCells, "", "pattern cells drawn as vector operations instead of a tile"},
+	{"maxRunPoints", maxRunPoints, "", "points of consecutive strokes or fills of one pen drawn as one union; past it, the next union starts"},
 }

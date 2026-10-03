@@ -217,6 +217,10 @@ type RasterDevice struct {
 	img    imageDraw
 	shade  shadeDraw
 	t      layers
+	// stroker and outline draw the strokes of a display list run as one
+	// fill (strokeUnion).
+	stroker       stilus.Stroker
+	part, outline Path
 }
 
 // Reset targets the device, and its canvas, at region of dst. Groups need
@@ -260,6 +264,46 @@ func (d *RasterDevice) StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Pai
 	d.C.Stroke(p, m, st, &opaque)
 	d.koEnd(box)
 }
+
+// strokeUnion strokes the subpaths of p as their union: their outlines
+// filled as one nonzero path, so that coverage at the edges where they
+// overlap adds up rather than multiplies. The outlines the stroker emits
+// wind one way, each a closed polygon for nonzero filling. A dash pattern
+// too dense to resolve, or past the stroker's budget, is drawn as
+// StrokePath draws it.
+func (d *RasterDevice) strokeUnion(p *Path, m Matrix, st *StrokeStyle, paint *Paint) {
+	// Only the subpaths that reach the clip, as Canvas.Stroke culls.
+	clip := d.C.Clip()
+	pad := max(st.Width*sigmaMax(m), 1)/2*max(st.MiterLimit, 1.5) + 2
+	d.part.Reset()
+	pi := 0
+	for v0 := 0; v0 < len(p.Verbs); {
+		v1, p1 := v0+1, pi+1
+		for v1 < len(p.Verbs) && p.Verbs[v1] != stilus.MoveTo {
+			p1 += verbPoints[p.Verbs[v1]&7]
+			v1++
+		}
+		p1 = min(p1, len(p.Points))
+		if deviceBoxPoints(p.Points[pi:p1], m, pad).Overlaps(clip) {
+			d.part.Verbs = append(d.part.Verbs, p.Verbs[v0:v1]...)
+			d.part.Points = append(d.part.Points, p.Points[pi:p1]...)
+		}
+		v0, pi = v1, p1
+	}
+	if len(d.part.Verbs) == 0 {
+		return
+	}
+	d.outline.Reset()
+	d.stroker.Stroke(stilus.PathSink{P: &d.outline}, &d.part, m, st)
+	if d.stroker.Coverage() != 1 || d.stroker.Truncated() {
+		d.StrokePath(&d.part, m, st, paint)
+		return
+	}
+	d.FillPath(&d.outline, stilus.Matrix{1, 0, 0, 1, 0, 0}, NonZero, paint)
+}
+
+// verbPoints is the number of points of each path verb.
+var verbPoints = [8]int{stilus.MoveTo: 1, stilus.LineTo: 1, stilus.QuadTo: 2, stilus.CubicTo: 3}
 
 func (d *RasterDevice) ClipPath(p *Path, m Matrix, rule FillRule) {
 	d.t.pushClip(p, Rect{}, m, rule, false, nil)

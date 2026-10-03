@@ -145,7 +145,8 @@ func TestOffPageContentIsCulled(t *testing.T) {
 }
 
 func TestDeadlineIsNotCached(t *testing.T) {
-	c := strings.Repeat("0 0 1 1 re f\n", 2000)
+	// Two colours, so that the fills stay separate items.
+	c := strings.Repeat("0 g 0 0 1 1 re f 0.5 g 0 0 1 1 re f\n", 1000)
 	doc, _ := Open(buildPDF([]string{c}, ""))
 	p, _ := doc.Page(0)
 	dst := image.NewRGBA(p.Bounds(1))
@@ -241,3 +242,89 @@ func TestSigmaMax(t *testing.T) {
 }
 
 func rgba(r, g, b, a uint8) color.RGBA { return color.RGBA{r, g, b, a} }
+
+// TestUnionOfOnePen draws strokes and fills of one colour that meet inside
+// a pixel row: half of row 14 is covered by each, so the row must be
+// covered fully, not 3/4 as two separate composites leave it (#21). What
+// prevents joining keeps them apart.
+func TestUnionOfOnePen(t *testing.T) {
+	// Device y = 100 - y: the strokes cover rows 10..14.5 and 14.5..19.
+	strokes := "0 G 4.5 w 20 87.75 m 180 87.75 l S 20 83.25 m 180 83.25 l S"
+	// The rectangles cover rows 10..14.5 and 14.5..19, wound both ways.
+	fills := "0 g 20 85.5 160 4.5 re f 180 81 -160 4.5 re f"
+	for _, c := range []struct {
+		name, content string
+		union         bool
+	}{
+		{"strokes", strokes, true},
+		// At 45°, 3√2 wide, 3 apart in x and y: they meet on y = x - 3,
+		// which halves the pixel at (50.5, 47.5), device row 52, col 50.
+		{"diagonal strokes", "0 G 4.2426 w 20 20 m 80 80 l S 23 17 m 83 77 l S", true},
+		{"diagonal, two colours", "0 G 4.2426 w 20 20 m 80 80 l S 0.02 G 23 17 m 83 77 l S", false},
+		{"dashed strokes", "[30 2] 0 d " + strokes, true},
+		{"fills", fills, true},
+		{"fills one way", "0 g 20 85.5 160 4.5 re f 20 81 160 4.5 re f", true},
+		{"curved fills", "0 g 20 85.5 m 180 85.5 l 180 90 l 100 90 20 90 20 90 c h f 180 81 -160 4.5 re f", true},
+		{"two colours", "0 G 4.5 w 20 87.75 m 180 87.75 l S 0.02 G 20 83.25 m 180 83.25 l S", false},
+		{"translucent", "/A gs 0 G 4.5 w 20 87.75 m 180 87.75 l S 20 83.25 m 180 83.25 l S", false},
+		{"knockout", "/K Do", false},
+		{"even-odd", "0 g 20 85.5 160 4.5 re f* 20 81 160 4.5 re f*", false},
+		{"clip between", "0 G 4.5 w 20 87.75 m 180 87.75 l S 0 0 200 100 re W n 20 83.25 m 180 83.25 l S", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ko := "<< /Type /XObject /Subtype /Form /BBox [0 0 200 100] /Group << /S /Transparency /K true >> /Length " +
+				fmt.Sprint(len(strokes)) + " >>\nstream\n" + strokes + "\nendstream"
+			data := buildPDF([]string{c.content}, "/Resources << /ExtGState << /A << /CA 0.98 >> >> /XObject << /K 100 0 R >> >>", ko)
+			img, _, err := renderPage(t, data, 0, RenderOptions{Background: white})
+			if err != nil {
+				t.Fatal(err)
+			}
+			at, in := image.Pt(100, 14), image.Pt(100, 12) // where they meet, inside one
+			if strings.HasPrefix(c.name, "diagonal") {
+				at, in = image.Pt(50, 52), image.Pt(50, 49)
+			}
+			// Drawn separately, the pixel is 1/4 white: about 64.
+			if got := img.RGBAAt(at.X, at.Y).R; c.union != (got <= 6) || !c.union && got < 40 {
+				t.Errorf("at %v: %d, union %v", at, got, c.union)
+			}
+			if got := img.RGBAAt(in.X, in.Y).R; got > 6 {
+				t.Errorf("at %v: %d, want about 0", in, got)
+			}
+		})
+	}
+}
+
+func TestWinding(t *testing.T) {
+	path := func(pts ...float32) *Path {
+		p := new(Path)
+		p.MoveTo(pts[0], pts[1])
+		for i := 2; i < len(pts); i += 2 {
+			p.LineTo(pts[i], pts[i+1])
+		}
+		p.Close()
+		return p
+	}
+	two := path(0, 0, 1, 0, 1, 1)
+	two.MoveTo(5, 5)
+	two.LineTo(6, 5)
+	two.LineTo(6, 6)
+	for _, c := range []struct {
+		name string
+		p    *Path
+		want int
+	}{
+		{"left", path(0, 0, 10, 0, 10, 10, 0, 10), 1},
+		{"right", path(0, 0, 0, 10, 10, 10, 10, 0), -1},
+		{"closed again", path(0, 0, 10, 0, 10, 10, 0, 10, 0, 0), 1},
+		{"repeated point", path(0, 0, 10, 0, 10, 0, 10, 10, 0, 10), 1},
+		{"star", path(0, 10, 6, -8, -9, 3, 9, 3, -6, -8), -1},
+		{"figure eight", path(0, 0, 10, 10, 10, 0, 0, 10), 0},
+		{"concave", path(0, 0, 10, 0, 5, 2, 10, 10, 0, 10), 0},
+		{"two subpaths", two, 0},
+		{"a line", path(0, 0, 10, 0), 0},
+	} {
+		if got := winding(c.p); got != c.want {
+			t.Errorf("%s: %d, want %d", c.name, got, c.want)
+		}
+	}
+}
