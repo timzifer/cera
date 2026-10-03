@@ -1,4 +1,6 @@
-package main
+// Package pdfium renders with PDFium compiled to WebAssembly (go-pdfium on
+// wazero), no cgo, as the stilus harness does.
+package pdfium
 
 import (
 	"fmt"
@@ -14,14 +16,18 @@ import (
 	"github.com/klippa-app/go-pdfium/webassembly"
 )
 
-// pdfiumEngine renders with PDFium compiled to WebAssembly (go-pdfium on
-// wazero), no cgo, as the stilus harness does.
-type pdfiumEngine struct {
+// MaxPixels bounds the bitmap of one page.
+const MaxPixels = 64 << 20
+
+// Engine is one WebAssembly PDFium instance; it is not safe for concurrent
+// use.
+type Engine struct {
 	pool pdfium.Pool
 	inst pdfium.Pdfium
 }
 
-func newPDFium() (*pdfiumEngine, error) {
+// New starts an instance.
+func New() (*Engine, error) {
 	pool, err := webassembly.Init(webassembly.Config{MinIdle: 1, MaxIdle: 1, MaxTotal: 1})
 	if err != nil {
 		return nil, err
@@ -31,21 +37,24 @@ func newPDFium() (*pdfiumEngine, error) {
 		pool.Close()
 		return nil, err
 	}
-	return &pdfiumEngine{pool: pool, inst: inst}, nil
+	return &Engine{pool: pool, inst: inst}, nil
 }
 
-func (p *pdfiumEngine) Close() {
+// Close stops the instance.
+func (p *Engine) Close() {
 	p.inst.Close()
 	p.pool.Close()
 }
 
-type pdfiumDoc struct {
-	p   *pdfiumEngine
+// Doc is an open document.
+type Doc struct {
+	p   *Engine
 	doc references.FPDF_DOCUMENT
 	n   int
 }
 
-func (p *pdfiumEngine) open(data []byte) (*pdfiumDoc, error) {
+// Open opens a document.
+func (p *Engine) Open(data []byte) (*Doc, error) {
 	r, err := p.inst.OpenDocument(&requests.OpenDocument{File: &data})
 	if err != nil {
 		return nil, err
@@ -55,18 +64,22 @@ func (p *pdfiumEngine) open(data []byte) (*pdfiumDoc, error) {
 		p.inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: r.Document})
 		return nil, err
 	}
-	return &pdfiumDoc{p: p, doc: r.Document, n: n.PageCount}, nil
+	return &Doc{p: p, doc: r.Document, n: n.PageCount}, nil
 }
 
-func (d *pdfiumDoc) Close() {
+// Pages is the number of pages.
+func (d *Doc) Pages() int { return d.n }
+
+// Close closes the document.
+func (d *Doc) Close() {
 	d.p.inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: d.doc})
 }
 
-// render draws page (0-based) at scale on white, into a bitmap sized as
+// Render draws page (0-based) at scale on white, into a bitmap sized as
 // cera sizes pages (rounded up), with an exact matrix: PDFium's own DPI
 // rendering stretches the page to the rounded size, which shifts content by
 // up to a pixel across a page.
-func (d *pdfiumDoc) render(page int, scale float64) (*image.RGBA, error) {
+func (d *Doc) Render(page int, scale float64) (*image.RGBA, error) {
 	in := d.p.inst
 	pg, err := in.FPDF_LoadPage(&requests.FPDF_LoadPage{Document: d.doc, Index: page})
 	if err != nil {
@@ -83,7 +96,7 @@ func (d *pdfiumDoc) render(page int, scale float64) (*image.RGBA, error) {
 		return nil, err
 	}
 	w, h := int(math.Ceil(float64(pw.PageWidth)*scale)), int(math.Ceil(float64(ph.PageHeight)*scale))
-	if w <= 0 || h <= 0 || w*h > maxPixels {
+	if w <= 0 || h <= 0 || w*h > MaxPixels {
 		return nil, fmt.Errorf("pdfium: page of %d×%d px", w, h)
 	}
 	bm, err := in.FPDFBitmap_Create(&requests.FPDFBitmap_Create{Width: w, Height: h, Alpha: 0})

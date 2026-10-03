@@ -74,6 +74,14 @@
   the job's artifact. PDFium's renderings are cached by the manifest, the
   synthetic drawings and `accuracy/go.sum`; the pinned corpus takes about
   30 s uncached, 7 s cached.
+- **Beyond PDFium.** `accuracy/reference` (local, a module of its own
+  with cgo for MuPDF) compares cera with PDFium, MuPDF, Poppler and
+  Ghostscript by leave-one-out consensus (an engine is wrong where all
+  others agree and it does not; pixels where the references disagree are
+  contested), per pixel and in 4×4-pixel boxes, and the synthetic drawings
+  with an exact rendering (`accuracy/exact`). This is the "second
+  reference" of the decision, for every page rather than per file; CI
+  still gates on PDFium alone.
 - **Large corpora** run in random batches in CI: the `Large corpora`
   workflow renders `-sample` files per source for robustness and compares
   `-accuracy` of them with PDFium (report only, no thresholds), with the

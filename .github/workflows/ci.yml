@@ -157,6 +157,15 @@ jobs:
           git diff --exit-code -- go.mod go.sum
           go vet ./...
           go test ./...
+      # The local reference tool links MuPDF through cgo; without cgo it
+      # builds without it (and go-fitz is not downloaded).
+      - name: Vet and test the reference tool (no cgo)
+        working-directory: accuracy/reference
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go vet ./...
+          go test ./...
       - uses: actions/cache@v6
         with:
           path: |

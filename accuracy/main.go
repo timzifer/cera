@@ -45,11 +45,10 @@ import (
 	"time"
 
 	"github.com/timzifer/cera"
+	"github.com/timzifer/cera/accuracy/metric"
+	"github.com/timzifer/cera/accuracy/pdfium"
 	"github.com/timzifer/cera/internal/corpus"
 )
-
-// maxPixels skips absurd page sizes instead of exhausting memory.
-const maxPixels = 64 << 20
 
 var white = color.RGBA{255, 255, 255, 255}
 
@@ -74,7 +73,7 @@ type page struct {
 	file, category string
 	path           string
 	page           int // 1-based
-	diff           diff
+	diff           metric.Diff
 	ceraMS, refMS  float64 // refMS is 0 when the reference came from -refs
 	unsupported    []string
 	err            error // cera failed: the page counts as different throughout
@@ -141,7 +140,7 @@ func run() error {
 	}
 
 	cfg := config{scale: *dpi / 72, dpi: *dpi, pages: *pages, refs: *refs, timeout: *timeout, workers: *workers}
-	var ref *pdfiumEngine // started on the first reference not cached
+	var ref *pdfium.Engine // started on the first reference not cached
 	defer func() {
 		if ref != nil {
 			ref.Close()
@@ -159,7 +158,7 @@ func run() error {
 			case p.err != nil:
 				fmt.Fprintf(os.Stderr, "FAIL %s p%d: %v\n", p.file, p.page, p.err)
 			default:
-				fmt.Fprintf(os.Stderr, "%6.2f%% p99 %3d  %s p%d\n", 100*p.diff.over, p.diff.p99, p.file, p.page)
+				fmt.Fprintf(os.Stderr, "%6.2f%% p99 %3d  %s p%d\n", 100*p.diff.Over, p.diff.P99, p.file, p.page)
 			}
 		}
 		if skip != "" {
@@ -238,7 +237,7 @@ func listFiles(dirs []string, match string) ([]corpusFile, error) {
 
 // compareFile renders every page of f with cera and compares it with
 // PDFium's rendering. skip says why the file is not compared at all.
-func (c config) compareFile(f corpusFile, ref **pdfiumEngine) (ps []page, skip string) {
+func (c config) compareFile(f corpusFile, ref **pdfium.Engine) (ps []page, skip string) {
 	data, err := os.ReadFile(f.path)
 	if err != nil {
 		return nil, err.Error()
@@ -246,7 +245,7 @@ func (c config) compareFile(f corpusFile, ref **pdfiumEngine) (ps []page, skip s
 	sum := sha256.Sum256(data)
 	key := hex.EncodeToString(sum[:12])
 
-	var pd *pdfiumDoc
+	var pd *pdfium.Doc
 	defer func() {
 		if pd != nil {
 			pd.Close()
@@ -258,20 +257,20 @@ func (c config) compareFile(f corpusFile, ref **pdfiumEngine) (ps []page, skip s
 			return img, 0, nil
 		}
 		if *ref == nil {
-			if *ref, err = newPDFium(); err != nil {
+			if *ref, err = pdfium.New(); err != nil {
 				return nil, 0, err
 			}
 		}
 		if pd == nil {
-			if pd, err = (*ref).open(data); err != nil {
+			if pd, err = (*ref).Open(data); err != nil {
 				return nil, 0, err
 			}
 		}
-		if i >= pd.n {
-			return nil, 0, fmt.Errorf("PDFium has %d pages", pd.n)
+		if i >= pd.Pages() {
+			return nil, 0, fmt.Errorf("PDFium has %d pages", pd.Pages())
 		}
 		t0 := time.Now()
-		img, err := pd.render(i, c.scale)
+		img, err := pd.Render(i, c.scale)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -285,7 +284,7 @@ func (c config) compareFile(f corpusFile, ref **pdfiumEngine) (ps []page, skip s
 		if _, _, rerr := refPage(0); rerr != nil {
 			return nil, "neither cera nor PDFium opens it"
 		}
-		return []page{{file: f.rel, category: f.cat, path: f.path, page: 1, err: err, diff: diff{over: 1, p99: 255, max: 255}}}, ""
+		return []page{{file: f.rel, category: f.cat, path: f.path, page: 1, err: err, diff: metric.Diff{Over: 1, P99: 255, Max: 255}}}, ""
 	}
 	n := doc.NumPages()
 	if c.pages > 0 {
@@ -305,9 +304,9 @@ func (c config) compareFile(f corpusFile, ref **pdfiumEngine) (ps []page, skip s
 		var pe *cera.PanicError
 		if got == nil || errors.As(err, &pe) || errors.Is(err, cera.ErrDeadline) {
 			p.err = cmp.Or(err, errors.New("not rendered"))
-			p.diff = diff{over: 1, p99: 255, max: 255}
+			p.diff = metric.Diff{Over: 1, P99: 255, Max: 255}
 		} else {
-			p.diff = compare(got, img)
+			p.diff = metric.Compare(got, img)
 		}
 		ps = append(ps, p)
 	}
@@ -326,7 +325,7 @@ func (c config) renderCera(doc *cera.Document, i int) (*image.RGBA, cera.Stats, 
 	}
 	defer p.Release()
 	b := p.Bounds(c.scale)
-	if b.Dx()*b.Dy() > maxPixels {
+	if b.Dx()*b.Dy() > pdfium.MaxPixels {
 		return nil, st, 0, fmt.Errorf("page of %d×%d px", b.Dx(), b.Dy())
 	}
 	img := image.NewRGBA(b)
@@ -348,10 +347,10 @@ func summarize(f corpusFile, ps []page, skip string) file {
 		r.pages++
 		r.ceraMS += p.ceraMS
 		r.refMS += p.refMS
-		if r.worst == nil || p.diff.over > r.worst.diff.over {
+		if r.worst == nil || p.diff.Over > r.worst.diff.Over {
 			r.worst = p
 		}
-		r.p99 = max(r.p99, p.diff.p99)
+		r.p99 = max(r.p99, p.diff.P99)
 		for _, k := range p.unsupported {
 			keys[k] = true
 		}
@@ -371,7 +370,7 @@ func (r *file) over() float64 {
 	if r.worst == nil {
 		return 0
 	}
-	return 100 * r.worst.diff.over
+	return 100 * r.worst.diff.Over
 }
 
 // judge sets the status of every file against th and counts the failures;
@@ -446,7 +445,7 @@ func writeReport(w io.Writer, rs []file, ps []page, c config, gate bool, worst i
 	}
 	fmt.Fprintf(w, "# cera against PDFium\n\n%s · %.0f dpi · %d files · %d pages · %s/%s · %s\n\n",
 		time.Now().UTC().Format("2006-01-02 15:04 MST"), c.dpi, len(rs), pages, runtime.GOOS, runtime.GOARCH, runtime.Version())
-	fmt.Fprintf(w, "Per page: the share of pixels differing by more than %d levels in any channel (`>%d`) and the 99th percentile of the difference (`p99`); per file its worst page.", overLevels, overLevels)
+	fmt.Fprintf(w, "Per page: the share of pixels differing by more than %d levels in any channel (`>%d`) and the 99th percentile of the difference (`p99`); per file its worst page.", metric.OverLevels, metric.OverLevels)
 	if gate {
 		fmt.Fprintf(w, " **%d files fail** their threshold.", failed)
 	}
@@ -461,7 +460,7 @@ func writeReport(w io.Writer, rs []file, ps []page, c config, gate bool, worst i
 		}
 		return cmp.Compare(b.over(), a.over())
 	})
-	fmt.Fprintf(w, "## Files\n\n| file | category | pages | >%d (worst page) | p99 | threshold | status | cera ms | PDFium ms | unsupported |\n|---|---|---:|---:|---:|---:|---|---:|---:|---|\n", overLevels)
+	fmt.Fprintf(w, "## Files\n\n| file | category | pages | >%d (worst page) | p99 | threshold | status | cera ms | PDFium ms | unsupported |\n|---|---|---:|---:|---:|---:|---|---:|---:|---|\n", metric.OverLevels)
 	for i := range rs {
 		r := &rs[i]
 		if r.skip != "" {
@@ -494,7 +493,7 @@ func writeReport(w io.Writer, rs []file, ps []page, c config, gate bool, worst i
 				byKey[k] = a
 			}
 			a.pages++
-			a.over += p.diff.over
+			a.over += p.diff.Over
 		}
 	}
 	if len(byKey) > 0 {
@@ -503,7 +502,7 @@ func writeReport(w io.Writer, rs []file, ps []page, c config, gate bool, worst i
 			keys = append(keys, k)
 		}
 		slices.SortFunc(keys, func(a, b string) int { return cmp.Compare(byKey[b].over, byKey[a].over) })
-		fmt.Fprintf(w, "\n## Unsupported features on compared pages\n\n| key | pages | mean >%d |\n|---|---:|---:|\n", overLevels)
+		fmt.Fprintf(w, "\n## Unsupported features on compared pages\n\n| key | pages | mean >%d |\n|---|---:|---:|\n", metric.OverLevels)
 		for _, k := range keys {
 			a := byKey[k]
 			fmt.Fprintf(w, "| %s | %d | %.2f %% |\n", k, a.pages, 100*a.over/float64(a.pages))
@@ -511,9 +510,9 @@ func writeReport(w io.Writer, rs []file, ps []page, c config, gate bool, worst i
 	}
 
 	if diffs && worst > 0 {
-		fmt.Fprintf(w, "\n## Worst pages\n\nIn the artifact under `diffs/`: cera, PDFium, and their difference (red: cera darker, blue: lighter).\n\n| page | >%d | p99 | unsupported | images |\n|---|---:|---:|---|---|\n", overLevels)
+		fmt.Fprintf(w, "\n## Worst pages\n\nIn the artifact under `diffs/`: cera, PDFium, and their difference (red: cera darker, blue: lighter).\n\n| page | >%d | p99 | unsupported | images |\n|---|---:|---:|---|---|\n", metric.OverLevels)
 		for _, p := range worstPages(ps, worst) {
-			fmt.Fprintf(w, "| %s p%d | %.2f %% | %d | %s | `%s-*.png` |\n", p.file, p.page, 100*p.diff.over, p.diff.p99, strings.Join(p.unsupported, " "), diffName(p))
+			fmt.Fprintf(w, "| %s p%d | %.2f %% | %d | %s | `%s-*.png` |\n", p.file, p.page, 100*p.diff.Over, p.diff.P99, strings.Join(p.unsupported, " "), diffName(p))
 		}
 	}
 }
@@ -523,11 +522,11 @@ func cell(s string) string { return strings.ReplaceAll(s, "|", "\\|") }
 func worstPages(ps []page, n int) []*page {
 	var list []*page
 	for i := range ps {
-		if ps[i].skip == "" && ps[i].diff.over > 0 {
+		if ps[i].skip == "" && ps[i].diff.Over > 0 {
 			list = append(list, &ps[i])
 		}
 	}
-	slices.SortStableFunc(list, func(a, b *page) int { return cmp.Compare(b.diff.over, a.diff.over) })
+	slices.SortStableFunc(list, func(a, b *page) int { return cmp.Compare(b.diff.Over, a.diff.Over) })
 	return list[:min(n, len(list))]
 }
 
@@ -557,7 +556,7 @@ func (c config) writeDiffs(dir string, ps []page, n int) error {
 			continue
 		}
 		base := filepath.Join(dir, diffName(p))
-		for suffix, img := range map[string]*image.RGBA{"cera": got, "pdfium": ref, "diff": diffImage(got, ref)} {
+		for suffix, img := range map[string]*image.RGBA{"cera": got, "pdfium": ref, "diff": metric.DiffImage(got, ref)} {
 			if err := writePNG(base+"-"+suffix+".png", img); err != nil {
 				return err
 			}
@@ -581,8 +580,8 @@ func writeCSV(path string, ps []page) error {
 			e = p.err.Error()
 		}
 		cw.Write([]string{
-			p.file, p.category, strconv.Itoa(p.page), strconv.FormatFloat(p.diff.over, 'f', 6, 64),
-			strconv.Itoa(p.diff.p99), strconv.Itoa(p.diff.max),
+			p.file, p.category, strconv.Itoa(p.page), strconv.FormatFloat(p.diff.Over, 'f', 6, 64),
+			strconv.Itoa(p.diff.P99), strconv.Itoa(p.diff.Max),
 			fmt.Sprintf("%.3f", p.ceraMS), fmt.Sprintf("%.3f", p.refMS), strings.Join(p.unsupported, " "), e,
 		})
 	}

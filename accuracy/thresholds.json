@@ -101,6 +101,9 @@
  "synthetic/contours-3000.pdf": {
   "over": 0.79
  },
+ "synthetic/fills-subpixel.pdf": {
+  "over": 0.25
+ },
  "synthetic/hatch-2000-0.35mm.pdf": {
   "over": 0.1
  },
@@ -108,6 +111,9 @@
   "over": 0.1
  },
  "synthetic/hatch-2000-maskclip.pdf": {
+  "over": 0.06
+ },
+ "synthetic/joins-caps.pdf": {
   "over": 0.06
  },
  "synthetic/short-20000-0.35mm.pdf": {

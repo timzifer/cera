@@ -40,3 +40,4 @@ go.work.sum
 /cera
 /*.png
 /report-accuracy/
+/report-reference/
