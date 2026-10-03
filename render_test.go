@@ -199,12 +199,14 @@ func TestBrokenContentDoesNotStop(t *testing.T) {
 
 func TestUnsupportedIsCounted(t *testing.T) {
 	c := "BT /F1 12 Tf (Hi) Tj ET /Sh sh"
-	// Symbol is not embedded, and no stand-in has its glyphs.
-	_, st, err := renderPage(t, textPDF(c, "<< /Type /Font /Subtype /Type1 /BaseFont /Symbol >>"), 0, RenderOptions{})
+	// A Japanese font is not embedded, and no provider supplies it.
+	_, st, err := renderPage(t, textPDF(c, `<< /Type /Font /Subtype /Type0 /BaseFont /MS-Mincho /Encoding /Identity-H
+		/DescendantFonts [<< /Type /Font /Subtype /CIDFontType2 /BaseFont /MS-Mincho
+		/CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 2 >> >>] >>`), 0, RenderOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Unsupported["font-missing"] != 1 || len(st.Unsupported) != 1 {
+	if st.Unsupported["font-missing-japan1"] != 1 || len(st.Unsupported) != 1 {
 		t.Errorf("unsupported %v", st.Unsupported)
 	}
 	if st.Errors == 0 {

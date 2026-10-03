@@ -214,49 +214,58 @@ func (in *interp) show(s []byte, res reader.Dict, depth int) {
 		return
 	}
 	if f.program == nil {
-		in.st.unsupported("font-missing")
+		in.st.unsupported(f.missingKey())
+	}
+	if f.cmapMissing {
+		in.st.unsupported("cmap-missing")
 	}
 	// Glyphs are needed unless nothing is drawn, clipped or extracted.
 	need := ts.mode != TextInvisible || in.textDev() != nil
-	step := 1
-	if f.composite() {
-		step = 2
-	}
 	em := Matrix{ts.size * ts.scale, 0, 0, ts.size, 0, ts.rise}
 	if f.vertical {
 		em[0] = ts.size
 	}
-	for i := 0; i+step <= len(s); i += step {
-		code := int(s[i])
-		if step == 2 {
-			code = code<<8 | int(s[i+1])
-		}
-		w := f.advance(code)
-		if need {
-			gid, outline := f.glyph(code)
-			mu := em.Mul(tx.tm)
-			if f.vertical {
-				// Default vertical metrics: the origin is half the width
-				// left of and 0.88 em above the glyph's.
-				mu = stilus.Translate(-w/2, -0.88).Mul(mu)
+	composite := f.composite()
+	for i := 0; i < len(s); {
+		// The code, its length, and the CID that selects widths and
+		// glyphs (the code itself for a simple font).
+		code, n, cid := int(s[i]), 1, int(s[i])
+		if composite {
+			if f.cmap.IsIdentity() && len(s)-i < 2 {
+				break // an odd byte left over
 			}
-			tx.run.Glyphs = append(tx.run.Glyphs, Glyph{
-				Code: code, GID: int(gid), Outline: outline, M: mu.Mul(in.gs.ctm), Advance: w,
-			})
+			c, k := f.cmap.Next(s[i:])
+			code, n, cid = int(c), k, f.cmap.CID(c, k)
+		}
+		i += n
+		w := f.advance(cid)
+		var w1, vx, vy float64
+		if f.vertical {
+			w1, vx, vy = f.verticalMetrics(cid, w)
+		}
+		if need {
+			gid, outline := f.glyph(cid)
+			mu := em.Mul(tx.tm)
+			g := Glyph{Code: code, GID: int(gid), Outline: outline, Advance: w}
+			if f.vertical {
+				// The glyph's horizontal origin is the position vector
+				// away from the pen (PDF 2.0 9.7.4.3).
+				mu = stilus.Translate(-vx, -vy).Mul(mu)
+				g.Advance, g.Origin = -w1, [2]float64{vx, vy}
+			}
+			g.M = mu.Mul(in.gs.ctm)
+			tx.run.Glyphs = append(tx.run.Glyphs, g)
 			tx.user = append(tx.user, mu)
 		}
 		spacing := ts.charSpace
-		if step == 1 && code == ' ' {
+		if n == 1 && code == ' ' {
 			spacing += ts.wordSpace
 		}
 		if f.vertical {
-			tx.tm = stilus.Translate(0, -ts.size+spacing).Mul(tx.tm)
+			tx.tm = stilus.Translate(0, w1*ts.size+spacing).Mul(tx.tm)
 		} else {
 			tx.tm = stilus.Translate((w*ts.size+spacing)*ts.scale, 0).Mul(tx.tm)
 		}
-	}
-	if f.vertical {
-		in.st.unsupported("vertical-text")
 	}
 }
 
@@ -275,6 +284,7 @@ func (in *interp) flushText() {
 	}()
 	ts := &in.gs.text
 	run.Font = ts.font
+	run.Vertical = ts.font.vertical
 	if td := in.textDev(); td != nil {
 		td.ShowText(run, ts.mode)
 	}
@@ -310,7 +320,7 @@ func (in *interp) flushText() {
 			if knockout {
 				// Each glyph an object of the knockout group.
 				one := &tx.one
-				one.Font = run.Font
+				one.Font, one.Vertical = run.Font, run.Vertical
 				for i := range run.Glyphs {
 					one.Glyphs = run.Glyphs[i : i+1 : i+1]
 					in.dev.FillGlyphs(one, &in.paint)

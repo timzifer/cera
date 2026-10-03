@@ -17,6 +17,8 @@ import (
 type Document struct {
 	r *reader.Document
 
+	fontProvider FontProvider // fonts the document does not embed
+
 	fontMu sync.Mutex
 	fonts  map[reader.Ref]*Font // loaded fonts, by reference
 
@@ -53,17 +55,24 @@ type Document struct {
 // Open parses a PDF file. Damaged cross-reference tables, wrong stream
 // lengths and missing objects are repaired by the reader where possible.
 func Open(data []byte) (*Document, error) {
-	return OpenWithPassword(data, "")
+	return OpenWith(data, OpenOptions{})
 }
 
-// OpenWithPassword parses an encrypted PDF file.
-func OpenWithPassword(data []byte, password string) (doc *Document, err error) {
+// OpenWithPassword parses an encrypted PDF file. It is OpenWith with a
+// password.
+func OpenWithPassword(data []byte, password string) (*Document, error) {
+	return OpenWith(data, OpenOptions{Password: password})
+}
+
+// OpenWith parses a PDF file with options: a password, and a provider of
+// fonts the document does not embed.
+func OpenWith(data []byte, opt OpenOptions) (doc *Document, err error) {
 	defer recoverPanic(&err)
-	d, err := reader.OpenWithPassword(data, password)
+	d, err := reader.OpenWithPassword(data, opt.Password)
 	if err != nil {
 		return nil, err
 	}
-	return &Document{r: d}, nil
+	return &Document{r: d, fontProvider: opt.Fonts}, nil
 }
 
 // NumPages returns the number of pages.

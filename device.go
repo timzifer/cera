@@ -188,8 +188,12 @@ type Glyph struct {
 	// horizontal scaling, rise, text matrix and CTM.
 	M Matrix
 	// Advance is the pen movement in em, before character and word
-	// spacing.
+	// spacing: to the right, or down for vertical text.
 	Advance float64
+	// Origin is the pen position in the glyph's em square: (0, 0) for
+	// horizontal text; for vertical text the position vector, about half
+	// the width right of and 0.88 em above the glyph's own origin.
+	Origin [2]float64
 }
 
 // GlyphRun is the glyphs of one text-showing operator in one font. The
@@ -197,6 +201,8 @@ type Glyph struct {
 type GlyphRun struct {
 	Font   *Font
 	Glyphs []Glyph
+	// Vertical is text written top to bottom (a font with WMode 1).
+	Vertical bool
 }
 
 // RasterDevice draws onto an *image.RGBA through a stilus.Canvas. Glyphs
