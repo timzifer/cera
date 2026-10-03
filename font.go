@@ -1,16 +1,15 @@
 package cera
 
 import (
-	"strings"
 	"sync"
 	"sync/atomic"
 
-	"github.com/go-opentype/fonts/arimo"
-	"github.com/go-opentype/fonts/cousine"
-	"github.com/go-opentype/fonts/tinos"
 	"github.com/go-opentype/opentype"
 	"github.com/go-pdfkit/pdffont"
 	"github.com/go-pdfkit/reader"
+
+	"github.com/timzifer/cera/internal/cmap"
+	"github.com/timzifer/cera/internal/stdfont"
 )
 
 // Fonts split the work as the spec's layers do: go-pdfkit/pdffont reads what
@@ -36,10 +35,37 @@ type Font struct {
 	face    *opentype.Face
 	perEm   float64
 	// substituted says the program is a stand-in for one the document
-	// does not carry.
+	// does not carry (from a FontProvider or built in).
 	substituted bool
-	// vertical is a composite font written top to bottom (Identity-V).
+	// stretch scales the outlines of a stand-in horizontally (narrow
+	// faces); 0 is 1.
+	stretch float64
+	// std is the alphabet of a font named Symbol or ZapfDingbats (its
+	// built-in encoding, AFM widths and characters), stdGlyphs that its
+	// program is cera's stand-in for it.
+	std       *stdfont.Font
+	stdGlyphs bool
+
+	// cmap reads the codes of a composite font (fontcid.go); cmapMissing
+	// says the font names one cera does not know.
+	cmap        *cmap.CMap
+	cmapMissing bool
+	// registry, ordering and supplement are a composite font's character
+	// collection ("Adobe", "Japan1", 6).
+	registry, ordering string
+	supplement         int
+	// byUnicode says the program is keyed by Unicode, not by CID (a
+	// provider's stand-in for a composite font): CIDs find their glyphs
+	// through the characters they stand for.
+	byUnicode bool
+	// vertical is a composite font written top to bottom (WMode 1), with
+	// its default and per-CID vertical metrics (/DW2, /W2).
 	vertical bool
+	dw2      vmetric
+	w2       map[int]vmetric
+	// gsub finds vertical glyph forms ('vert'); vert caches them (f.mu).
+	gsub *opentype.GSUB
+	vert map[opentype.GlyphIndex]opentype.GlyphIndex
 	// ascent and descent are em fractions, for text boxes.
 	ascent, descent float64
 
@@ -49,6 +75,8 @@ type Font struct {
 	// Paths are never modified once stored, so devices may read them from
 	// any goroutine.
 	outlines map[opentype.GlyphIndex]*Path
+	// hasToUnicode says the font dictionary has a ToUnicode map.
+	hasToUnicode bool
 	// gids caches the glyph index of each code of a simple font (-1 = not
 	// yet looked up).
 	gids [256]int32
@@ -67,9 +95,29 @@ var fontIDs atomic.Uint64
 func (f *Font) Name() string { return f.name }
 
 // Text returns the characters a code stands for: the font's ToUnicode map,
-// or what its encoding calls the glyph. ok is false when the document does
-// not say.
-func (f *Font) Text(code int) (string, bool) { return f.pdf.Text(code) }
+// what its encoding calls the glyph, or for fonts of the Adobe CJK
+// character collections what the code's CID stands for. ok is false when
+// none says.
+func (f *Font) Text(code int) (string, bool) {
+	if f.std != nil && !f.pdf.Chosen(code) && code >= 0 && code <= 255 {
+		// Symbol and ZapfDingbats: what the document does not name, the
+		// built-in encoding does (not StandardEncoding, as pdffont
+		// assumes).
+		if f.hasToUnicode {
+			if s, ok := f.pdf.Text(code); ok {
+				return s, true
+			}
+		}
+		if g, ok := f.std.Code(byte(code)); ok && g.Rune != 0 {
+			return string(g.Rune), true
+		}
+		return "", false
+	}
+	return f.pdf.Text(code)
+}
+
+// Vertical reports a font written top to bottom.
+func (f *Font) Vertical() bool { return f.vertical }
 
 // Type3 reports a font whose glyphs are content streams (their Glyph has no
 // Outline).
@@ -127,13 +175,15 @@ func (d *Document) loadFont(dict reader.Dict) *Font {
 			f.name = f.name[7:]
 		}
 	}
+	f.hasToUnicode = d.resolve(dict["ToUnicode"]) != nil
 	if f.composite() {
-		if n, ok := d.name(dict["Encoding"]); ok && strings.HasSuffix(string(n), "-V") {
-			f.vertical = true
-		}
+		f.readCMap(d, dict)
 	}
 	if pf.Kind() == pdffont.Type3 {
 		return f
+	}
+	if !f.composite() {
+		f.std = stdAlphabet(f.name)
 	}
 	if key, data, ok := pf.Program(); ok {
 		if p, err := readProgram(key, data); err == nil {
@@ -141,9 +191,12 @@ func (d *Document) loadFont(dict reader.Dict) *Font {
 		}
 	}
 	if f.program == nil {
-		f.standIn(d)
+		f.substitute(d)
 	}
-	if f.program != nil && f.pdf.Symbolic() {
+	if f.vertical && f.program != nil {
+		f.gsub = f.program.GSUB()
+	}
+	if f.program != nil && !f.composite() && f.pdf.Symbolic() {
 		// A symbolic font's codes are its own; what the program calls
 		// them is the best text there is for codes the document does not
 		// name.
@@ -188,24 +241,43 @@ func readProgram(key reader.Name, data []byte) (*opentype.Font, error) {
 	return opentype.Parse(data)
 }
 
-// advance returns how far the pen moves for code, in em. A stand-in for a
-// font the document gives no widths for moves by its own advances (Arimo,
-// Tinos and Cousine are metric-compatible with Helvetica, Times and
-// Courier).
+// advance returns how far the pen moves for code (a CID for a composite
+// font), in em. A stand-in for a font the document gives no widths for
+// moves by the AFM widths of Symbol and ZapfDingbats, or by its own
+// advances (Arimo, Tinos and Cousine are metric-compatible with
+// Helvetica, Times and Courier).
 func (f *Font) advance(code int) float64 {
-	if f.pdf.HasWidth(code) || !f.substituted {
+	if f.pdf.HasWidth(code) || !f.substituted || f.composite() {
+		return f.pdf.Width(code)
+	}
+	if f.stdGlyphs {
+		if g, ok := f.stdGlyph(code); ok {
+			return float64(g.Width) / 1000
+		}
 		return f.pdf.Width(code)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return float64(f.face.AdvanceIndex(f.glyphIndex(code))) / f.perEm
+	w := float64(f.face.AdvanceIndex(f.glyphIndex(code))) / f.perEm
+	if f.stretch > 0 {
+		w *= f.stretch
+	}
+	return w
 }
 
 // glyph returns the glyph index and the outline (in em, nil if none) of a
-// code.
+// code (a CID for a composite font).
 func (f *Font) glyph(code int) (gid opentype.GlyphIndex, outline *Path) {
 	if f.program == nil {
 		return 0, nil
+	}
+	sx := 1.0
+	if f.stretch > 0 {
+		sx = f.stretch
+	}
+	var target float64 // the width a standard alphabet's glyph is drawn to
+	if f.stdGlyphs {
+		target = f.advance(code)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -213,9 +285,16 @@ func (f *Font) glyph(code int) (gid opentype.GlyphIndex, outline *Path) {
 	if p, ok := f.outlines[gid]; ok {
 		return gid, p
 	}
+	if target > 0 {
+		// Drawn to the AFM width (or the document's), as the other
+		// stand-ins are metric-compatible by design.
+		if a := float64(f.face.AdvanceIndex(gid)) / f.perEm; a > 0 {
+			sx = min(max(target/a, 0.5), 2)
+		}
+	}
 	segs, ok := f.face.GlyphOutline(gid)
 	if ok && len(segs) > 0 {
-		outline = segmentsPath(segs, 1/f.perEm)
+		outline = segmentsPath(segs, sx/f.perEm, 1/f.perEm)
 	}
 	if f.outlines == nil {
 		f.outlines = map[opentype.GlyphIndex]*Path{}
@@ -224,10 +303,11 @@ func (f *Font) glyph(code int) (gid opentype.GlyphIndex, outline *Path) {
 	return gid, outline
 }
 
-// segmentsPath converts an outline in font units to a Path scaled by s.
-func segmentsPath(segs []opentype.Segment, s float64) *Path {
+// segmentsPath converts an outline in font units to a Path scaled by sx
+// and sy.
+func segmentsPath(segs []opentype.Segment, sx, sy float64) *Path {
 	p := new(Path)
-	pt := func(q opentype.Point) (float32, float32) { return float32(q.X * s), float32(q.Y * s) }
+	pt := func(q opentype.Point) (float32, float32) { return float32(q.X * sx), float32(q.Y * sy) }
 	for _, g := range segs {
 		switch g.Op {
 		case opentype.SegMoveTo:
@@ -253,14 +333,7 @@ func segmentsPath(segs []opentype.Segment, s float64) *Path {
 // held.
 func (f *Font) glyphIndex(code int) opentype.GlyphIndex {
 	if f.composite() {
-		// A CID-keyed CFF program maps identifiers through its own
-		// charset; CIDToGIDMap is defined only for TrueType-based ones.
-		if f.program.IsCIDKeyed() {
-			gid, _ := f.program.GlyphIndexByCID(code)
-			return gid
-		}
-		gid, _ := f.pdf.CIDToGID(code)
-		return opentype.GlyphIndex(gid)
+		return f.cidGlyph(code)
 	}
 	if code < 0 || code > 255 {
 		return 0
@@ -275,6 +348,12 @@ func (f *Font) glyphIndex(code int) opentype.GlyphIndex {
 
 func (f *Font) simpleGlyphIndex(code int) opentype.GlyphIndex {
 	p := f.program
+	if f.stdGlyphs {
+		if g, ok := f.stdGlyph(code); ok {
+			return opentype.GlyphIndex(g.GID)
+		}
+		return 0
+	}
 	if f.pdf.Symbolic() {
 		if gid, ok := f.byChar(code); ok {
 			return gid
@@ -313,84 +392,4 @@ func (f *Font) byChar(code int) (opentype.GlyphIndex, bool) {
 		}
 	}
 	return 0, false
-}
-
-// A PDF need not carry its fonts: the fourteen standard faces never are,
-// and many files name any font and hope. Such text is drawn with a stand-in
-// chosen by name and descriptor flags from three families metric-compatible
-// with Helvetica, Times and Courier.
-
-type standIn struct {
-	once sync.Once
-	ttf  []byte
-	font *opentype.Font
-}
-
-func (s *standIn) get() *opentype.Font {
-	s.once.Do(func() { s.font, _ = opentype.Parse(s.ttf) })
-	return s.font
-}
-
-// family holds regular, bold, italic and bold italic.
-type family [4]standIn
-
-var (
-	sansFamily  = family{{ttf: arimo.TTF}, {ttf: arimo.Bold}, {ttf: arimo.Italic}, {ttf: arimo.BoldItalic}}
-	serifFamily = family{{ttf: tinos.TTF}, {ttf: tinos.Bold}, {ttf: tinos.Italic}, {ttf: tinos.BoldItalic}}
-	monoFamily  = family{{ttf: cousine.TTF}, {ttf: cousine.Bold}, {ttf: cousine.Italic}, {ttf: cousine.BoldItalic}}
-)
-
-// Font descriptor flags.
-const (
-	flagFixedPitch = 1 << 0
-	flagSerif      = 1 << 1
-	flagItalic     = 1 << 6
-	flagForceBold  = 1 << 18
-)
-
-// standIn gives a font without a usable program a stand-in. Composite
-// fonts address glyphs by number and Symbol and ZapfDingbats have their own
-// alphabets: no stand-in draws them correctly, so they get none.
-func (f *Font) standIn(d *Document) {
-	lower := strings.ToLower(f.name)
-	if f.composite() || lower == "symbol" || strings.Contains(lower, "dingbats") {
-		return
-	}
-	desc := f.pdf.Descriptor()
-	flags, _ := d.num(desc["Flags"])
-	fl := int(flags)
-	fam := &sansFamily
-	switch {
-	case strings.Contains(lower, "courier") || strings.Contains(lower, "mono"):
-		fam = &monoFamily
-	case strings.Contains(lower, "times") || strings.Contains(lower, "roman") ||
-		strings.Contains(lower, "serif") || strings.Contains(lower, "georgia") ||
-		strings.Contains(lower, "garamond") || strings.Contains(lower, "book"):
-		fam = &serifFamily
-	case strings.Contains(lower, "helvetica") || strings.Contains(lower, "arial") ||
-		strings.Contains(lower, "sans"):
-	case fl&flagFixedPitch != 0:
-		fam = &monoFamily
-	case fl&flagSerif != 0:
-		fam = &serifFamily
-	}
-	bold := strings.Contains(lower, "bold") || strings.Contains(lower, "black") ||
-		strings.Contains(lower, "heavy") || fl&flagForceBold != 0
-	if !bold {
-		if w, ok := d.num(desc["StemV"]); ok && w >= 120 {
-			bold = true
-		}
-	}
-	italic := strings.Contains(lower, "italic") || strings.Contains(lower, "oblique") || fl&flagItalic != 0
-	i := 0
-	if bold {
-		i |= 1
-	}
-	if italic {
-		i |= 2
-	}
-	if p := fam[i].get(); p != nil {
-		f.attach(p)
-		f.substituted = true
-	}
 }

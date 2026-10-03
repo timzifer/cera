@@ -92,6 +92,8 @@ jobs:
         run: go test -run '^$' -fuzz FuzzShading -fuzztime 30s .
       - name: Fuzz the content scanner
         run: go test -run '^$' -fuzz FuzzScan -fuzztime 30s ./internal/content
+      - name: Fuzz CMaps
+        run: go test -run '^$' -fuzz FuzzParse -fuzztime 30s ./internal/cmap
       - name: Keep crashers
         if: failure()
         uses: actions/upload-artifact@v7
@@ -100,6 +102,7 @@ jobs:
           path: |
             testdata/fuzz
             internal/content/testdata/fuzz
+            internal/cmap/testdata/fuzz
 
   # Pinned corpus (pdf.js feature files, arXiv papers, synthetic technical
   # drawings): every page must render without panic, hang or deadline.
@@ -169,10 +172,32 @@ jobs:
           go vet ./...
           go test -race ./...
 
+  # The CJK fonts are a module of their own (ADR 0008), so that no binary
+  # links tens of megabytes of glyphs without asking for them.
+  cjk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fonts/cjk
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: fonts/cjk/go.mod
+          cache-dependency-path: fonts/cjk/go.sum
+      - name: go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Vet and test
+        run: |
+          go vet ./...
+          go test -race ./...
+
   # The single required status check for main (see .github/rulesets).
   ci-ok:
     if: always()
-    needs: [lint, test, cross, fuzz, corpus, bench, fyneform]
+    needs: [lint, test, cross, fuzz, corpus, bench, fyneform, cjk]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed

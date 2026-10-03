@@ -97,18 +97,27 @@ func (d *textDevice) ShowText(run *GlyphRun, mode TextMode) {
 		m := g.M
 		c := TextChar{Font: name, Mode: mode}
 		c.Text, _ = f.Text(g.Code)
-		c.Origin[0], c.Origin[1] = m.Apply(0, 0)
+		c.Origin[0], c.Origin[1] = m.Apply(g.Origin[0], g.Origin[1])
 		c.Size = math.Sqrt(math.Abs(m.Det()))
 		adv := g.Advance
+		// The em box in glyph space, and the direction the pen moves.
+		box := [4][2]float64{{0, desc}, {adv, desc}, {0, asc}, {adv, asc}}
+		dx, dy := 1.0, 0.0
+		if run.Vertical {
+			// An em wide, centred on the pen, from the pen down.
+			ox, oy := g.Origin[0], g.Origin[1]
+			box = [4][2]float64{{ox - 0.5, oy}, {ox + 0.5, oy}, {ox - 0.5, oy - adv}, {ox + 0.5, oy - adv}}
+			dx, dy = 0, -1
+		}
 		x0, y0 := math.Inf(1), math.Inf(1)
 		x1, y1 := math.Inf(-1), math.Inf(-1)
-		for _, p := range [4][2]float64{{0, desc}, {adv, desc}, {0, asc}, {adv, asc}} {
+		for _, p := range box {
 			x, y := m.Apply(p[0], p[1])
 			x0, x1 = min(x0, x), max(x1, x)
 			y0, y1 = min(y0, y), max(y1, y)
 		}
 		c.Box = Rect{x0, y0, x1, y1}
-		ux, uy := m.ApplyVec(1, 0)
+		ux, uy := m.ApplyVec(dx, dy)
 		if l := math.Hypot(ux, uy); l > 0 {
 			c.dir = [2]float64{ux / l, uy / l}
 			c.adv = adv * l

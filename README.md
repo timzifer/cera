@@ -18,7 +18,8 @@ cera is where the pieces come together:
 | display list, bands, workers | cera | display list per page and scale, band index, parallel bands (M3) |
 | rasterizer, stroker, clip, compositing; shaders for images, glyph masks, layers and blend modes, gradients, meshes | [timzifer/stilus](https://github.com/timzifer/stilus) (MIT) | used as is; the generic shaders moved there from cera with M7 |
 | fonts: PDF side (encodings, widths, ToUnicode) | [go-pdfkit/pdffont](https://github.com/go-pdfkit/pdffont) (BSD-3) | used as is |
-| fonts: programs (TrueType, CFF, Type 1) and stand-ins | [go-opentype/opentype](https://github.com/go-opentype/opentype), [go-opentype/fonts](https://github.com/go-opentype/fonts) (Arimo, Tinos, Cousine) | used as is |
+| fonts: programs (TrueType, CFF, Type 1) and stand-ins | [go-opentype/opentype](https://github.com/go-opentype/opentype), [go-opentype/fonts](https://github.com/go-opentype/fonts) (Arimo, Tinos, Cousine; DejaVu Sans subsets for Symbol and ZapfDingbats; Noto Sans JP/SC/KR in `fonts/cjk`) | used as is |
+| fonts: CMaps, vertical writing, font providers | cera; predefined CMaps compiled from [Adobe's CMap resources](https://github.com/adobe-type-tools/cmap-resources) (BSD-3) | M8 (ADR 0008) |
 | text: glyph selection, glyph cache, Type 3, render modes, TextDevice | cera, glyph rules ported from the M2 spike | M4 |
 | images: samples, masks, mip levels, image cache | cera, decoding rules ported from [timzifer/render](https://github.com/timzifer/render); codecs [go-images/jpeg](https://github.com/go-images/jpeg) (BSD-3), [go-images/jpeg2000](https://github.com/go-images/jpeg2000) and [gobig2](https://github.com/tannevaled/gobig2) (Apache-2.0) | M5 |
 | transparency: groups, knockout, blend modes, soft masks | cera; PDF functions ported from [timzifer/render](https://github.com/timzifer/render) | M6 |
@@ -49,6 +50,20 @@ page.Release() // drop the cached display list when the page leaves the view
 
 text, err := page.Text(ctx) // characters with boxes, including invisible text
 fmt.Println(text.String())
+```
+
+Fonts a document names but does not embed can come from a provider; the
+CJK module links Noto Sans only for the collections it is asked for:
+
+```go
+import (
+	"github.com/timzifer/cera/fonts/cjk"
+	"github.com/timzifer/cera/fonts/cjk/japan1"
+)
+
+doc, err := cera.OpenWith(data, cera.OpenOptions{
+	Fonts: cjk.Provider{japan1.Collection}, // or a cera.FontProvider of your own
+})
 ```
 
 Layers (optional content) are switched per render, not on the document, so
@@ -183,11 +198,20 @@ go run ./cmd/cera -dpi 150 -v -o 'page-%d.png' input.pdf
 
 Text: all text operators and render modes (fill, stroke, invisible, and
 the clipping modes 4–7), embedded TrueType, CFF (bare, OpenType and
-CID-keyed) and Type 1 programs, composite fonts (2-byte codes,
-CIDToGIDMap), Type 3 fonts (coloured `d0` and uncoloured `d1` glyphs),
-and stand-ins for fonts a file does not embed: Arimo, Tinos and Cousine,
-metric-compatible with Helvetica, Times and Courier, in the weight and
-slope the font asks for. Images: image XObjects and inline images at 1, 2,
+CID-keyed) and Type 1 programs, composite fonts (the predefined CMaps of
+PDF 2.0 Table 116 and embedded ones, codes of one to four bytes,
+CIDToGIDMap), vertical writing (`-V` CMaps and `/WMode`, `/W2` and `/DW2`
+metrics, vertical glyph forms through the program's `vert` feature),
+Type 3 fonts (coloured `d0` and uncoloured `d1` glyphs), and stand-ins for
+fonts a file does not embed: Arimo, Tinos and Cousine, metric-compatible
+with Helvetica, Times and Courier, chosen by name (a table of frequent
+families: Calibri, Verdana, Cambria, Consolas …) and descriptor, in the
+weight, slope and width the font asks for; Symbol and ZapfDingbats from
+subsets of DejaVu Sans drawn to their AFM widths. Fonts a file does not
+embed can also come from a `FontProvider` (`cera.OpenWith`); the module
+`github.com/timzifer/cera/fonts/cjk` provides Noto Sans for the Adobe CJK
+collections, and text of those collections reads back as Unicode even
+without a ToUnicode map. Images: image XObjects and inline images at 1, 2,
 4, 8 and 16 bits in every colour space below, with `/Decode`, stencil
 masks (`/ImageMask`) in the fill colour, soft masks (`/SMask`), stencil
 masks (`/Mask` stream) and colour keys (`/Mask` array), each at its own
@@ -243,8 +267,10 @@ transforms that do not read (`tint-transform`, drawn as grey), shading
 functions that do not read (`shading-function`); ICC profiles built from
 lookup tables (CMYK press profiles among them) are drawn as the device
 space of as many components, DeviceCMYK without a profile; fonts neither embedded nor
-standing in (`font-missing`: Symbol, ZapfDingbats, non-embedded composite
-fonts), vertical writing (`vertical-text`, drawn with default metrics),
+standing in (`font-missing`; non-embedded composite fonts no `FontProvider`
+supplies as `font-missing-japan1`, `-gb1`, `-cns1`, `-korea1` or `-cid`),
+CMaps that are neither predefined nor readable (`cmap-missing`, read as
+Identity),
 strokes, images and unbounded shadings of Type 3 glyphs in clipping modes
 (`type3-clip-approx`, clipping to their boxes), annotations without
 appearance that cera does not generate (`annot-no-ap`: FreeText, Text,
@@ -278,7 +304,7 @@ recorded as architecture decisions in [`docs/adr`](docs/adr/README.md).
 | ✓ | M6 transparency | groups (isolated, non-isolated, knockout) in pooled layers per band, all blend modes exact at antialiased edges, soft masks (luminosity, alpha, backdrop, transfer functions), trivial and single-object groups dropped from the display list |
 | ◐ | M7 shadings and colour | shading types 1–7 and shading patterns, function LUTs (ramps, textures, tint tables), Separation/DeviceN, Lab, CalGray/CalRGB, simplified ICC (matrix/TRC); generic shaders moved to stilus; tiling patterns (ADR 0002) on stilus's wrapping textures, knotted ramps and the mesh shader of stilus v0.7 |
 | ✓ | M7½ layers, annotations, forms | optional content (ADR 0004), annotations (ADR 0005), interactive forms and `FormWidgetProvider` (ADR 0006) |
-| | M8 robustness | fuzzing, large corpora, budgets (started: CI below) |
+| ◐ | M8 robustness | font fallbacks, CMaps and vertical writing (ADR 0008); fuzzing, large corpora, budgets (started: CI below) |
 | | M9 GPU backend | GGDevice on gogpu/gg, glyph atlas, lux |
 
 ## Corpus and CI
