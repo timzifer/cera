@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-pdfkit/reader"
 )
 
 // streamObj is an indirect stream object with its /Length.
@@ -493,4 +495,64 @@ func FuzzImage(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestImageSoftMaskMatte(t *testing.T) {
+	// Red at half alpha, premultiplied against a white matte: the samples
+	// hold (255, 128, 128). Undone, red is drawn at half alpha over white.
+	im := streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /SMask 101 0 R", []byte{255, 128, 128, 0, 0, 255})
+	sm := streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Matte [1 1 1]", []byte{0x80, 0xff})
+	img, st := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q", im, sm), RenderOptions{})
+	assertNear(t, img, 25, 50, rgba(255, 128, 128, 255), 2)
+	assertPixel(t, img, 75, 50, blue)
+	if st.Unsupported["smask-matte"] != 0 {
+		t.Errorf("unsupported %v", st.Unsupported)
+	}
+
+	// A grey image against a black matte, with a mask of twice its
+	// resolution: the mask is sampled at the image's pixels.
+	im = streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /SMask 101 0 R", []byte{64})
+	sm = streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Matte [0]", []byte{0x40, 0x40})
+	img, _ = renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q", im, sm), RenderOptions{})
+	// c = 64/64·255 = 255 (white) at a quarter alpha over white.
+	assertNear(t, img, 50, 50, white, 2)
+
+	// A CMYK matte is applied in RGB and stays counted.
+	im = streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceCMYK /BitsPerComponent 8 /SMask 101 0 R", []byte{0, 0, 0, 0})
+	sm = streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Matte [0 0 0 1]", []byte{0x80})
+	_, st = renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q", im, sm), RenderOptions{})
+	if st.Unsupported["smask-matte"] != 1 {
+		t.Errorf("unsupported %v", st.Unsupported)
+	}
+}
+
+func BenchmarkDecodeMatte(b *testing.B) {
+	const w, h = 512, 512
+	rgb := make([]byte, 3*w*h)
+	alpha := make([]byte, w*h)
+	for i := range alpha {
+		alpha[i] = uint8(i)
+		// Colours premultiplied against white: c' = 255 + α(c − 255).
+		a := i & 255
+		for c, v := range [3]int{i >> 3 & 255, i >> 5 & 255, i * 7 & 255} {
+			rgb[3*i+c] = uint8(255 - (255-v)*a/255)
+		}
+	}
+	for _, matte := range []string{"", "/Matte [1 1 1]"} {
+		b.Run(fmt.Sprintf("matte=%v", matte != ""), func(b *testing.B) {
+			doc, err := Open(imagePDF("", streamObj("/Width 512 /Height 512 /ColorSpace /DeviceRGB /BitsPerComponent 8 /SMask 101 0 R", rgb),
+				streamObj("/Width 512 /Height 512 /ColorSpace /DeviceGray /BitsPerComponent 8 "+matte, alpha)))
+			if err != nil {
+				b.Fatal(err)
+			}
+			s := doc.stream(reader.Ref{Num: 100})
+			b.ReportAllocs()
+			b.SetBytes(4 * w * h)
+			for b.Loop() {
+				if r := doc.decodeImage(s.Dict, s.Raw, nil); r.img == nil {
+					b.Fatal("not decoded")
+				}
+			}
+		})
+	}
 }
