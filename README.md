@@ -146,7 +146,10 @@ as fine as the device, bilinearly; magnified images are sampled at the
 nearest pixel unless they ask for `/Interpolate`, as Ghostscript does.
 `RenderOptions.ImageFilter = ImageSmooth` (`-image-filter smooth` in
 `cmd/cera`) smooths every magnified image bilinearly instead, as PDFium,
-MuPDF and Poppler do; switching it does not interpret the page again.
+MuPDF and Poppler do; switching it does not interpret the page again. An
+opaque image drawn right over another on the same parallelogram replaces
+it in the display list, so the lower image does not show through the
+antialiased edges as a frame.
 
 Transparency groups and soft masks are drawn into layers: an RGBA image
 over the part of the band the group can touch, taken from a buffer pool

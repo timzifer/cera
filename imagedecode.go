@@ -158,6 +158,7 @@ func (dc *imageDecoder) decode(dict reader.Dict, raw []byte) {
 			img.mask = stilus.NewTexture(*key)
 		}
 		img.color = stilus.NewTexture(p)
+		img.opaque = img.mask == nil && opaquePlane(&p)
 	}
 	for _, t := range [2]*texture{img.color, img.mask} {
 		if t != nil {

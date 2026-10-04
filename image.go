@@ -57,6 +57,36 @@ type Image struct {
 	// colour key (/Mask array). Its colours are levels of alpha.
 	mask *texture
 	size int // bytes, including mip levels, for the cache
+	// opaque reports that every sample of the image is opaque: it has
+	// colours, no mask and no alpha of its own.
+	opaque bool
+}
+
+// opaquePlane reports whether every pixel of p is opaque.
+func opaquePlane(p *plane) bool {
+	switch p.Kind {
+	case stilus.PlaneRGBA:
+		for _, c := range p.Pix32 {
+			if _, _, _, a := unpack(c); a != 255 {
+				return false
+			}
+		}
+		return true
+	case stilus.PlaneIndex:
+		var seen [256]bool
+		for _, v := range p.Pix8 {
+			if !seen[v] {
+				if _, _, _, a := unpack(p.Pal[v]); a != 255 {
+					return false
+				}
+				seen[v] = true
+			}
+		}
+		return true
+	}
+	_, _, _, a0 := unpack(p.Pal[0])
+	_, _, _, a1 := unpack(p.Pal[1])
+	return a0 == 255 && a1 == 255
 }
 
 // RGBA returns the image at its own resolution with its mask applied (a

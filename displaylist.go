@@ -494,12 +494,55 @@ func (l *displayList) DrawImage(img *Image, m Matrix, paint *Paint) {
 	if bb.Empty() {
 		return
 	}
+	if n := len(l.items) - 1; n >= 0 && img.opaque && paint.Color.A == 255 {
+		// An opaque image drawn right over the last one, on the same
+		// parallelogram, hides it, edges included: drawn one after the
+		// other, the partial coverages at the edges would multiply and let
+		// the lower image show through as a frame (conflation). The upper
+		// image replaces it instead, as the exact rendering has it. Both
+		// are inside the same clips and tagged alike, so the lower one is
+		// drawn wherever the upper one is not.
+		if last := &l.items[n]; last.op == dlImage && last.tag == l.tag && sameParallelogram(last.m, m) {
+			l.items = l.items[:n]
+		}
+	}
 	i := len(l.images) - 1
 	if i < 0 || l.images[i] != img {
 		l.images = append(l.images, img)
 		i++
 	}
 	l.items = append(l.items, dlItem{op: dlImage, color: paint.Color, m: m, bbox: bb, style: int32(i), tag: l.tag})
+}
+
+// sameParallelogram reports whether a and b map the unit square to the
+// same parallelogram, whichever corners they map to which, in device
+// pixels.
+func sameParallelogram(a, b Matrix) bool {
+	if a == b {
+		return true
+	}
+	corners := func(m Matrix) [4][2]float64 {
+		var c [4][2]float64
+		for i, u := range [4][2]float64{{0, 0}, {1, 0}, {0, 1}, {1, 1}} {
+			c[i][0], c[i][1] = m.Apply(u[0], u[1])
+		}
+		return c
+	}
+	// Within a thousandth of a pixel: a matrix and its flip, composed
+	// with the page's, round differently.
+	const eps = 1e-3
+	in := func(p [2]float64, c *[4][2]float64) bool {
+		return slices.ContainsFunc(c[:], func(q [2]float64) bool {
+			return math.Abs(p[0]-q[0]) <= eps && math.Abs(p[1]-q[1]) <= eps
+		})
+	}
+	ca, cb := corners(a), corners(b)
+	for k := range ca {
+		if !in(ca[k], &cb) || !in(cb[k], &ca) {
+			return false
+		}
+	}
+	return true
 }
 
 func (l *displayList) FillShading(sh *Shading, m Matrix, paint *Paint) {
