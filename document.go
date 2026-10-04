@@ -18,6 +18,7 @@ type Document struct {
 	r *reader.Document
 
 	fontProvider FontProvider // fonts the document does not embed
+	naiveCMYK    bool         // OpenOptions.NaiveCMYK
 
 	fontMu sync.Mutex
 	fonts  map[reader.Ref]*Font // loaded fonts, by reference
@@ -72,7 +73,7 @@ func OpenWith(data []byte, opt OpenOptions) (doc *Document, err error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Document{r: d, fontProvider: opt.Fonts}, nil
+	return &Document{r: d, fontProvider: opt.Fonts, naiveCMYK: opt.NaiveCMYK}, nil
 }
 
 // NumPages returns the number of pages.

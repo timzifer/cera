@@ -6,9 +6,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"image"
+	"image/color"
 	"math"
 	"testing"
 	"time"
+
+	"github.com/timzifer/cera/internal/cmyk"
 )
 
 // renderShaded renders content with the given resources on white, failing
@@ -297,11 +300,16 @@ func TestSeparationAndDeviceN(t *testing.T) {
 	c := "/CS0 cs 1 scn 0 0 50 100 re f 0.5 scn 50 0 50 100 re f /CS1 cs 1 0.5 scn 100 0 50 100 re f /CS2 cs 1 scn 150 0 25 100 re f /CS3 cs 1 scn 175 0 25 100 re f"
 	img, _ := renderShaded(t, c, "/ColorSpace << /CS0 100 0 R /CS1 101 0 R /CS2 [/Separation /None /DeviceGray 103 0 R] /CS3 [/Indexed 100 0 R 1 <00ff>] >>",
 		spot, dn, fn, "<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] >>")
-	assertNear(t, img, 25, 50, rgba(255, 128, 0, 255), 1)
-	assertNear(t, img, 75, 50, rgba(255, 191, 128, 255), 1)
+	ink := func(c, m, y, k float64) color.RGBA {
+		r, g, b := cmyk.RGB(c, m, y, k)
+		return rgba(uint8(r*255+0.5), uint8(g*255+0.5), uint8(b*255+0.5), 255)
+	}
+	orange := ink(0, 0.5, 1, 0)
+	assertNear(t, img, 25, 50, orange, 1)
+	assertNear(t, img, 75, 50, ink(0, 0.25, 0.5, 0), 1)
 	assertNear(t, img, 125, 50, rgba(255, 128, 0, 255), 1) // R = 1, G = 0.5, B = 0
 	assertNear(t, img, 160, 50, white, 0)
-	assertNear(t, img, 185, 50, rgba(255, 128, 0, 255), 1)
+	assertNear(t, img, 185, 50, orange, 1)
 }
 
 func TestCIESpaces(t *testing.T) {

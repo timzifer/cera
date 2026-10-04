@@ -424,7 +424,7 @@ func (in *interp) color(sc *content.Scanner, op []byte, res reader.Dict) {
 		case 'R', 'r':
 			cs = spaceRGB
 		case 'K', 'k':
-			cs = spaceCMYK
+			cs = in.doc.cmykSpace()
 		}
 		if !sc.Nums(v[:cs.n]) {
 			in.st.Errors++
@@ -453,7 +453,7 @@ func (in *interp) colorSpaceOperand(sc *content.Scanner, res reader.Dict) *color
 	case "DeviceRGB", "RGB", "CalRGB":
 		return spaceRGB
 	case "DeviceCMYK", "CMYK":
-		return spaceCMYK
+		return in.doc.cmykSpace()
 	case "Pattern":
 		return spacePattern
 	}

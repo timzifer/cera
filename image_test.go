@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/go-pdfkit/reader"
+
+	"github.com/timzifer/cera/internal/cmyk"
 )
 
 // streamObj is an indirect stream object with its /Length.
@@ -114,10 +116,11 @@ func TestImageIndexed(t *testing.T) {
 }
 
 func TestImageCMYKAnd16Bit(t *testing.T) {
-	cmyk := streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceCMYK /BitsPerComponent 8", []byte{0, 255, 255, 0})
+	inks := streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceCMYK /BitsPerComponent 8", []byte{0, 255, 255, 0})
 	gray16 := streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 16", []byte{0x80, 0x00})
-	img, _ := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q q 100 0 0 100 100 0 cm /Im1 Do Q", cmyk, gray16), RenderOptions{})
-	assertPixel(t, img, 50, 50, red)
+	img, _ := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q q 100 0 0 100 100 0 cm /Im1 Do Q", inks, gray16), RenderOptions{})
+	r, g, b := cmyk.RGB8(0, 255, 255, 0) // magenta and yellow: a press red
+	assertPixel(t, img, 50, 50, rgba(r, g, b, 255))
 	assertPixel(t, img, 150, 50, rgba(128, 128, 128, 255))
 }
 

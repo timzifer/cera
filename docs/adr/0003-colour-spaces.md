@@ -58,10 +58,11 @@ table, `rXYZ`/`gXYZ`/`bXYZ`, `rTRC`/`gTRC`/`bTRC`, `kTRC`, `wtpt`):
   is ever worth it.
 - Parsed profiles are cached per document by object reference.
 
-**DeviceCMYK** (and CMYK ICC falling back to it) uses a fixed polynomial
-approximation of a SWOP-like conversion, the one pdf.js uses, instead of the
-naive formula. It is a few multiplications per pixel and needs no profile.
-JPEG images in CMYK go through the same conversion.
+**DeviceCMYK** (and CMYK ICC falling back to it) converts through a SWOP
+press profile instead of the naive formula, as every reference does
+through a profile of its own. JPEG images in CMYK go through the same
+conversion. (Revised with #20: the polynomial first decided here is too
+far off; see Alternatives.)
 
 **Rendering intent** (`ri`, `/Intent`) stays ignored; it only matters with a
 real CMS. **Output intents** are ignored.
@@ -91,8 +92,27 @@ Implemented in `color.go` and `colormath.go`:
 
 Not done yet:
 
-- **DeviceCMYK** still uses the naive formula; the polynomial
-  approximation decided above is open.
+- **DeviceCMYK** (#20) goes through colord's profile of CGATS TR 005
+  (SWOP, coated #5; CC0, its characterization data from NPES/CGATS, which
+  allows derived profiles with the report named as the source).
+  `internal/cmyk/gen` extracts its colorimetric table (A2B1: input
+  curves, a 9⁴ Lab grid, output curves) and its black point into
+  `internal/cmyk/swop.bin` (54 KB); `internal/cmyk` evaluates them as
+  Little CMS does with that profile to sRGB, relative colorimetric with
+  black point compensation (`transicc -t 1 -b`), within one level. On
+  first use it tabulates the result as linear sRGB at 17⁴ nodes, which
+  fills, shading functions and images interpolate over the simplex of a
+  cell (within 4 levels of Little CMS, mean 0.3); images take ~10–30 ns
+  a pixel more to decode than naively (once, they are cached).
+  `OpenOptions.NaiveCMYK` keeps the device values.
+- Measured (#20): the flat primaries come within about 11 levels of
+  MuPDF and Ghostscript (cyan 0 174 240 against their 0 174 239, magenta
+  236 11 141 against 236 0 140, black 43 40 41 against 35 31 32): they
+  convert through Artifex's SWOP-like profile, which is AGPL. In
+  `accuracy/reference` cera's outlier share on `pdfjs/cmykjpeg.pdf`
+  falls from 51 % to 0.7 %; against PDFium it falls from 3.97 % to
+  0.80 % there and from 88.95 % to 71.59 % on
+  `pdfjs/function_based_shading_cmyk.pdf`.
 - LUT-based ICC profiles fall back on the device space of their component
   count, but are not counted as `icc-lut`.
 
@@ -101,6 +121,17 @@ Not done yet:
 - **A full CMS** (porting lcms2 or using a Go ICC library): exact for LUT
   profiles, but large, slow per pixel without heavy caching, and a
   dependency for a case the corpus will first have to show matters.
+- **pdf.js's polynomial for DeviceCMYK** (a fit to US Web Coated SWOP;
+  Apache-2.0): small and fast, but measured up to 61 levels off the
+  references (yellow 255 235 61 against 255 242 0, magenta 251 49 153
+  against 236 0 140).
+- **Ghostscript's `default_cmyk.icc`**: matches every reference within a
+  level (MuPDF uses the same Artifex profile), but is AGPL, and cera is
+  MIT. The generator reads any CMYK lut16 profile with a Lab connection
+  space, so a profile under a licence that allows it can replace TR 005
+  with one command.
+- **Adobe's U.S. Web Coated (SWOP) v2**: may be redistributed only
+  unmodified.
 - **Evaluating tint transforms per pixel for images**: correct but slow
   for type 4 functions; the 17ⁿ LUT is within one 8-bit level for every
   smooth transform.
