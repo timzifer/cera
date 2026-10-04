@@ -212,6 +212,9 @@ type GlyphRun struct {
 // drawn into layers of their own (see Reset).
 type RasterDevice struct {
 	C *stilus.Canvas
+	// ImageFilter sets how magnified images that do not ask for
+	// /Interpolate are sampled (see RenderOptions.ImageFilter).
+	ImageFilter ImageFilter
 
 	glyphs *glyphCache // allocated on first use
 	img    imageDraw

@@ -68,6 +68,15 @@ type RenderOptions struct {
 	// the page; the page is not interpreted again. Without it the saved
 	// values are shown.
 	Form *FormState
+	// ImageFilter sets how magnified images that do not ask for
+	// /Interpolate are sampled: ImageNearest (the default) samples the
+	// nearest pixel, ImageSmooth samples bilinearly, as PDFium, MuPDF and
+	// Poppler do. Images with /Interpolate true are always smoothed;
+	// minified images are read from their mip levels either way. Switching
+	// it does not interpret the page again. Images inside the cells of a
+	// tiling pattern are drawn into the pattern's tile when the page is
+	// interpreted, at the nearest pixel unless they ask for /Interpolate.
+	ImageFilter ImageFilter
 }
 
 // Stats describes what rendering a page did.
@@ -252,7 +261,7 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 		}
 	}
 	iso := dl.blends && opt.Background.A != 0
-	if derr := dl.render(dst, region, opt.Workers, vis, &pageAF, lim, iso); derr != nil && err == nil {
+	if derr := dl.render(dst, region, opt.Workers, vis, &pageAF, lim, iso, opt.ImageFilter); derr != nil && err == nil {
 		err = derr
 	}
 	if len(overlays) > 0 {
@@ -261,7 +270,7 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 		}
 	}
 	for _, ol := range overlays {
-		if derr := ol.render(dst, region, opt.Workers, vis, &af, lim, false); derr != nil && err == nil {
+		if derr := ol.render(dst, region, opt.Workers, vis, &af, lim, false, opt.ImageFilter); derr != nil && err == nil {
 			err = derr
 		}
 	}
@@ -524,8 +533,9 @@ func (p *Page) Release() {
 // optional content vis and the annotations af show (vis nil: all layers).
 // One worker draws the region in one pass; several share the bands that
 // touch it. With iso set, each band is drawn onto a transparent image
-// first and then composited onto dst, which holds the background.
-func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers int, vis *Visibility, af *annotFilter, lim *limit, iso bool) error {
+// first and then composited onto dst, which holds the background. Images
+// are magnified with filter.
+func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers int, vis *Visibility, af *annotFilter, lim *limit, iso bool, filter ImageFilter) error {
 	b0, b1 := l.bandRange(region)
 	if b0 >= b1 {
 		return nil
@@ -537,7 +547,7 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers in
 	if vis == nil {
 		vis = &noLayers
 	}
-	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1, iso: iso, vis: l.visibleTags(j.vis, vis, af)}
+	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af)}
 	if workers = min(workers, b1-b0); workers == 1 {
 		j.work(true)
 	} else {
@@ -566,6 +576,7 @@ type job struct {
 	b1     int
 	vis    []bool // per tag of the list: drawn
 	iso    bool
+	filter ImageFilter
 	next   atomic.Int32 // next band to draw
 	wg     sync.WaitGroup
 	mu     sync.Mutex
@@ -632,6 +643,7 @@ func (j *job) paint(pt *painter, b int, r image.Rectangle) {
 		defer compositeOver(j.dst, &pt.page)
 	}
 	pt.dev.Reset(dst, r)
+	pt.dev.ImageFilter = j.filter
 	var ok bool
 	if b < 0 {
 		ok = j.l.drawAll(&pt.dev, &pt.ds, r, j.vis, j.lim)

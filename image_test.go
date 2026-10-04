@@ -559,3 +559,39 @@ func BenchmarkDecodeMatte(b *testing.B) {
 		})
 	}
 }
+
+func TestImageFilter(t *testing.T) {
+	im := streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", []byte{0, 255})
+	interp := streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Interpolate true", []byte{0, 255})
+	pdf := imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q q 100 0 0 100 100 0 cm /Im1 Do Q", im, interp)
+	doc, err := Open(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := doc.Page(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	smoothed := func(v uint8) bool { return v > 20 && v < 235 }
+	for i, c := range []struct {
+		filter ImageFilter
+		smooth bool
+	}{{ImageNearest, false}, {ImageSmooth, true}, {ImageNearest, false}} {
+		dst := image.NewRGBA(p.Bounds(1))
+		var st Stats
+		if err := p.Render(context.Background(), dst, RenderOptions{Background: white, ImageFilter: c.filter, Stats: &st}); err != nil {
+			t.Fatal(err)
+		}
+		if i > 0 && !st.Reused {
+			t.Errorf("filter %d: the page was interpreted again", c.filter)
+		}
+		// Between the sample centres at x = 25 and 75.
+		if got := dst.RGBAAt(40, 50).R; smoothed(got) != c.smooth {
+			t.Errorf("filter %d: pixel 40 is %d, smoothed %v", c.filter, got, c.smooth)
+		}
+		// /Interpolate is smoothed either way.
+		if got := dst.RGBAAt(140, 50).R; !smoothed(got) {
+			t.Errorf("filter %d: /Interpolate pixel 140 is %d", c.filter, got)
+		}
+	}
+}
