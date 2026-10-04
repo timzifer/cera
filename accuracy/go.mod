@@ -19,7 +19,7 @@ require (
 	github.com/jolestar/go-commons-pool/v2 v2.1.2 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
-	github.com/timzifer/stilus v0.7.0 // indirect
+	github.com/timzifer/stilus v0.7.1-0.20261004051204-eaa0881d5596 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )

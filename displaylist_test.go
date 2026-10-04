@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -263,6 +264,9 @@ func TestUnionOfOnePen(t *testing.T) {
 		{"diagonal, two colours", "0 G 4.2426 w 20 20 m 80 80 l S 0.02 G 23 17 m 83 77 l S", false},
 		{"dashed strokes", "[30 2] 0 d " + strokes, true},
 		{"fills", fills, true},
+		{"stroke and fill", "0 G 0 g 4.5 w 20 87.75 m 180 87.75 l S 20 81 160 4.5 re f", true},
+		{"two widths", "0 G 4.5 w 20 87.75 m 180 87.75 l S 2 w 20 84.5 m 180 84.5 l S", true},
+		{"two matrices", "0 G 4.5 w 20 87.75 m 180 87.75 l S q 1 0 0 1 0 -4.5 cm 20 87.75 m 180 87.75 l S Q", true},
 		{"fills one way", "0 g 20 85.5 160 4.5 re f 20 81 160 4.5 re f", true},
 		{"curved fills", "0 g 20 85.5 m 180 85.5 l 180 90 l 100 90 20 90 20 90 c h f 180 81 -160 4.5 re f", true},
 		{"two colours", "0 G 4.5 w 20 87.75 m 180 87.75 l S 0.02 G 20 83.25 m 180 83.25 l S", false},
@@ -294,7 +298,7 @@ func TestUnionOfOnePen(t *testing.T) {
 	}
 }
 
-func TestWinding(t *testing.T) {
+func TestWindsOneWay(t *testing.T) {
 	path := func(pts ...float32) *Path {
 		p := new(Path)
 		p.MoveTo(pts[0], pts[1])
@@ -304,27 +308,29 @@ func TestWinding(t *testing.T) {
 		p.Close()
 		return p
 	}
-	two := path(0, 0, 1, 0, 1, 1)
-	two.MoveTo(5, 5)
-	two.LineTo(6, 5)
-	two.LineTo(6, 6)
+	two := func(a, b *Path) *Path {
+		p := &Path{Verbs: append(slices.Clone(a.Verbs), b.Verbs...), Points: append(slices.Clone(a.Points), b.Points...)}
+		return p
+	}
+	left, right := path(0, 0, 10, 0, 10, 10, 0, 10), path(20, 0, 20, 10, 30, 10, 30, 0)
 	for _, c := range []struct {
 		name string
 		p    *Path
-		want int
+		want bool
 	}{
-		{"left", path(0, 0, 10, 0, 10, 10, 0, 10), 1},
-		{"right", path(0, 0, 0, 10, 10, 10, 10, 0), -1},
-		{"closed again", path(0, 0, 10, 0, 10, 10, 0, 10, 0, 0), 1},
-		{"repeated point", path(0, 0, 10, 0, 10, 0, 10, 10, 0, 10), 1},
-		{"star", path(0, 10, 6, -8, -9, 3, 9, 3, -6, -8), -1},
-		{"figure eight", path(0, 0, 10, 10, 10, 0, 0, 10), 0},
-		{"concave", path(0, 0, 10, 0, 5, 2, 10, 10, 0, 10), 0},
-		{"two subpaths", two, 0},
-		{"a line", path(0, 0, 10, 0), 0},
+		{"left", left, true},
+		{"right", right, true},
+		{"closed again", path(0, 0, 10, 0, 10, 10, 0, 10, 0, 0), true},
+		{"repeated point", path(0, 0, 10, 0, 10, 0, 10, 10, 0, 10), true},
+		{"star", path(0, 10, 6, -8, -9, 3, 9, 3, -6, -8), true},
+		{"figure eight", path(0, 0, 10, 10, 10, 0, 0, 10), false},
+		{"concave", path(0, 0, 10, 0, 5, 2, 10, 10, 0, 10), false},
+		{"two one way", two(left, path(20, 0, 30, 0, 30, 10, 20, 10)), true},
+		{"two both ways", two(left, right), false},
+		{"a line", path(0, 0, 10, 0), false},
 	} {
-		if got := winding(c.p); got != c.want {
-			t.Errorf("%s: %d, want %d", c.name, got, c.want)
+		if got := windsOneWay(c.p); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}
 }
