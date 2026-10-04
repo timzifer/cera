@@ -34,6 +34,9 @@ type Font struct {
 	program *opentype.Font
 	face    *opentype.Face
 	perEm   float64
+	// fdScales replaces perEm per glyph for a CID-keyed CFF program that
+	// gives its FontMatrix in the FDArray (cffcid.go).
+	fdScales *cffFDScales
 	// substituted says the program is a stand-in for one the document
 	// does not carry (from a FontProvider or built in).
 	substituted bool
@@ -188,6 +191,9 @@ func (d *Document) loadFont(dict reader.Dict) *Font {
 	if key, data, ok := pf.Program(); ok {
 		if p, err := readProgram(key, data); err == nil {
 			f.attach(p)
+			if key == "FontFile3" {
+				f.fdScales = readCFFFDScales(data)
+			}
 		}
 	}
 	if f.program == nil {
@@ -292,9 +298,13 @@ func (f *Font) glyph(code int) (gid opentype.GlyphIndex, outline *Path) {
 			sx = min(max(target/a, 0.5), 2)
 		}
 	}
+	ux, uy := 1/f.perEm, 1/f.perEm
+	if f.fdScales != nil {
+		ux, uy = f.fdScales.scale(int(gid))
+	}
 	segs, ok := f.face.GlyphOutline(gid)
 	if ok && len(segs) > 0 {
-		outline = segmentsPath(segs, sx/f.perEm, 1/f.perEm)
+		outline = segmentsPath(segs, sx*ux, uy)
 	}
 	if f.outlines == nil {
 		f.outlines = map[opentype.GlyphIndex]*Path{}
