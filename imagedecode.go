@@ -13,6 +13,8 @@ import (
 	"github.com/go-pdfkit/reader"
 	"github.com/tannevaled/gobig2"
 	"github.com/timzifer/stilus"
+
+	"github.com/timzifer/cera/internal/cmyk"
 )
 
 // Decoding turns an image XObject or inline image into planes (see
@@ -189,7 +191,7 @@ func (dc *imageDecoder) unmatte(dict reader.Dict, o reader.Object, p plane, m *p
 	}
 	cs, _ := d.colorSpace(dict["ColorSpace"], dc.res, 0)
 	if cs == nil || cs.n != len(a) || cs.kind == csPattern {
-		cs = deviceSpace(len(a))
+		cs = d.deviceSpace(len(a))
 	}
 	if cs.kind != csGray && cs.kind != csRGB {
 		dc.out.approx = "smask-matte"
@@ -643,11 +645,23 @@ func (dc *imageDecoder) rgbaPlane(data []byte, sp *sampleSpec) (plane, *plane, b
 				s := row[3*x:][:3]
 				dst[x] = pack(s[0], s[1], s[2], 255)
 			}
-		case plain && sp.cs == spaceCMYK && len(row) == 4*w:
+		case plain && sp.cs == spaceCMYKNaive && len(row) == 4*w:
 			for x := range dst {
 				s := row[4*x:][:4]
 				k := 255 - uint32(s[3])
 				dst[x] = pack(inkOff(s[0], k), inkOff(s[1], k), inkOff(s[2], k), 255)
+			}
+		case plain && sp.cs == spaceCMYK && len(row) == 4*w:
+			// Through the profile; neighbours often repeat.
+			var last [4]byte
+			lastC := pack(255, 255, 255, 255) // of no ink
+			for x := range dst {
+				s := [4]byte(row[4*x:][:4])
+				if s != last {
+					r, g, b := cmyk.RGB8(s[0], s[1], s[2], s[3])
+					last, lastC = s, pack(r, g, b, 255)
+				}
+				dst[x] = lastC
 			}
 		case plain && sp.cs.kind == csCIE && n == 3 && !sp.cs.cie.lab && len(row) == 3*w:
 			for x := range dst {
@@ -798,7 +812,7 @@ func (dc *imageDecoder) jpeg(dict reader.Dict, data []byte, sp *sampleSpec) (pla
 	if sp.use == useAlpha && sp.n != 1 {
 		return dc.fail("")
 	}
-	sp.cs = deviceSpace(sp.n)
+	sp.cs = dc.d.deviceSpace(sp.n)
 	if csOK && cs.n == sp.n {
 		sp.cs = cs
 	}
@@ -849,7 +863,7 @@ func (dc *imageDecoder) jpx(dict reader.Dict, data []byte, sp *sampleSpec) (plan
 	if sp.use == useAlpha && sp.n != 1 {
 		return dc.fail("")
 	}
-	sp.cs = deviceSpace(sp.n)
+	sp.cs = dc.d.deviceSpace(sp.n)
 	if cs, ok := dc.colorSpace(dict, sp.use); ok && cs.n == sp.n {
 		sp.cs = cs
 	}
@@ -860,14 +874,23 @@ func (dc *imageDecoder) jpx(dict reader.Dict, data []byte, sp *sampleSpec) (plan
 }
 
 // deviceSpace returns the device colour space of n components.
-func deviceSpace(n int) *colorSpace {
+func (d *Document) deviceSpace(n int) *colorSpace {
 	switch n {
 	case 3:
 		return spaceRGB
 	case 4:
-		return spaceCMYK
+		return d.cmykSpace()
 	}
 	return spaceGray
+}
+
+// cmykSpace is DeviceCMYK as the document converts it: through the SWOP
+// profile of internal/cmyk, or naively (OpenOptions.NaiveCMYK).
+func (d *Document) cmykSpace() *colorSpace {
+	if d.naiveCMYK {
+		return spaceCMYKNaive
+	}
+	return spaceCMYK
 }
 
 // rgbaFrom converts a decoded picture to premultiplied pixels.

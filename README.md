@@ -184,7 +184,10 @@ transform is tabulated at 256 tints, so a spot-colour image costs a
 palette), Lab, CalGray, CalRGB and ICC profiles of the matrix/TRC kind
 through CIE XYZ, adapted to D50 with the Bradford transform. An ICC
 profile close to sRGB is taken as the device space; RGB images in another
-profile convert through tables per channel.
+profile convert through tables per channel. DeviceCMYK converts through a
+SWOP press profile (colord's profile of CGATS TR 005, NPES, the
+characterization data's source; `internal/cmyk`), as a press prints it,
+or with `OpenOptions.NaiveCMYK` naively, as device values.
 
 `Page.Run` drives any `Device` directly, without a display list; a device
 that also implements `TextDevice` receives every string shown, in every
@@ -266,7 +269,7 @@ nested past 4 levels, more than 64 MB of tiles per page), tint
 transforms that do not read (`tint-transform`, drawn as grey), shading
 functions that do not read (`shading-function`); ICC profiles built from
 lookup tables (CMYK press profiles among them) are drawn as the device
-space of as many components, DeviceCMYK without a profile; fonts neither embedded nor
+space of as many components, CMYK through cera's SWOP profile; fonts neither embedded nor
 standing in (`font-missing`; non-embedded composite fonts no `FontProvider`
 supplies as `font-missing-japan1`, `-gb1`, `-cns1`, `-korea1` or `-cid`),
 CMaps that are neither predefined nor readable (`cmap-missing`, read as

@@ -63,6 +63,11 @@ type OpenOptions struct {
 	// Fonts supplies programs for fonts the document does not embed; nil
 	// for the built-in stand-ins only.
 	Fonts FontProvider
+	// NaiveCMYK converts DeviceCMYK, and ICC profiles of four components
+	// cera does not read, with R = (1-C)(1-K) and its like instead of
+	// through a press profile (CGATS TR 005, SWOP), for callers who want
+	// the device values: fills, strokes, shadings and images.
+	NaiveCMYK bool
 }
 
 // Font descriptor flags.

@@ -33,7 +33,7 @@
   "over": 1
  },
  "pdfjs/cmykjpeg.pdf": {
-  "over": 4.42
+  "over": 0.94
  },
  "pdfjs/devicen.pdf": {
   "over": 0.05
@@ -42,7 +42,7 @@
   "over": 0.68
  },
  "pdfjs/function_based_shading_cmyk.pdf": {
-  "over": 97.9
+  "over": 78.81
  },
  "pdfjs/issue7847_radial.pdf": {
   "over": 0.05

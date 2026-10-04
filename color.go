@@ -4,6 +4,8 @@ import (
 	"sync"
 
 	"github.com/go-pdfkit/reader"
+
+	"github.com/timzifer/cera/internal/cmyk"
 )
 
 type csKind uint8
@@ -33,16 +35,20 @@ type colorSpace struct {
 	// separation /None, which paints nothing.
 	fn   function
 	none bool
+	// naive marks DeviceCMYK converted without a profile.
+	naive bool
 
 	once sync.Once
 	tint *[256][3]uint8 // one-component tint transform, tabulated
 }
 
 var (
-	spaceGray    = &colorSpace{kind: csGray, n: 1}
-	spaceRGB     = &colorSpace{kind: csRGB, n: 3}
-	spaceCMYK    = &colorSpace{kind: csCMYK, n: 4}
-	spacePattern = &colorSpace{kind: csPattern, n: 0}
+	spaceGray = &colorSpace{kind: csGray, n: 1}
+	spaceRGB  = &colorSpace{kind: csRGB, n: 3}
+	spaceCMYK = &colorSpace{kind: csCMYK, n: 4}
+	// spaceCMYKNaive is DeviceCMYK without a profile (OpenOptions.NaiveCMYK).
+	spaceCMYKNaive = &colorSpace{kind: csCMYK, n: 4, naive: true}
+	spacePattern   = &colorSpace{kind: csPattern, n: 0}
 )
 
 // initial returns the initial colour of cs (PDF 2.0, 8.6.5).
@@ -74,6 +80,9 @@ func (cs *colorSpace) rgb(v []float64) (r, g, b float64) {
 	case csRGB:
 		return v[0], v[1], v[2]
 	case csCMYK:
+		if !cs.naive {
+			return cmyk.RGB(v[0], v[1], v[2], v[3])
+		}
 		k := 1 - clamp01(v[3])
 		return (1 - clamp01(v[0])) * k, (1 - clamp01(v[1])) * k, (1 - clamp01(v[2])) * k
 	case csCIE:
@@ -157,7 +166,7 @@ func (d *Document) colorSpace(o reader.Object, res reader.Dict, depth int) (cs *
 		case "DeviceRGB", "RGB", "CalRGB":
 			return spaceRGB, ""
 		case "DeviceCMYK", "CMYK":
-			return spaceCMYK, ""
+			return d.cmykSpace(), ""
 		case "Pattern":
 			return spacePattern, ""
 		}
@@ -208,7 +217,7 @@ func (d *Document) makeColorSpace(o reader.Object, res reader.Dict, depth int) (
 	case "DeviceRGB", "RGB":
 		return spaceRGB, ""
 	case "DeviceCMYK", "CMYK":
-		return spaceCMYK, ""
+		return d.cmykSpace(), ""
 	case "CalGray", "CalRGB":
 		n := 1
 		dev := spaceGray
@@ -236,7 +245,7 @@ func (d *Document) makeColorSpace(o reader.Object, res reader.Dict, depth int) (
 		n, _ := d.integer(s.Dict["N"])
 		if prof, srgb := iccProfile(d.r.DecodeStreamRecovering(s).Data, n); prof != nil {
 			if srgb {
-				return deviceSpace(prof.n), ""
+				return d.deviceSpace(prof.n), ""
 			}
 			return &colorSpace{kind: csCIE, n: prof.n, cie: prof}, ""
 		}
@@ -246,7 +255,7 @@ func (d *Document) makeColorSpace(o reader.Object, res reader.Dict, depth int) (
 		case 3:
 			return spaceRGB, ""
 		case 4:
-			return spaceCMYK, ""
+			return d.cmykSpace(), ""
 		}
 		if alt, ok := s.Dict["Alternate"]; ok {
 			return d.colorSpace(alt, res, depth+1)

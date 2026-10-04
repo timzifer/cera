@@ -50,7 +50,9 @@ func TestOverprint(t *testing.T) {
 		{"rgb", "/OP true /OPM 1", "/DeviceRGB", "1 1 0", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			doc, err := Open(overprintPDF(c.ext, c.cs, c.yellow))
+			// Device values, so that the simulated overprint is plain
+			// arithmetic.
+			doc, err := OpenWith(overprintPDF(c.ext, c.cs, c.yellow), OpenOptions{NaiveCMYK: true})
 			if err != nil {
 				t.Fatal(err)
 			}
