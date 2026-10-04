@@ -261,6 +261,13 @@ func (d *RasterDevice) StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Pai
 	d.koEnd(box)
 }
 
+// fillUnion draws the union of the elements of u (a run of the display
+// list, never in a knockout group) with paint.
+func (d *RasterDevice) fillUnion(u *stilus.Union, paint *Paint) {
+	d.t.inked(paint.Color.A)
+	d.C.FillUnion(u, paint)
+}
+
 func (d *RasterDevice) ClipPath(p *Path, m Matrix, rule FillRule) {
 	d.t.pushClip(p, Rect{}, m, rule, false, nil)
 	d.C.ClipPath(p, m, rule)

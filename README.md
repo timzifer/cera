@@ -332,6 +332,7 @@ A test keeps this table in step with the code.
 | `maxIdleGlyphCaches` | 64 | – | glyph mask caches kept between renders |
 | `maxMeshShaders` | 8 | – | mesh shaders kept per mesh |
 | `maxReplayCells` | 64 | – | pattern cells drawn as vector operations instead of a tile |
+| `maxRunPoints` | 4 Ki | – | points of consecutive strokes or fills of one pen drawn as one union; past it, the next union starts |
 
 ## Roadmap
 

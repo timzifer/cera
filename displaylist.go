@@ -46,6 +46,13 @@ const (
 type dlItem struct {
 	op   dlOp
 	rule FillRule
+	// run, on the first item of a run of strokes and fills of one pen
+	// (see join), is the number of items in it and union the index of its
+	// stilus.Union + 1; the other items of the run have inRun set. A
+	// raster device draws the run as their union.
+	run   int32
+	union int32
+	inRun bool
 	// color is the premultiplied paint of a fill or stroke.
 	color color.RGBA
 	m     Matrix
@@ -100,6 +107,21 @@ type displayList struct {
 	maskAt int32
 	// tag is the tag of what is recorded now, set by the interpreter.
 	tag int32
+	// runAt is the first item of the run the last item belongs to if more
+	// may join it (see join), else -1; runBands is the bands its items
+	// touch, summed, runPoints their points.
+	runAt     int32
+	runLast   int32
+	runBands  int
+	runPoints int
+	// unions are the runs' unions, made by finish; their elements are
+	// unionPaths and unionStyles, which hold views of the list's storage,
+	// or, for a run across several bands, unionShapes, prepared once for
+	// all bands.
+	unions      []stilus.Union
+	unionPaths  []Path
+	unionStyles []StrokeStyle
+	unionShapes []stilus.Shape
 	// ocTags are the memberships of optional content met on the page,
 	// each nested in its parent; ocIndex finds them while recording.
 	ocTags  []ocTag
@@ -166,7 +188,17 @@ func (l *displayList) reset(bounds image.Rectangle) {
 	l.clips = append(l.clips[:0], bounds)
 	l.dead = 0
 	l.open = l.open[:0]
+	l.runAt = -1
+	for i := range l.unions {
+		l.unions[i].Reset()
+	}
+	l.unions = l.unions[:0]
+	clear(l.unionPaths)
+	l.unionPaths = l.unionPaths[:0]
+	clear(l.unionStyles)
+	l.unionStyles = l.unionStyles[:0]
 	l.bounds = bounds
+	l.bandH = bandHeight(bounds.Dy())
 	l.bandStart = l.bandStart[:0]
 	l.bandItems = l.bandItems[:0]
 	l.complete, l.panic, l.blends = false, nil, false
@@ -203,7 +235,7 @@ func (l *displayList) FillPath(p *Path, m Matrix, rule FillRule, paint *Paint) {
 	}
 	it := dlItem{op: dlFill, rule: rule, color: paint.Color, m: m, bbox: bb, tag: l.tag}
 	l.addPath(&it, p)
-	l.items = append(l.items, it)
+	l.join(it, len(p.Points), rule == NonZero && windsOneWay(p))
 }
 
 func (l *displayList) StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Paint) {
@@ -216,7 +248,210 @@ func (l *displayList) StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Pain
 	}
 	it := dlItem{op: dlStroke, color: paint.Color, m: m, bbox: bb, style: l.style(st), tag: l.tag}
 	l.addPath(&it, p)
+	// Strokes thinner than a device pixel are drawn one pixel wide, as
+	// PDFium does, by design rather than as their union.
+	l.join(it, len(p.Points), !stilus.IsHairline(m, st))
+}
+
+// Strokes and fills of one pen are drawn as their union, as the exact
+// rendering does. Drawn one by one, partial coverages at the edges where
+// they overlap or abut multiply instead of adding up, and dense drawings
+// show light seams (conflation). Consecutive strokes and fills of one
+// opaque colour are therefore recorded as a run, which a raster device
+// draws through stilus.Canvas.FillUnion: their coverage summed in one
+// accumulator, NonZero, and composited once (stilus ADR 0006). Their
+// matrices and styles may differ. Nothing else may come between: a clip,
+// group, mask, image or text ends the run, and so does a knockout group
+// around it, whose objects each replace what is below. A fill joins only
+// if its windings cannot cancel those of the others: NonZero, every
+// subpath turning always the same way, and all of them the same way
+// (stilus reverses a path that winds against the others). Hairlines,
+// drawn one device pixel wide whatever their width, do not join. The
+// display list feeds the raster device only; Page.Run sees every
+// operation on its own.
+//
+// A run is bounded by maxRunPoints. It grows only by what overlaps the
+// box of the run, which isolated shapes gain nothing from, and only while
+// the bands that box touches are no more than its items touch (each band
+// draws the whole run, culling the items that miss it), so that scattered
+// short strokes stay apart.
+
+// join appends it, of n points, as the next item, to the run of the last
+// one if ok and it may join it: same opaque colour and tag, and its box
+// overlapping the run's.
+func (l *displayList) join(it dlItem, n int, ok bool) {
+	k := int32(len(l.items))
 	l.items = append(l.items, it)
+	b0, b1 := l.bandRange(it.bbox)
+	if ok && l.runAt >= 0 && l.runLast == k-1 && it.color.A == 255 && l.runPoints+n <= maxRunPoints {
+		head := &l.items[l.runAt]
+		bb := head.bbox.Union(it.bbox)
+		u0, u1 := l.bandRange(bb)
+		if head.color == it.color && head.tag == it.tag && head.bbox.Overlaps(it.bbox) &&
+			u1-u0 <= l.runBands+b1-b0 {
+			head.bbox = bb
+			head.run = max(head.run, 1) + 1
+			l.items[k].inRun = true
+			l.runLast = k
+			l.runBands += b1 - b0
+			l.runPoints += n
+			return
+		}
+	}
+	l.runAt = -1
+	if ok && it.color.A == 255 && (len(l.open) == 0 || !l.open[len(l.open)-1].knockout) {
+		l.runAt, l.runLast, l.runBands, l.runPoints = k, k, b1-b0, n
+	}
+}
+
+// endRun keeps further items from joining the run of the last.
+func (l *displayList) endRun() { l.runAt = -1 }
+
+// makeUnions makes the union of every run, now that the list's storage
+// no longer moves. A run across several bands is made of shapes, whose
+// geometry the bands share (stilus ADR 0005).
+func (l *displayList) makeUnions() {
+	nu, np, ns, nsh := 0, 0, 0, 0
+	for i := range l.items {
+		it := &l.items[i]
+		if it.run < 2 {
+			continue
+		}
+		nu++
+		if b0, b1 := l.bandRange(it.bbox); b1-b0 > 1 {
+			nsh += int(it.run)
+			continue
+		}
+		for _, m := range l.items[i : i+int(it.run)] {
+			np++
+			if m.op == dlStroke {
+				ns++
+			}
+		}
+	}
+	if nu == 0 {
+		return
+	}
+	// Sized once: the unions keep pointers into these.
+	l.unionPaths = slices.Grow(l.unionPaths[:0], np)[:np]
+	l.unionStyles = slices.Grow(l.unionStyles[:0], ns)[:ns]
+	l.unions = slices.Grow(l.unions[:0], nu)[:nu]
+	if cap(l.unionShapes) < nsh {
+		l.unionShapes = make([]stilus.Shape, nsh) // a Shape is not copied
+	}
+	l.unionShapes = l.unionShapes[:nsh]
+	np, ns, nu, nsh = 0, 0, 0, 0
+	for i := range l.items {
+		it := &l.items[i]
+		if it.run < 2 {
+			continue
+		}
+		u := &l.unions[nu]
+		u.Reset()
+		nu++
+		it.union = int32(nu)
+		b0, b1 := l.bandRange(it.bbox)
+		banded := b1-b0 > 1
+		for j := range l.items[i : i+int(it.run)] {
+			m := &l.items[i+j]
+			p := l.path(m)
+			var st *StrokeStyle
+			if m.op == dlStroke {
+				if banded {
+					st = &StrokeStyle{}
+				} else {
+					st = &l.unionStyles[ns]
+					ns++
+				}
+				s := &l.styles[m.style]
+				*st = s.st
+				st.Dash = l.dashes[s.d0:s.d1:s.d1]
+			}
+			if banded {
+				// A shape copies what it needs.
+				sh := &l.unionShapes[nsh]
+				nsh++
+				if m.op == dlFill {
+					sh.SetFill(&p, m.m, m.rule)
+				} else {
+					sh.SetStroke(&p, m.m, st)
+				}
+				u.Shape(sh)
+				continue
+			}
+			pp := &l.unionPaths[np]
+			np++
+			*pp = p
+			if m.op == dlFill {
+				u.Fill(pp, m.m, m.rule)
+			} else {
+				u.Stroke(pp, m.m, st)
+			}
+		}
+	}
+}
+
+// windsOneWay reports whether every subpath of p has a control polygon
+// that always turns left, or every one always right (convex outlines, or
+// stars): its winding numbers are then all of one sign, or 0.
+func windsOneWay(p *Path) bool {
+	if len(p.Verbs) == 0 || p.Verbs[0] != stilus.MoveTo || len(p.Points) > maxRunPoints {
+		return false
+	}
+	sign, pi := 0, 0
+	for v0 := 0; v0 < len(p.Verbs); {
+		v1, p1 := v0+1, pi+1
+		for v1 < len(p.Verbs) && p.Verbs[v1] != stilus.MoveTo {
+			p1 += verbPoints[p.Verbs[v1]&7]
+			v1++
+		}
+		p1 = min(p1, len(p.Points))
+		s := turning(p.Points[pi:p1])
+		if s == 0 || sign != 0 && s != sign {
+			return false
+		}
+		sign, v0, pi = s, v1, p1
+	}
+	return sign != 0
+}
+
+// verbPoints is the number of points of each path verb.
+var verbPoints = [8]int{stilus.MoveTo: 1, stilus.LineTo: 1, stilus.QuadTo: 2, stilus.CubicTo: 3}
+
+// turning returns 1 or -1 if the closed polygon pts always turns left, or
+// always right, and 0 otherwise.
+func turning(pts []stilus.Point) int {
+	if len(pts) < 3 {
+		return 0
+	}
+	sign := 0
+	// Edges a→b, b→c around the closed polygon, skipping repeated points.
+	prev := pts[len(pts)-1]
+	k := len(pts) - 2
+	for k >= 0 && pts[k] == prev {
+		k--
+	}
+	if k < 0 {
+		return 0
+	}
+	a := pts[k]
+	for _, c := range pts {
+		if c == prev {
+			continue
+		}
+		cross := (float64(prev.X)-float64(a.X))*(float64(c.Y)-float64(prev.Y)) -
+			(float64(prev.Y)-float64(a.Y))*(float64(c.X)-float64(prev.X))
+		switch {
+		case cross > 0 && sign >= 0:
+			sign = 1
+		case cross < 0 && sign <= 0:
+			sign = -1
+		case cross != 0:
+			return 0
+		}
+		a, prev = prev, c
+	}
+	return sign
 }
 
 func (l *displayList) FillGlyphs(run *GlyphRun, paint *Paint) {
@@ -487,6 +722,7 @@ func (l *displayList) EndGroup() {
 	g := &l.groups[begin.style]
 	if int(o.at) == len(l.items)-1 {
 		l.items = l.items[:o.first]
+		l.endRun()
 		return
 	}
 	var parent *dlGroup
@@ -572,6 +808,7 @@ func (l *displayList) finish() {
 			l.EndGroup()
 		}
 	}
+	l.makeUnions()
 	h := l.bounds.Dy()
 	l.bandH = bandHeight(h)
 	nb := (h + l.bandH - 1) / l.bandH
@@ -670,6 +907,17 @@ func (l *displayList) drawItems(dev Device, ds *drawState, idx []int32, r image.
 		it := &l.items[i]
 		if !it.bbox.Overlaps(r) || !vis[it.tag] {
 			continue
+		}
+		if rd != nil && !rd.t.knockout {
+			// A run is drawn as its union, by its first item.
+			if it.inRun {
+				continue
+			}
+			if it.union > 0 {
+				ds.paint.Color = it.color
+				rd.fillUnion(&l.unions[it.union-1], &ds.paint)
+				continue
+			}
 		}
 		if it.op == dlBeginGroup && rd != nil && rd.t.base != nil && l.groups[it.style].alone {
 			l.drawAlone(rd, ds, idx[k:], r, vis)

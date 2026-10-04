@@ -105,7 +105,8 @@
   "over": 0.25
  },
  "synthetic/hatch-2000-0.35mm.pdf": {
-  "over": 0.1
+  "over": 26.01,
+  "note": "PDFium draws each stroke on its own and leaves seams where they overlap (conflation); cera draws strokes of one pen as their union (#21). The exact rendering (accuracy/reference) is the reference: 0.9998x its ink, 0.08 % of pixels off by more than 16 levels (PDFium 0.972x, 23.5 %)."
  },
  "synthetic/hatch-2000-hairline.pdf": {
   "over": 0.1
