@@ -273,7 +273,7 @@ func TestHugeObjectNumber(t *testing.T) {
 
 func TestSASLprep(t *testing.T) {
 	for in, want := range map[string]string{
-		"SªSL­prep": "SaSLprep", // pdf.js saslprep-r6.pdf: ª → a, soft hyphen dropped
+		"S\u00aaSL\u00adprep": "SaSLprep", // pdf.js saslprep-r6.pdf: ª → a, soft hyphen dropped
 		"pass word": "pass word",
 		"ﬁle":       "file",
 		"plain":     "plain",
