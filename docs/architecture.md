@@ -12,7 +12,7 @@ cores are used. The rest comes from libraries:
 | rasterizer, stroker, clip, compositing; shaders for images, glyph masks, layers, blend modes, gradients, meshes | [timzifer/stilus](https://github.com/timzifer/stilus) (MIT) |
 | fonts: PDF side (encodings, widths, ToUnicode) | [go-pdfkit/pdffont](https://github.com/go-pdfkit/pdffont) (BSD-3) |
 | fonts: programs (TrueType, CFF, Type 1) | [go-opentype/opentype](https://github.com/go-opentype/opentype); FDArray matrices of CID-keyed CFF in cera (`cffcid.go`) |
-| fonts: stand-ins | [go-opentype/fonts](https://github.com/go-opentype/fonts): Arimo, Tinos, Cousine, DejaVu Sans subsets, Noto Sans JP/SC/KR (`fonts/cjk`) |
+| fonts: stand-ins | [go-opentype/fonts](https://github.com/go-opentype/fonts): TeX Gyre Heros, Termes, Cursor (GUST Font License, `internal/stdfont`); Arimo, Tinos, Cousine, DejaVu Sans subsets, Noto Sans JP/SC/KR (`fonts/cjk`) |
 | fonts: CMaps, vertical writing, font providers | cera; predefined CMaps from [Adobe's CMap resources](https://github.com/adobe-type-tools/cmap-resources) (BSD-3) |
 | text: glyph selection, glyph cache, Type 3, render modes | cera |
 | images: samples, masks, mip levels, image cache | cera; codecs [go-images/jpeg](https://github.com/go-images/jpeg) (BSD-3), [go-images/jpeg2000](https://github.com/go-images/jpeg2000), [gobig2](https://github.com/tannevaled/gobig2) (Apache-2.0) |

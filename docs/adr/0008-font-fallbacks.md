@@ -124,6 +124,36 @@ is unaffected (positions only). `TextDevice` reports the writing mode.
   imports. CNS1 uses Noto Sans SC (go-opentype has no TC). Those fonts are
   pinned at the default master of their variable upstream, which is a
   light weight; bold requests get the same weight.
+- **Standard font shapes** (#33): Helvetica, Times and Courier are drawn
+  with TeX Gyre Heros, Termes and Cursor 2.004 (URW's Nimbus Sans L,
+  Nimbus Roman No9 L and Nimbus Mono L; GUST Font License, an instance of
+  the LPPL, see `internal/stdfont/LICENSE-TeXGyre`), twelve unchanged
+  OpenType files of 85–145 KB (1.45 MB) in `internal/stdfont`. Arimo,
+  Tinos and Cousine have the metrics but Arial's, Times New Roman's and
+  Courier New's shapes (Cousine has no slab serifs at all), while PDFium
+  (Foxit's fonts) and MuPDF (URW's Nimbus) both draw the Helvetica, Times
+  and Courier shapes. The class table is unchanged: every sans serif name
+  gets Heros, every serif Termes; Courier, Courier New, Prestige, names
+  with `courier` or `typewriter` and unknown fixed-pitch fonts get Cursor,
+  the sans serif monospaces (Consolas, Menlo, names with `mono` …) keep
+  Cousine.
+  - TeX Gyre has no Cyrillic. A font whose codes (glyph names, or all
+    codes of a symbolic font) Arimo, Tinos or Cousine cover better gets
+    those instead (`Font.lacking`).
+  - Ascent and descent stay those of Arimo, Tinos and Cousine: TeX Gyre's
+    (1.15 em for Heros) would shrink auto-sized form text and change text
+    boxes.
+  - Cursor's regular and italic strokes (41 units) are thinner than
+    Courier's (51); their outlines are thickened by 0.010 em the way
+    FreeType's `FT_Outline_Embolden` does (`embolden`), which matches
+    MuPDF's ink density on body text.
+  - In pinned + pdf.js + borb (2763 pages, 3 per file, 96 dpi, against the
+    PDFium/MuPDF consensus) cera's outlier share falls from 4.43 % to
+    3.91 %: 439 pages better, 13 worse (by one or two glyphs of tiny
+    pages, mostly codes the font does not define, where every engine
+    draws something else). Courier alone gave 4.37 % (borb `0120.pdf` p1
+    47 % → 5 %); Helvetica and Times account for the rest (pdf.js
+    `issue6019.pdf` 50 % → 4 %).
 
 ## Consequences
 
@@ -135,6 +165,8 @@ is unaffected (positions only). `TextDevice` reports the writing mode.
 - The core module grows by the two symbol fonts and the CMap tables (a few
   hundred KB); CJK glyphs stay out of every binary that does not ask for
   them.
+- The TeX Gyre stand-ins add 1.45 MB to every binary on top of Arimo,
+  Tinos and Cousine, which stay for Cyrillic text.
 - `OpenWithPassword` becomes a shortcut for `OpenWith`.
 
 ## Alternatives considered

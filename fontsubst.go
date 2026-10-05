@@ -10,6 +10,7 @@ import (
 	"github.com/go-opentype/fonts/cousine"
 	"github.com/go-opentype/fonts/tinos"
 	"github.com/go-opentype/opentype"
+	"github.com/go-pdfkit/pdffont"
 	"github.com/go-pdfkit/reader"
 
 	"github.com/timzifer/cera/internal/stdfont"
@@ -19,9 +20,11 @@ import (
 // and many files name any font and hope. Such text is drawn, in this
 // order, with a program a FontProvider supplies, with the stand-ins for
 // Symbol and ZapfDingbats (their own alphabets, from internal/stdfont), or
-// with a stand-in chosen by name and descriptor from three families
-// metric-compatible with Helvetica, Times and Courier. Widths the document
-// gives always win, so lines keep their length whatever draws them.
+// with a stand-in chosen by name and descriptor from four families
+// metric-compatible with Helvetica, Times and Courier (two for Courier:
+// Courier itself and a sans serif monospace), with three more for text
+// the first lack glyphs for. Widths the document gives always win, so
+// lines keep their length whatever draws them.
 // Composite fonts get a program only from a provider.
 
 // FontProvider supplies programs for fonts a document names but does not
@@ -234,6 +237,8 @@ type standIn struct {
 	once sync.Once
 	ttf  []byte
 	font *opentype.Font
+	// bolden thickens the strokes, in em (see Font.bolden).
+	bolden float64
 }
 
 func (s *standIn) get() *opentype.Font {
@@ -244,23 +249,37 @@ func (s *standIn) get() *opentype.Font {
 // family holds regular, bold, italic and bold italic.
 type family [4]standIn
 
+// The stand-ins are TeX Gyre Heros, Termes and Cursor, the shapes of
+// Helvetica, Times and Courier that PDFium and MuPDF draw too, and Cousine
+// for monospaced faces without serifs. Arimo, Tinos and Cousine (Arial,
+// Times New Roman and Courier New metrics) take over for fonts whose
+// characters TeX Gyre lacks: it has no Cyrillic.
 var (
-	sansFamily  = family{{ttf: arimo.TTF}, {ttf: arimo.Bold}, {ttf: arimo.Italic}, {ttf: arimo.BoldItalic}}
-	serifFamily = family{{ttf: tinos.TTF}, {ttf: tinos.Bold}, {ttf: tinos.Italic}, {ttf: tinos.BoldItalic}}
+	sansFamily  = family{{ttf: stdfont.HelveticaRegular}, {ttf: stdfont.HelveticaBold}, {ttf: stdfont.HelveticaItalic}, {ttf: stdfont.HelveticaBoldItalic}}
+	serifFamily = family{{ttf: stdfont.TimesRegular}, {ttf: stdfont.TimesBold}, {ttf: stdfont.TimesItalic}, {ttf: stdfont.TimesBoldItalic}}
+	// Cursor's regular strokes (41 units) are thinner than Courier's (51)
+	// and than those of the faces PDFium and MuPDF draw.
+	courierFamily = family{{ttf: stdfont.CourierRegular, bolden: courierBolden}, {ttf: stdfont.CourierBold},
+		{ttf: stdfont.CourierItalic, bolden: courierBolden}, {ttf: stdfont.CourierBoldItalic}}
+
+	arimoFamily = family{{ttf: arimo.TTF}, {ttf: arimo.Bold}, {ttf: arimo.Italic}, {ttf: arimo.BoldItalic}}
+	tinosFamily = family{{ttf: tinos.TTF}, {ttf: tinos.Bold}, {ttf: tinos.Italic}, {ttf: tinos.BoldItalic}}
 	monoFamily  = family{{ttf: cousine.TTF}, {ttf: cousine.Bold}, {ttf: cousine.Italic}, {ttf: cousine.BoldItalic}}
 )
 
-// fontClass is how a stand-in draws a family: which of the three, and
-// how much narrower or wider.
+// fontClass is how a stand-in draws a family: which one, which takes
+// over when it lacks characters the font has, and how much narrower or
+// wider.
 type fontClass struct {
-	fam     *family
-	stretch float64 // 0: 1
+	fam, fallback *family
+	stretch       float64 // 0: 1
 }
 
 var (
-	sans  = fontClass{fam: &sansFamily}
-	serif = fontClass{fam: &serifFamily}
-	mono  = fontClass{fam: &monoFamily}
+	sans    = fontClass{fam: &sansFamily, fallback: &arimoFamily}
+	serif   = fontClass{fam: &serifFamily, fallback: &tinosFamily}
+	mono    = fontClass{fam: &monoFamily}
+	courier = fontClass{fam: &courierFamily, fallback: &monoFamily}
 )
 
 func narrow(c fontClass, s float64) fontClass { c.stretch = s; return c }
@@ -301,11 +320,11 @@ var knownFonts = map[string]fontClass{
 	"perpetua": serif, "calisto": serif, "cochin": serif, "hoefler": serif,
 	"timesnewromancondensed": narrow(serif, 0.82),
 	// Monospaced.
-	"courier": mono, "couriernew": mono, "consolas": mono, "lucidaconsole": mono,
+	"courier": courier, "couriernew": courier, "prestige": courier, "consolas": mono, "lucidaconsole": mono,
 	"lucidasanstypewriter": mono, "monaco": mono, "menlo": mono,
 	"andalemono": mono, "liberationmono": mono, "dejavusansmono": mono,
 	"sourcecodepro": mono, "sourcecode": mono, "inconsolata": mono,
-	"lettergothic": mono, "ocrb": mono, "ocra": mono, "prestige": mono,
+	"lettergothic": mono, "ocrb": mono, "ocra": mono,
 	"cascadia": mono, "cascadiacode": mono, "cascadiamono": mono,
 	"firacode": mono, "firamono": mono, "jetbrainsmono": mono, "msgothic": mono,
 	"orator": mono, "notomono": mono, "robotomono": mono, "ubuntumono": mono,
@@ -333,8 +352,9 @@ func classOf(req FontRequest) fontClass {
 	c := knownClass(baseKey(req.Name))
 	if c.fam == nil {
 		switch {
-		case strings.Contains(lower, "courier") || strings.Contains(lower, "mono") ||
-			strings.Contains(lower, "typewriter") || strings.Contains(lower, "consol"):
+		case strings.Contains(lower, "courier") || strings.Contains(lower, "typewriter"):
+			c = courier
+		case strings.Contains(lower, "mono") || strings.Contains(lower, "consol"):
 			c = mono
 		case strings.Contains(lower, "sans") || strings.Contains(lower, "gothic") ||
 			strings.Contains(lower, "grotesk") || strings.Contains(lower, "grotesque"):
@@ -344,7 +364,8 @@ func classOf(req FontRequest) fontClass {
 			strings.Contains(lower, "antiqua") || strings.Contains(lower, "mincho"):
 			c = serif
 		case req.FixedPitch:
-			c = mono
+			// What PDFium and MuPDF draw such fonts with.
+			c = courier
 		case req.Serif:
 			c = serif
 		default:
@@ -395,7 +416,7 @@ func stretchOf(d *Document, desc reader.Dict) float64 {
 	return 0
 }
 
-// standIn gives a simple font without a usable program one of the three
+// standIn gives a simple font without a usable program one of the
 // families; stretch is the descriptor's /FontStretch (0: none).
 func (f *Font) standIn(req FontRequest, stretch float64) {
 	c := classOf(req)
@@ -406,18 +427,68 @@ func (f *Font) standIn(req FontRequest, stretch float64) {
 	if req.Italic {
 		i |= 2
 	}
-	p := c.fam[i].get()
+	s := &c.fam[i]
+	if c.fallback != nil {
+		if p := s.get(); p != nil {
+			if n := f.lacking(p); n > 0 {
+				if q := c.fallback[i].get(); q != nil && f.lacking(q) < n {
+					s = &c.fallback[i]
+				}
+			}
+		}
+	}
+	p := s.get()
 	if p == nil {
 		return
 	}
 	f.attach(p)
+	if c.fallback != nil {
+		// TeX Gyre's ascent (1.15 em for Heros) is far above the cap
+		// height; the fallbacks' keep text fields and text boxes as they
+		// are.
+		if q := c.fallback[i].get(); q != nil {
+			f.lineMetrics(q)
+		}
+	}
 	f.substituted = true
+	f.bolden = s.bolden
 	switch {
 	case c.stretch > 0:
 		f.stretch = c.stretch
 	case stretch > 0:
 		f.stretch = stretch
 	}
+}
+
+// lacking counts the codes of the font, those with a glyph name or all
+// of a symbolic font, that p has no glyph for.
+func (f *Font) lacking(p *opentype.Font) int {
+	has := func(r rune) bool {
+		gid, ok := p.GlyphIndex(r)
+		return ok && gid != 0
+	}
+	n := 0
+	for code := range 256 {
+		name, named := f.pdf.GlyphName(code)
+		named = named && name != ".notdef"
+		symbolic := f.pdf.Symbolic()
+		if !named && !symbolic {
+			continue
+		}
+		if symbolic && (has(rune(code)) || has(rune(0xF000+code))) {
+			continue
+		}
+		if named {
+			if gid, ok := p.GlyphIndexByName(name); ok && gid != 0 {
+				continue
+			}
+			if r, ok := pdffont.RuneOfGlyphName(name); ok && has(r) {
+				continue
+			}
+		}
+		n++
+	}
+	return n
 }
 
 // missingKey is the Stats.Unsupported key of text in a font nothing could
@@ -439,4 +510,87 @@ func (f *Font) missingKey() string {
 		return "font-missing-korea1"
 	}
 	return "font-missing-cid"
+}
+
+// courierBolden is how much the regular and italic Courier stand-ins are
+// thickened, in em.
+const courierBolden = 0.010
+
+// embolden thickens an outline by strength (in its units), as FreeType's
+// FT_Outline_Embolden does: every point moves outwards along the bisector
+// of the normals of the edges meeting there, so far that both edges move
+// by strength/2. Control points move like on-curve points. Which side is
+// outwards follows from the orientation of the whole outline, so counters
+// shrink as strokes grow.
+func embolden(segs []opentype.Segment, strength float64) []opentype.Segment {
+	type ref struct{ seg, slot int }
+	var contours [][]ref
+	var cur []ref
+	flush := func() {
+		if len(cur) > 2 {
+			contours = append(contours, cur)
+		}
+		cur = nil
+	}
+	for i, g := range segs {
+		switch g.Op {
+		case opentype.SegMoveTo:
+			flush()
+			cur = append(cur, ref{i, 0})
+		case opentype.SegLineTo:
+			cur = append(cur, ref{i, 0})
+		case opentype.SegQuadTo:
+			cur = append(cur, ref{i, 0}, ref{i, 1})
+		case opentype.SegClose:
+			flush()
+		}
+	}
+	flush()
+	at := func(r ref) opentype.Point { return segs[r.seg].P[r.slot] }
+
+	var area float64
+	for _, c := range contours {
+		for i := range c {
+			a, b := at(c[i]), at(c[(i+1)%len(c)])
+			area += a.X*b.Y - b.X*a.Y
+		}
+	}
+	// Outwards is to the right of the direction of travel when the outer
+	// contours run counterclockwise (y up), to the left otherwise.
+	sign := 1.0
+	if area < 0 {
+		sign = -1
+	}
+	out := make([]opentype.Segment, len(segs))
+	copy(out, segs)
+	half := strength / 2
+	for _, c := range contours {
+		n := len(c)
+		for i := range c {
+			p := at(c[i])
+			var prev, next opentype.Point
+			okPrev, okNext := false, false
+			for j := 1; j < n && !okPrev; j++ {
+				prev = at(c[(i-j+n)%n])
+				okPrev = prev != p
+			}
+			for j := 1; j < n && !okNext; j++ {
+				next = at(c[(i+j)%n])
+				okNext = next != p
+			}
+			if !okPrev || !okNext {
+				continue
+			}
+			ix, iy := p.X-prev.X, p.Y-prev.Y
+			ox, oy := next.X-p.X, next.Y-p.Y
+			il, ol := math.Hypot(ix, iy), math.Hypot(ox, oy)
+			n1x, n1y := sign*iy/il, -sign*ix/il
+			n2x, n2y := sign*oy/ol, -sign*ox/ol
+			// Moving by (n1+n2)·k moves each edge by (1+n1·n2)·k; limit the
+			// miter of sharp spikes.
+			k := half / max(1+n1x*n2x+n1y*n2y, 0.25)
+			out[c[i].seg].P[c[i].slot] = opentype.Point{X: p.X + (n1x+n2x)*k, Y: p.Y + (n1y+n2y)*k}
+		}
+	}
+	return out
 }
