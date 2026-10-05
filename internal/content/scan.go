@@ -599,11 +599,14 @@ func (s *Scanner) inlineImage() {
 // preceded by white-space whose following bytes look like content again.
 func (s *Scanner) imageEnd(start int) int {
 	d := &s.vals[s.imgDict]
-	if n, ok := s.sampleBytes(d); ok && start+n <= len(s.buf) && eiAt(s.buf, start+n) {
+	// Lengths are compared before they are converted: a huge one would
+	// wrap around to a negative int.
+	rest := len(s.buf) - start
+	if n, ok := s.sampleBytes(d); ok && n >= 0 && n <= rest && eiAt(s.buf, start+n) {
 		return start + n
 	}
 	for _, key := range [...]string{"L", "Length"} {
-		if l := s.DictGet(d, key); l != nil && l.Kind == Number && l.Num >= 0 && start+int(l.Num) <= len(s.buf) && eiAt(s.buf, start+int(l.Num)) {
+		if l := s.DictGet(d, key); l != nil && l.Kind == Number && l.Num >= 0 && l.Num <= float64(rest) && eiAt(s.buf, start+int(l.Num)) {
 			return start + int(l.Num)
 		}
 	}
@@ -656,8 +659,11 @@ func (s *Scanner) sampleBytes(d *Operand) (int, bool) {
 			return 0, false
 		}
 	}
-	row := int(math.Ceil(w.Num * comps * bpc / 8))
-	return row * int(h.Num), true
+	n := math.Ceil(w.Num*comps*bpc/8) * math.Floor(h.Num)
+	if !(n >= 0 && n <= 1<<40) {
+		return 0, false
+	}
+	return int(n), true
 }
 
 // eiAt reports whether an EI keyword stands at i after optional white-space.

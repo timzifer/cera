@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/timzifer/cera/actions/workflows/ci.yml/badge.svg)](https://github.com/timzifer/cera/actions/workflows/ci.yml)
 [![Large corpora](https://github.com/timzifer/cera/actions/workflows/corpus-large.yml/badge.svg)](https://github.com/timzifer/cera/actions/workflows/corpus-large.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/timzifer/cera/badges/coverage.json)](https://github.com/timzifer/cera/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/timzifer/cera.svg)](https://pkg.go.dev/github.com/timzifer/cera)
 
 A PDF renderer in pure Go, aiming to be the fastest and leanest in the Go
@@ -278,6 +279,7 @@ lookup tables (CMYK press profiles among them) are drawn as the device
 space of as many components, CMYK through cera's SWOP profile; fonts neither embedded nor
 standing in (`font-missing`; non-embedded composite fonts no `FontProvider`
 supplies as `font-missing-japan1`, `-gb1`, `-cns1`, `-korea1` or `-cid`),
+embedded font programs that do not read (`font-bad`, drawn with a stand-in),
 CMaps that are neither predefined nor readable (`cmap-missing`, read as
 Identity),
 strokes, images and unbounded shadings of Type 3 glyphs in clipping modes

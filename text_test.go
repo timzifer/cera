@@ -69,6 +69,24 @@ func TestTextEmbeddedTrueType(t *testing.T) {
 	assertPixel(t, img, 40, 70, white) // the counter below the bar... is open
 }
 
+func TestTextUnreadableProgram(t *testing.T) {
+	font := "<< /Type /Font /Subtype /TrueType /BaseFont /ABCDEF+Arial /FirstChar 65 /LastChar 65 /Widths [667] /FontDescriptor 101 0 R >>"
+	desc := "<< /Type /FontDescriptor /FontName /ABCDEF+Arial /Flags 32 /FontFile2 102 0 R >>"
+	junk := strings.Repeat("not a font ", 20)
+	prog := fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(junk), junk)
+	img, st, err := renderPage(t, textPDF("BT /F1 60 Tf 20 20 Td (A) Tj (A) Tj ET", font, desc, prog), 0, RenderOptions{Background: white})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Counted once per string shown, and drawn with a stand-in.
+	if st.Unsupported["font-bad"] != 2 || len(st.Unsupported) != 1 {
+		t.Errorf("stats %+v", st)
+	}
+	if n := inked(img, image.Rect(20, 35, 62, 80)); n < 300 {
+		t.Errorf("only %d inked pixels", n)
+	}
+}
+
 func TestTextPositioning(t *testing.T) {
 	c := `BT /F1 10 Tf 12 TL 10 80 Td (Hello) Tj [(W) 120 (orld)] TJ T* [(big) -400 (gap)] TJ 0 -12 Td 2 Tc 5 Tw (a b) Tj ET`
 	doc, _ := Open(textPDF(c, helvetica))
