@@ -90,7 +90,7 @@ func (cs *colorSpace) rgb(v []float64) (r, g, b float64) {
 	case csIndexed:
 		i := int(v[0] + 0.5)
 		i = min(max(i, 0), cs.hival)
-		var c [4]float64
+		var c [maxComps]float64
 		n := cs.base.n
 		for j := range n {
 			if k := i*n + j; k < len(cs.lookup) {

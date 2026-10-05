@@ -239,12 +239,26 @@ func readProgram(key reader.Name, data []byte) (*opentype.Font, error) {
 	case "FontFile":
 		return opentype.ParseType1(data)
 	case "FontFile3":
-		if f, err := opentype.Parse(data); err == nil {
+		if f, err := parseSFNT(data); err == nil {
 			return f, nil
 		}
 		return opentype.ParseCFF(data)
 	}
-	return opentype.Parse(data)
+	return parseSFNT(data)
+}
+
+// parseSFNT parses a TrueType or OpenType program, again with its hmtx
+// table completed when that is all it lacks (padHmtx).
+func parseSFNT(data []byte) (*opentype.Font, error) {
+	f, err := opentype.Parse(data)
+	if err != nil {
+		if fixed, ok := padHmtx(data); ok {
+			if g, err2 := opentype.Parse(fixed); err2 == nil {
+				return g, nil
+			}
+		}
+	}
+	return f, err
 }
 
 // advance returns how far the pen moves for code (a CID for a composite
