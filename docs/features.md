@@ -47,9 +47,9 @@ Fonts a file does not embed:
 | space | notes |
 |---|---|
 | DeviceGray, DeviceRGB | |
-| DeviceCMYK | through a SWOP press profile; `OpenOptions.NaiveCMYK` for raw device values |
+| DeviceCMYK | through a SWOP press profile, or the caller's (`OpenOptions.CMYKProfile`); `OpenOptions.NaiveCMYK` for raw device values |
 | CalGray, CalRGB, Lab | through CIE XYZ, D50 (Bradford) |
-| ICCBased | grey and RGB matrix/TRC profiles; others by channel count |
+| ICCBased | grey and RGB matrix/TRC profiles; CMYK profiles of lut8, lut16 or lutAtoB tables (Lab or XYZ); others by channel count |
 | Separation, DeviceN | tint transforms; `/None` paints nothing |
 | Indexed | on any of the above |
 
@@ -129,7 +129,8 @@ column says.
 |---|---|---|
 | `tint-transform` | tint transform that does not read | as grey |
 | `shading-function` | shading function that does not read | – |
-| – | ICC profiles built from lookup tables (incl. CMYK press profiles) | as device space of as many components; CMYK through SWOP |
+| `icc-lut` | CMYK ICC profile cera cannot read | through DeviceCMYK's profile |
+| – | grey and RGB ICC profiles built from lookup tables | as device space of as many components |
 
 ### Transparency and graphics state
 
@@ -155,4 +156,4 @@ column says.
 
 Inputs past a [budget](budgets.md) are drawn with less and counted:
 `nesting-budget`, `pattern-budget`, `smask-budget`, `mesh-budget`,
-`annot-budget`, `image-too-large`.
+`annot-budget`, `image-too-large`, `icc-budget`.

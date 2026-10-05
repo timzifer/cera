@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -12,7 +14,8 @@ import (
 // Fuzz targets for the readers of untrusted structure of ADRs 0001–0008
 // (ADR 0010): tiling pattern cells, ICC profiles, optional content and
 // visibility expressions, AcroForm trees. Meshes are fuzzed by
-// FuzzShading, CMaps by internal/cmap's FuzzParse.
+// FuzzShading, CMaps by internal/cmap's FuzzParse, CMYK profiles also by
+// internal/cmyk's FuzzParse.
 
 // fuzzRender opens data and renders every page serially and from the
 // cached display list in parallel bands; only a panic fails.
@@ -71,6 +74,11 @@ func FuzzICC(f *testing.F) {
 	f.Add(iccBytes(2.2), 3)
 	f.Add(iccBytes(1), 1)
 	f.Add(iccBytes(0.01)[:140], 4)
+	for _, name := range []string{"toy-lut16.icc", "swop-mab.icc"} {
+		if b, err := os.ReadFile(filepath.Join("internal", "cmyk", "testdata", name)); err == nil {
+			f.Add(b, 4)
+		}
+	}
 	f.Fuzz(func(t *testing.T, profile []byte, n int) {
 		n = []int{1, 3, 4}[uint(n)%3]
 		if cs, _ := iccProfile(profile, n); cs != nil {

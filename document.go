@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/go-pdfkit/reader"
+
+	"github.com/timzifer/cera/internal/cmyk"
 )
 
 // Document is an open PDF file. Interpreting a page reads the document, and
@@ -19,6 +21,7 @@ type Document struct {
 
 	fontProvider FontProvider // fonts the document does not embed
 	naiveCMYK    bool         // OpenOptions.NaiveCMYK
+	devCMYK      *colorSpace  // DeviceCMYK as the options convert it
 
 	fontMu sync.Mutex
 	fonts  map[reader.Ref]*Font // loaded fonts, by reference
@@ -48,6 +51,11 @@ type Document struct {
 	shadings map[reader.Ref]*shadingEntry
 	patterns map[reader.Ref]*patternEntry
 
+	// ICCBased CMYK spaces by profile object, and their profiles, at most
+	// maxCMYKProfiles; under csMu.
+	iccSpaces  map[reader.Ref]csEntry
+	cmykTables map[*cmyk.Table]bool
+
 	// Transfer functions by ExtGState reference.
 	trMu      sync.Mutex
 	transfers map[reader.Ref]trEntry
@@ -65,15 +73,27 @@ func OpenWithPassword(data []byte, password string) (*Document, error) {
 	return OpenWith(data, OpenOptions{Password: password})
 }
 
-// OpenWith parses a PDF file with options: a password, and a provider of
-// fonts the document does not embed.
+// OpenWith parses a PDF file with options: a password, a provider of
+// fonts the document does not embed, and how CMYK is converted. It fails
+// on a CMYKProfile it cannot read.
 func OpenWith(data []byte, opt OpenOptions) (doc *Document, err error) {
 	defer recoverPanic(&err)
+	devCMYK := spaceCMYK
+	if opt.CMYKProfile != nil {
+		t, err := cmyk.Load(opt.CMYKProfile)
+		if err != nil {
+			return nil, fmt.Errorf("cera: CMYKProfile: %w", err)
+		}
+		devCMYK = &colorSpace{kind: csCMYK, n: 4, cmyk: t}
+	}
+	if opt.NaiveCMYK {
+		devCMYK = spaceCMYKNaive
+	}
 	d, err := reader.OpenWithPassword(data, opt.Password)
 	if err != nil {
 		return nil, err
 	}
-	return &Document{r: d, fontProvider: opt.Fonts, naiveCMYK: opt.NaiveCMYK}, nil
+	return &Document{r: d, fontProvider: opt.Fonts, naiveCMYK: opt.NaiveCMYK, devCMYK: devCMYK}, nil
 }
 
 // NumPages returns the number of pages.

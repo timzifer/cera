@@ -13,8 +13,6 @@ import (
 	"github.com/go-pdfkit/reader"
 	"github.com/tannevaled/gobig2"
 	"github.com/timzifer/stilus"
-
-	"github.com/timzifer/cera/internal/cmyk"
 )
 
 // Decoding turns an image XObject or inline image into planes (see
@@ -646,20 +644,21 @@ func (dc *imageDecoder) rgbaPlane(data []byte, sp *sampleSpec) (plane, *plane, b
 				s := row[3*x:][:3]
 				dst[x] = pack(s[0], s[1], s[2], 255)
 			}
-		case plain && sp.cs == spaceCMYKNaive && len(row) == 4*w:
+		case plain && sp.cs.kind == csCMYK && sp.cs.cmyk == nil && len(row) == 4*w:
 			for x := range dst {
 				s := row[4*x:][:4]
 				k := 255 - uint32(s[3])
 				dst[x] = pack(inkOff(s[0], k), inkOff(s[1], k), inkOff(s[2], k), 255)
 			}
-		case plain && sp.cs == spaceCMYK && len(row) == 4*w:
+		case plain && sp.cs.kind == csCMYK && len(row) == 4*w:
 			// Through the profile; neighbours often repeat.
+			t := sp.cs.cmyk
 			var last [4]byte
 			lastC := pack(255, 255, 255, 255) // of no ink
 			for x := range dst {
 				s := [4]byte(row[4*x:][:4])
 				if s != last {
-					r, g, b := cmyk.RGB8(s[0], s[1], s[2], s[3])
+					r, g, b := t.RGB8(s[0], s[1], s[2], s[3])
 					last, lastC = s, pack(r, g, b, 255)
 				}
 				dst[x] = lastC
@@ -885,13 +884,14 @@ func (d *Document) deviceSpace(n int) *colorSpace {
 	return spaceGray
 }
 
-// cmykSpace is DeviceCMYK as the document converts it: through the SWOP
-// profile of internal/cmyk, or naively (OpenOptions.NaiveCMYK).
+// cmykSpace is DeviceCMYK as the document converts it: through the
+// caller's profile (OpenOptions.CMYKProfile) or the bundled SWOP profile
+// of internal/cmyk, or naively (OpenOptions.NaiveCMYK).
 func (d *Document) cmykSpace() *colorSpace {
-	if d.naiveCMYK {
-		return spaceCMYKNaive
+	if d.devCMYK == nil {
+		return spaceCMYK
 	}
-	return spaceCMYK
+	return d.devCMYK
 }
 
 // rgbaFrom converts a decoded picture to premultiplied pixels.

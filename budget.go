@@ -26,6 +26,7 @@ const (
 	maxImageBytes     = 256 << 20
 	maxCodecPixels    = 64 << 20 // pixels a JPEG or JPEG 2000 codestream may declare
 	maxKnockoutGlyphs = 256      // glyphs of one run tested for overlap under TK
+	maxCMYKProfiles   = 16       // CMYK ICC profiles tabulated for one document, ~1 MB each
 )
 
 // Limits bound structures whose valid sizes the specification bounds or
@@ -80,6 +81,7 @@ var budgets = []budget{
 	{"maxImageBytes", maxImageBytes, "image-too-large", "bytes of one decoded image plane; a larger image is not drawn"},
 	{"maxCodecPixels", maxCodecPixels, "image-too-large", "pixels a JPEG or JPEG 2000 codestream may declare; a larger image is not drawn"},
 	{"maxKnockoutGlyphs", maxKnockoutGlyphs, "text-knockout", "glyphs of one run tested for overlap under text knockout; a longer run is taken to overlap"},
+	{"maxCMYKProfiles", maxCMYKProfiles, "icc-budget", "distinct CMYK ICC profiles one document converts through; spaces of further ones convert through DeviceCMYK's"},
 
 	{"maxComps", maxComps, "", "components of a colour value; further ones are ignored"},
 	{"maxFunctionDepth", maxFunctionDepth, "", "stitching functions naming functions; deeper ones do not read (shading-function, tint-transform)"},

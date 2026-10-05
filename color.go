@@ -35,8 +35,9 @@ type colorSpace struct {
 	// separation /None, which paints nothing.
 	fn   function
 	none bool
-	// naive marks DeviceCMYK converted without a profile.
-	naive bool
+	// cmyk is the profile a CMYK space converts through, nil for the naive
+	// conversion.
+	cmyk *cmyk.Table
 
 	once sync.Once
 	tint *[256][3]uint8 // one-component tint transform, tabulated
@@ -45,9 +46,10 @@ type colorSpace struct {
 var (
 	spaceGray = &colorSpace{kind: csGray, n: 1}
 	spaceRGB  = &colorSpace{kind: csRGB, n: 3}
-	spaceCMYK = &colorSpace{kind: csCMYK, n: 4}
+	// spaceCMYK is DeviceCMYK through the bundled profile.
+	spaceCMYK = &colorSpace{kind: csCMYK, n: 4, cmyk: cmyk.Default()}
 	// spaceCMYKNaive is DeviceCMYK without a profile (OpenOptions.NaiveCMYK).
-	spaceCMYKNaive = &colorSpace{kind: csCMYK, n: 4, naive: true}
+	spaceCMYKNaive = &colorSpace{kind: csCMYK, n: 4}
 	spacePattern   = &colorSpace{kind: csPattern, n: 0}
 )
 
@@ -80,8 +82,8 @@ func (cs *colorSpace) rgb(v []float64) (r, g, b float64) {
 	case csRGB:
 		return v[0], v[1], v[2]
 	case csCMYK:
-		if !cs.naive {
-			return cmyk.RGB(v[0], v[1], v[2], v[3])
+		if cs.cmyk != nil {
+			return cs.cmyk.RGB(v[0], v[1], v[2], v[3])
 		}
 		k := 1 - clamp01(v[3])
 		return (1 - clamp01(v[0])) * k, (1 - clamp01(v[1])) * k, (1 - clamp01(v[2])) * k
@@ -243,6 +245,10 @@ func (d *Document) makeColorSpace(o reader.Object, res reader.Dict, depth int) (
 			return nil, ""
 		}
 		n, _ := d.integer(s.Dict["N"])
+		if n == 4 {
+			ref, _ := a[1].(reader.Ref)
+			return d.iccCMYK(ref, s)
+		}
 		if prof, srgb := iccProfile(d.r.DecodeStreamRecovering(s).Data, n); prof != nil {
 			if srgb {
 				return d.deviceSpace(prof.n), ""
@@ -254,8 +260,6 @@ func (d *Document) makeColorSpace(o reader.Object, res reader.Dict, depth int) (
 			return spaceGray, ""
 		case 3:
 			return spaceRGB, ""
-		case 4:
-			return d.cmykSpace(), ""
 		}
 		if alt, ok := s.Dict["Alternate"]; ok {
 			return d.colorSpace(alt, res, depth+1)
@@ -290,6 +294,48 @@ func (d *Document) makeColorSpace(o reader.Object, res reader.Dict, depth int) (
 		return cs, ""
 	}
 	return nil, ""
+}
+
+// iccCMYK is an ICCBased space of four components, its profile in s
+// (object ref, if it is one): through the profile, as the other renderers
+// convert it, or where cera cannot read it through DeviceCMYK's, counted
+// as "icc-lut". NaiveCMYK takes precedence. Spaces of one profile object
+// are made once.
+func (d *Document) iccCMYK(ref reader.Ref, s *reader.Stream) (*colorSpace, string) {
+	if d.naiveCMYK {
+		return spaceCMYKNaive, ""
+	}
+	if ref != (reader.Ref{}) {
+		d.csMu.Lock()
+		e, ok := d.iccSpaces[ref]
+		d.csMu.Unlock()
+		if ok {
+			return e.cs, e.approx
+		}
+	}
+	e := csEntry{d.cmykSpace(), "icc-lut"}
+	if t, err := cmyk.Load(d.r.DecodeStreamRecovering(s).Data); err == nil {
+		e = csEntry{&colorSpace{kind: csCMYK, n: 4, cmyk: t}, ""}
+	}
+	d.csMu.Lock()
+	defer d.csMu.Unlock()
+	if t := e.cs.cmyk; e.approx == "" && !d.cmykTables[t] {
+		if len(d.cmykTables) >= maxCMYKProfiles {
+			e = csEntry{d.cmykSpace(), "icc-budget"}
+		} else {
+			if d.cmykTables == nil {
+				d.cmykTables = map[*cmyk.Table]bool{}
+			}
+			d.cmykTables[t] = true
+		}
+	}
+	if ref != (reader.Ref{}) {
+		if d.iccSpaces == nil {
+			d.iccSpaces = map[reader.Ref]csEntry{}
+		}
+		d.iccSpaces[ref] = e
+	}
+	return e.cs, e.approx
 }
 
 // gammas reads /Gamma: a number for CalGray, three for CalRGB.
