@@ -213,6 +213,9 @@ func (in *interp) show(s []byte, res reader.Dict, depth int) {
 		in.showType3(f, s, res, depth)
 		return
 	}
+	if f.bad {
+		in.st.unsupported("font-bad")
+	}
 	if f.program == nil {
 		in.st.unsupported(f.missingKey())
 	}

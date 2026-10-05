@@ -55,3 +55,37 @@ func padHmtx(data []byte) ([]byte, bool) {
 	binary.BigEndian.PutUint32(out[hmtx.dir+12:], uint32(need))
 	return out, true
 }
+
+// firstOfCollection returns the first font of a TrueType collection
+// ("ttcf") as a program of its own. Some writers embed a whole .ttc as
+// FontFile2; opentype.Parse reads only single fonts. The tables of a
+// collection are placed from the start of the file, so the first font's
+// table directory is written in front of the whole collection with its
+// offsets moved past itself. It returns false when data is no collection
+// or its first directory does not fit.
+func firstOfCollection(data []byte) ([]byte, bool) {
+	if len(data) < 16 || string(data[:4]) != "ttcf" || binary.BigEndian.Uint32(data[8:]) == 0 {
+		return nil, false
+	}
+	off := int64(binary.BigEndian.Uint32(data[12:]))
+	if off+12 > int64(len(data)) {
+		return nil, false
+	}
+	num := int64(binary.BigEndian.Uint16(data[off+4:]))
+	size := 12 + 16*num
+	if off+size > int64(len(data)) {
+		return nil, false
+	}
+	out := make([]byte, size+int64(len(data)))
+	copy(out, data[off:off+size])
+	copy(out[size:], data)
+	for i := range num {
+		e := 12 + 16*i + 8
+		t := int64(binary.BigEndian.Uint32(out[e:])) + size
+		if t > int64(len(data))+size {
+			return nil, false
+		}
+		binary.BigEndian.PutUint32(out[e:], uint32(t))
+	}
+	return out, true
+}

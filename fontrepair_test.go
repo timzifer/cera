@@ -79,3 +79,43 @@ func TestPadHmtxLeavesOthers(t *testing.T) {
 		}
 	}
 }
+
+// collection wraps a TrueType program as the only font of a collection.
+func collection(data []byte) []byte {
+	out := append([]byte("ttcf\x00\x01\x00\x00\x00\x00\x00\x01\x00\x00\x00\x10"), data...)
+	for i := range int(binary.BigEndian.Uint16(out[16+4:])) {
+		e := 16 + 12 + 16*i + 8
+		binary.BigEndian.PutUint32(out[e:], binary.BigEndian.Uint32(out[e:])+16)
+	}
+	return out
+}
+
+func TestReadProgramCollection(t *testing.T) {
+	orig := stdfont.Symbol.Program()
+	want, err := opentype.Parse(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ttc := collection(orig)
+	if _, err := opentype.Parse(ttc); err == nil {
+		t.Fatal("a collection parses as it is; the test no longer tests it")
+	}
+	got, err := readProgram("FontFile2", ttc)
+	if err != nil {
+		t.Fatalf("readProgram: %v", err)
+	}
+	if got.NumGlyphs() != want.NumGlyphs() {
+		t.Fatalf("%d glyphs, want %d", got.NumGlyphs(), want.NumGlyphs())
+	}
+	wf, gf := want.NewFace(want.UnitsPerEm()), got.NewFace(got.UnitsPerEm())
+	ws, _ := wf.GlyphOutline(50)
+	gs, _ := gf.GlyphOutline(50)
+	if !reflect.DeepEqual(ws, gs) {
+		t.Error("glyph 50: outline differs")
+	}
+	for _, data := range [][]byte{nil, []byte("ttcf"), ttc[:20], orig} {
+		if _, ok := firstOfCollection(data); ok {
+			t.Errorf("%.8q is taken for a collection", data)
+		}
+	}
+}

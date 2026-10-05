@@ -38,8 +38,10 @@ type Font struct {
 	// gives its FontMatrix in the FDArray (cffcid.go).
 	fdScales *cffFDScales
 	// substituted says the program is a stand-in for one the document
-	// does not carry (from a FontProvider or built in).
+	// does not carry (from a FontProvider or built in); bad that the
+	// document carries one cera cannot read.
 	substituted bool
+	bad         bool
 	// stretch scales the outlines of a stand-in horizontally (narrow
 	// faces); 0 is 1.
 	stretch float64
@@ -194,6 +196,8 @@ func (d *Document) loadFont(dict reader.Dict) *Font {
 			if key == "FontFile3" {
 				f.fdScales = readCFFFDScales(data)
 			}
+		} else {
+			f.bad = true
 		}
 	}
 	if f.program == nil {
@@ -247,9 +251,13 @@ func readProgram(key reader.Name, data []byte) (*opentype.Font, error) {
 	return parseSFNT(data)
 }
 
-// parseSFNT parses a TrueType or OpenType program, again with its hmtx
-// table completed when that is all it lacks (padHmtx).
+// parseSFNT parses a TrueType or OpenType program, the first font of a
+// collection (firstOfCollection), again with its hmtx table completed when
+// that is all it lacks (padHmtx).
 func parseSFNT(data []byte) (*opentype.Font, error) {
+	if first, ok := firstOfCollection(data); ok {
+		data = first
+	}
 	f, err := opentype.Parse(data)
 	if err != nil {
 		if fixed, ok := padHmtx(data); ok {
