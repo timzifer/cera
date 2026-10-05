@@ -235,6 +235,25 @@ func TestSoftMaskNone(t *testing.T) {
 	}
 }
 
+func TestImageSoftMaskOverridesState(t *testing.T) {
+	// An image's /SMask replaces the soft mask of the graphics state, which
+	// here hides everything; the fill alpha still applies. Illustrator's
+	// drop shadows are drawn so (borb 0279.pdf).
+	res := "/ExtGState << /S << /SMask << /S /Luminosity /G 100 0 R >> >> /H << /ca 0.5 >> >>" +
+		" /XObject << /M 101 0 R /P 103 0 R >>"
+	objs := []string{
+		formObj("", "0 g 0 0 200 100 re f"),
+		streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /SMask 102 0 R", []byte{255, 0, 0}),
+		streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", []byte{255}),
+		streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8", []byte{255, 0, 0}),
+	}
+	img, _ := renderTransparent(t, "/S gs q 100 0 0 100 0 0 cm /M Do Q q 100 0 0 100 100 0 cm /P Do Q", res, objs...)
+	assertNear(t, img, 50, 50, color.RGBA{255, 0, 0, 255}, 1)
+	assertNear(t, img, 150, 50, white, 1) // no /SMask: the state's mask applies
+	img, _ = renderTransparent(t, "/S gs /H gs 200 0 0 100 0 0 cm /M Do", res, objs...)
+	assertNear(t, img, 50, 50, color.RGBA{255, 127, 127, 255}, 2)
+}
+
 func TestSoftMaskKeepsPathAndText(t *testing.T) {
 	// The mask is drawn when the object is painted, between the path (or
 	// text) and its painting, and its own path and text must not leak.

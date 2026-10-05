@@ -56,7 +56,10 @@ type Image struct {
 	// itself, a soft mask (/SMask), a stencil mask (/Mask stream) or a
 	// colour key (/Mask array). Its colours are levels of alpha.
 	mask *texture
-	size int // bytes, including mip levels, for the cache
+	// softMask reports that mask is the image's /SMask, which replaces
+	// the soft mask of the graphics state.
+	softMask bool
+	size     int // bytes, including mip levels, for the cache
 	// opaque reports that every sample of the image is opaque: it has
 	// colours, no mask and no alpha of its own.
 	opaque bool

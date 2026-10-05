@@ -144,7 +144,7 @@ func (dc *imageDecoder) decode(dict reader.Dict, raw []byte) {
 					return
 				}
 			}
-			img.mask = stilus.NewTexture(m)
+			img.mask, img.softMask = stilus.NewTexture(m), true
 		case d.stream(dict["Mask"]) != nil:
 			s := d.stream(dict["Mask"])
 			m, _, ok := dc.plane(s.Dict, s.Raw, useStencil)
