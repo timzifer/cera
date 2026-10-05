@@ -914,6 +914,13 @@ func (in *interp) drawImage(r *imageResult) {
 		}
 		return
 	}
+	if img.softMask && in.gs.smask != nil {
+		// An image's /SMask overrides the soft mask of the graphics
+		// state; blend mode and alpha still apply (PDF 2.0, Table 87).
+		sm := in.gs.smask
+		in.gs.smask = nil
+		defer func() { in.gs.smask = sm }()
+	}
 	bm, grouped := in.gs.blend, in.transparent()
 	if img.Stencil {
 		if !in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
