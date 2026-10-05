@@ -29,6 +29,7 @@ func main() {
 	verbose := flag.Bool("v", false, "print timing and statistics per page")
 	workers := flag.Int("workers", 0, "goroutines drawing one page (0 = all cores)")
 	annots := flag.String("annots", "view", "annotations to draw: view, print or none")
+	imageFilter := flag.String("image-filter", "nearest", "how magnified images without /Interpolate are sampled: nearest or smooth")
 	var fields []string
 	flag.Func("field", "set a form field, `name=value` (repeatable); a check box or radio button takes the name of its state", func(s string) error {
 		if !strings.Contains(s, "=") {
@@ -52,13 +53,19 @@ func main() {
 		fmt.Fprintf(os.Stderr, "cera: -annots %q: want view, print or none\n", *annots)
 		os.Exit(2)
 	}
-	if err := run(flag.Arg(0), *dpi, *page, *out, *password, *transparent, *timeout, *verbose, *workers, mode, fields); err != nil {
+	filters := map[string]cera.ImageFilter{"nearest": cera.ImageNearest, "smooth": cera.ImageSmooth}
+	filter, ok := filters[*imageFilter]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "cera: -image-filter %q: want nearest or smooth\n", *imageFilter)
+		os.Exit(2)
+	}
+	if err := run(flag.Arg(0), *dpi, *page, *out, *password, *transparent, *timeout, *verbose, *workers, mode, filter, fields); err != nil {
 		fmt.Fprintln(os.Stderr, "cera:", err)
 		os.Exit(1)
 	}
 }
 
-func run(in string, dpi float64, page int, out, password string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, fields []string) error {
+func run(in string, dpi float64, page int, out, password string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, filter cera.ImageFilter, fields []string) error {
 	data, err := os.ReadFile(in)
 	if err != nil {
 		return err
@@ -96,7 +103,7 @@ func run(in string, dpi float64, page int, out, password string, transparent boo
 		t0 := time.Now()
 		err = p.Render(context.Background(), dst, cera.RenderOptions{
 			Scale: dpi / 72, Background: bg, Deadline: time.Now().Add(timeout), Stats: &st,
-			Workers: workers, Annotations: annots, Form: form,
+			Workers: workers, Annotations: annots, Form: form, ImageFilter: filter,
 		})
 		p.Release()
 		elapsed := time.Since(t0)

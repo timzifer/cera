@@ -559,3 +559,102 @@ func BenchmarkDecodeMatte(b *testing.B) {
 		})
 	}
 }
+
+func TestImageFilter(t *testing.T) {
+	im := streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", []byte{0, 255})
+	interp := streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Interpolate true", []byte{0, 255})
+	pdf := imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q q 100 0 0 100 100 0 cm /Im1 Do Q", im, interp)
+	doc, err := Open(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := doc.Page(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	smoothed := func(v uint8) bool { return v > 20 && v < 235 }
+	for i, c := range []struct {
+		filter ImageFilter
+		smooth bool
+	}{{ImageNearest, false}, {ImageSmooth, true}, {ImageNearest, false}} {
+		dst := image.NewRGBA(p.Bounds(1))
+		var st Stats
+		if err := p.Render(context.Background(), dst, RenderOptions{Background: white, ImageFilter: c.filter, Stats: &st}); err != nil {
+			t.Fatal(err)
+		}
+		if i > 0 && !st.Reused {
+			t.Errorf("filter %d: the page was interpreted again", c.filter)
+		}
+		// Between the sample centres at x = 25 and 75.
+		if got := dst.RGBAAt(40, 50).R; smoothed(got) != c.smooth {
+			t.Errorf("filter %d: pixel 40 is %d, smoothed %v", c.filter, got, c.smooth)
+		}
+		// /Interpolate is smoothed either way.
+		if got := dst.RGBAAt(140, 50).R; !smoothed(got) {
+			t.Errorf("filter %d: /Interpolate pixel 140 is %d", c.filter, got)
+		}
+	}
+}
+
+// An opaque image drawn right over another on the same parallelogram
+// replaces it, edges included (#25).
+func TestImageOverImageEdges(t *testing.T) {
+	gray := func(v byte, extra string) string {
+		return streamObj("/Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8"+extra, bytes.Repeat([]byte{v}, 16))
+	}
+	blk, wht := gray(0, ""), gray(255, "")
+	masked := gray(255, " /SMask 102 0 R")
+	opaqueMask := gray(255, "")
+	// The image covers x, y in [20.3, 70.3]: device column 20 and row 29
+	// (y = 70.3 is row 29.7) are 70 % covered.
+	const under = "q 50 0 0 50 20.3 20.3 cm /Im0 Do Q "
+	edges := []image.Point{{20, 50}, {70, 50}, {45, 29}, {45, 79}}
+	for _, c := range []struct {
+		name, over string
+		hidden     bool
+	}{
+		{"same matrix", "q 50 0 0 50 20.3 20.3 cm /Im1 Do Q", true},
+		{"flipped", "q 50 0 0 -50 20.3 70.3 cm /Im1 Do Q", true},
+		{"masked", "q 50 0 0 50 20.3 20.3 cm /Im2 Do Q", false},
+		{"clip between", "0 0 200 100 re W n q 50 0 0 50 20.3 20.3 cm /Im1 Do Q", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			for _, workers := range []int{1, 4} {
+				img, _ := renderImagePage(t, imagePDF(under+c.over, blk, wht, masked, opaqueMask), RenderOptions{Workers: workers})
+				for _, e := range edges {
+					got := img.RGBAAt(e.X, e.Y).R
+					// Drawn one after the other, about 0.7·255 + 0.3·0.3·255 = 201.
+					if c.hidden && got < 254 || !c.hidden && got > 230 {
+						t.Errorf("workers %d: edge %v is %d, lower image hidden %v", workers, e, got, c.hidden)
+					}
+				}
+				assertPixel(t, img, 45, 50, white)
+			}
+		})
+	}
+	// A smaller image on top leaves the lower one where it does not
+	// reach.
+	img, _ := renderImagePage(t, imagePDF(under+"q 40 0 0 40 25.3 25.3 cm /Im1 Do Q", blk, wht), RenderOptions{})
+	assertPixel(t, img, 22, 50, black)
+	assertPixel(t, img, 45, 50, white)
+}
+
+func TestSameParallelogram(t *testing.T) {
+	m := Matrix{50, 0, 0, 50, 20.3, 20.3}
+	for _, c := range []struct {
+		b    Matrix
+		want bool
+	}{
+		{m, true},
+		{Matrix{50, 0, 0, -50, 20.3, 70.3}, true},
+		{Matrix{-50, 0, 0, 50, 70.3, 20.3}, true},
+		{Matrix{0, 50, 50, 0, 20.3, 20.3}, true}, // transposed
+		{Matrix{50, 0, 0, 50, 20.4, 20.3}, false},
+		{Matrix{40, 0, 0, 40, 20.3, 20.3}, false},
+		{Matrix{50, 0, 10, 50, 20.3, 20.3}, false},
+	} {
+		if got := sameParallelogram(m, c.b); got != c.want {
+			t.Errorf("%v: %v, want %v", c.b, got, c.want)
+		}
+	}
+}

@@ -143,7 +143,13 @@ are clipped and antialiased like paths and a band samples only its own
 rows. An image drawn smaller than its samples is read from a mip level
 (the image averaged over 2^k × 2^k blocks, made on first use) at most twice
 as fine as the device, bilinearly; magnified images are sampled at the
-nearest pixel unless they ask for `/Interpolate`.
+nearest pixel unless they ask for `/Interpolate`, as Ghostscript does.
+`RenderOptions.ImageFilter = ImageSmooth` (`-image-filter smooth` in
+`cmd/cera`) smooths every magnified image bilinearly instead, as PDFium,
+MuPDF and Poppler do; switching it does not interpret the page again. An
+opaque image drawn right over another on the same parallelogram replaces
+it in the display list, so the lower image does not show through the
+antialiased edges as a frame.
 
 Transparency groups and soft masks are drawn into layers: an RGBA image
 over the part of the band the group can touch, taken from a buffer pool

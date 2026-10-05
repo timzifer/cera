@@ -10,6 +10,24 @@ import (
 // antialiased edges like any fill, and a band or tile samples only its own
 // pixels.
 
+// ImageFilter sets how a raster device samples a magnified image that does
+// not ask for /Interpolate.
+type ImageFilter uint8
+
+const (
+	// ImageNearest samples the nearest pixel, the literal reading of the
+	// spec (and what Ghostscript does): pixel art, QR codes and scans stay
+	// crisp.
+	ImageNearest ImageFilter = iota
+	// ImageSmooth samples bilinearly, as PDFium, MuPDF and Poppler do.
+	ImageSmooth
+)
+
+// smooth reports whether img is drawn smoothed when magnified under f.
+func (f ImageFilter) smooth(img *Image) bool {
+	return img.Interpolate || f == ImageSmooth
+}
+
 // imageDraw is the per-device state of DrawImage, reused between images.
 type imageDraw struct {
 	shader stilus.ImageShader
@@ -49,18 +67,21 @@ func (d *RasterDevice) drawImage(img *Image, m Matrix, paint *Paint) {
 	s := &id.shader
 	s.Reset()
 	defer s.Reset() // keep no image alive
+	// The image and its mask take the same filter, so that their edges
+	// line up.
+	smooth := d.ImageFilter.smooth(img)
 	if img.Stencil || img.color == nil {
 		if paint.Color.A == 0 {
 			return
 		}
 		s.SetColor(stilus.PackRGBA(paint.Color))
 	} else {
-		if paint.Color.A == 0 || !s.SetImage(img.color, toUnit(img.W, img.H).Mul(m), img.Interpolate, paint.Color.A) {
+		if paint.Color.A == 0 || !s.SetImage(img.color, toUnit(img.W, img.H).Mul(m), smooth, paint.Color.A) {
 			return
 		}
 	}
 	if t := img.mask; t != nil {
-		if !s.SetMask(t, toUnit(t.Base().W, t.Base().H).Mul(m), img.Interpolate) {
+		if !s.SetMask(t, toUnit(t.Base().W, t.Base().H).Mul(m), smooth) {
 			return
 		}
 	}
