@@ -40,8 +40,8 @@ const digitalCorpora = "https://digitalcorpora.s3.amazonaws.com/corpora/files"
 func Sources() []Source {
 	return []Source{
 		{
-			Name: "pdfjs", Note: "pdf.js test suite: every PDF committed to test/pdfs (regression files from bug reports)",
-			Repo: "https://github.com/mozilla/pdf.js", Commit: "18e8a26a3813a319b38c806076f0b0ef9baf1bf4", Paths: []string{"test/pdfs"},
+			Name: "pdfjs", Note: "pdf.js test suite: every PDF committed to test/pdfs (regression files from bug reports), with test_manifest.json for the passwords",
+			Repo: "https://github.com/mozilla/pdf.js", Commit: "18e8a26a3813a319b38c806076f0b0ef9baf1bf4", Paths: []string{"test/pdfs", "/test/test_manifest.json"},
 		},
 		{
 			Name: "borb", Note: "borb-pdf-corpus: ~630 real-world documents, 1999–2025 (MIT)",
