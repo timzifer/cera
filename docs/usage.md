@@ -46,6 +46,26 @@ go build -tags cera_nogyre ./...
 GOOS=js GOARCH=wasm go build -tags cera_nogyre -o cera.wasm ./cmd/cera
 ```
 
+CMYK (DeviceCMYK, and ICCBased spaces of four components whose profile
+cera cannot read) converts through a bundled SWOP press profile (CGATS
+TR 005). A caller who prints or proofs against a known condition gives
+cera that profile instead; documents opened with the same profile share
+its tables. An ICCBased space whose own CMYK profile cera reads (lut8,
+lut16 or lutAtoB tables) converts through it, as PDFium and MuPDF do:
+
+```go
+icc, err := os.ReadFile("CoatedFOGRA39.icc")
+doc, err := cera.OpenWith(data, cera.OpenOptions{
+	CMYKProfile: icc,   // an error from OpenWith if cera cannot read it
+	NaiveCMYK:   false, // true: device values, R = (1-C)(1-K), over all profiles
+})
+```
+
+PDFium and MuPDF convert DeviceCMYK close to Adobe's U.S. Web Coated
+(SWOP) v2, which may not be redistributed modified; with that profile as
+`CMYKProfile`, cera's CMYK colours come within a few levels of MuPDF's
+(ADR 0003).
+
 Layers (optional content) are switched per render, not on the document, so
 several views can show different layers; switching draws the cached display
 list again without interpreting the page:
@@ -104,4 +124,5 @@ render mode. `Page.Text` is built on it.
 
 ```sh
 go run ./cmd/cera -dpi 150 -v -o 'page-%d.png' input.pdf
+go run ./cmd/cera -cmyk-profile USWebCoatedSWOP.icc -page 1 print.pdf   # or -naive-cmyk
 ```

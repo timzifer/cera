@@ -1,8 +1,11 @@
 package cera
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -85,4 +88,33 @@ func TestBudgetsCounted(t *testing.T) {
 			t.Errorf("%s not counted: %v", c.key, st.Unsupported)
 		}
 	}
+}
+
+// TestCMYKProfileBudget converts the spaces of more CMYK profiles than
+// maxCMYKProfiles: the further ones through DeviceCMYK's, counted.
+func TestCMYKProfileBudget(t *testing.T) {
+	toy, err := os.ReadFile(filepath.Join("internal", "cmyk", "testdata", "toy-lut16.icc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cs, content strings.Builder
+	var objs []string
+	for i := range maxCMYKProfiles + 2 {
+		// Profiles that differ only in their header's creator field.
+		p := bytes.Clone(toy)
+		binary.BigEndian.PutUint32(p[80:], uint32(i))
+		objs = append(objs, streamObj("/N 4", p))
+		fmt.Fprintf(&cs, "/C%d [/ICCBased %d 0 R] ", i, 100+i)
+		fmt.Fprintf(&content, "/C%d cs 1 0 0 0 scn %d 0 10 100 re f\n", i, 10*i)
+	}
+	data := buildPDF([]string{content.String()}, "/Resources << /ColorSpace << "+cs.String()+">> >>", objs...)
+	img, st, err := renderPage(t, data, 0, RenderOptions{Background: white})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unsupported["icc-budget"] != 2 {
+		t.Errorf("unsupported %v, want icc-budget twice", st.Unsupported)
+	}
+	assertNear(t, img, 5, 50, rgba(0, 192, 252, 255), 2)                        // the toy profile
+	assertNear(t, img, 10*(maxCMYKProfiles+1)+5, 50, rgba(0, 174, 240, 255), 2) // the bundled one
 }

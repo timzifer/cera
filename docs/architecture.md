@@ -108,4 +108,10 @@ profile close to sRGB is taken as the device space; RGB images in another
 profile convert through tables per channel. DeviceCMYK converts through a
 SWOP press profile (colord's profile of CGATS TR 005, NPES, the
 characterization data's source; `internal/cmyk`), as a press prints it,
-or with `OpenOptions.NaiveCMYK` naively, as device values.
+or through the caller's (`OpenOptions.CMYKProfile`), or with
+`OpenOptions.NaiveCMYK` naively, as device values. An ICCBased CMYK space
+converts through its own profile. `internal/cmyk` reads a profile's
+lut8, lut16 or lutAtoB tables, converts as Little CMS does (relative
+colorimetric, black point compensation) and tabulates the result once
+per profile as linear sRGB at 17⁴ nodes, shared by content between
+documents while any holds it.

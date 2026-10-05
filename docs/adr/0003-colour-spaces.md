@@ -55,7 +55,8 @@ table, `rXYZ`/`gXYZ`/`bXYZ`, `rTRC`/`gTRC`/`bTRC`, `kTRC`, `wtpt`):
 - **LUT-based profiles** (`A2B0`, almost always CMYK) are not evaluated; the
   space is treated as its `/Alternate`, or by `/N`. Counted as
   `icc-lut` in `Stats.Unsupported` so the corpus shows whether a real CMS
-  is ever worth it.
+  is ever worth it. (Revised with #29: CMYK profiles are evaluated; see
+  below.)
 - Parsed profiles are cached per document by object reference.
 
 **DeviceCMYK** (and CMYK ICC falling back to it) converts through a SWOP
@@ -63,6 +64,24 @@ press profile instead of the naive formula, as every reference does
 through a profile of its own. JPEG images in CMYK go through the same
 conversion. (Revised with #20: the polynomial first decided here is too
 far off; see Alternatives.)
+
+**CMYK profiles** (revised with #29). Which profile a CMYK colour
+converts through, first match wins:
+
+1. `OpenOptions.NaiveCMYK`: none, device values, over all of the below.
+2. An ICCBased space of four components: its own profile, as PDFium and
+   MuPDF convert it. A profile cera cannot read falls through to 3 and is
+   counted as `icc-lut`; more than `maxCMYKProfiles` (16) distinct ones
+   in a document fall through as `icc-budget`.
+3. `OpenOptions.CMYKProfile`: the caller's profile, for DeviceCMYK. An
+   unreadable one is an error from `OpenWith`, not a silent fallback.
+4. The bundled default (CGATS TR 005, SWOP; `internal/cmyk/swop.bin`).
+
+Every profile converts the same way: relative colorimetric with black
+point compensation, as Little CMS does (`transicc -t 1 -b`), tabulated as
+linear sRGB at 17⁴ nodes, so fills, shading functions and images keep the
+one fast path. The escape hatch is per document (`OpenOptions`), not per
+render: the image cache holds converted pixels.
 
 **Rendering intent** (`ri`, `/Intent`) stays ignored; it only matters with a
 real CMS. **Output intents** are ignored.
@@ -113,8 +132,42 @@ Not done yet:
   falls from 51 % to 0.7 %; against PDFium it falls from 3.97 % to
   0.80 % there and from 88.95 % to 71.59 % on
   `pdfjs/function_based_shading_cmyk.pdf`.
-- LUT-based ICC profiles fall back on the device space of their component
-  count, but are not counted as `icc-lut`.
+- **CMYK profiles** (#29): `internal/cmyk` reads a CMYK profile's A2B1
+  table (A2B0 if it has none) of type lut8, lut16 or lutAtoB (A curves,
+  CLUT, M curves, matrix, B curves; the CLUT the same size along each
+  ink), with a Lab or XYZ connection space, and finds its black point as
+  Little CMS does for the relative colorimetric intent: for an output
+  profile Lab black through B2A0 and back through A2B1 (for a v4 profile
+  from the v4 perceptual black, as Little CMS compensates on the way
+  in), for any other the darkest colorant; L\* at most 50, neutral.
+  `gen` uses the same parser. Over the 20 CMYK press profiles Windows
+  ships (Adobe's, FOGRA, GRACoL, Japan Color; v2, lut16 A2B, lut8 B2A)
+  it comes within 0.3–0.6 levels of Little CMS 2.18 on average; the
+  largest differences, up to 14 levels, are colours outside sRGB, where
+  Little CMS interpolates between clipped nodes of its optimized
+  transform and cera clips after interpolating. The tests carry three
+  profiles made from the bundled table (lut16 v2, lutAtoB v4, a toy
+  grid of two nodes) and Little CMS's output for each.
+- Tables are shared by the hash of the profile while any document holds
+  them (weak pointers), ~1 MB each, made on first use; an ICCBased space
+  is resolved once per profile object.
+- **What the references convert with** (#29): on the borb pages of the
+  issue (`0135` p3, `0525` p1, `0590` p1) the differing colours are
+  DeviceCMYK fills and a DeviceCMYK JPEG, no embedded profiles. PDFium
+  and MuPDF convert DeviceCMYK close to Adobe's U.S. Web Coated (SWOP)
+  v2 with black point compensation; with that profile as
+  `CMYKProfile`, cera draws 61 112 183 (MuPDF 60 112 183, PDFium
+  50 112 183) for the blue of `0135`, 237 23 76 (237 22–23 75) for its
+  red, 36 29 12 (34–38 23–28 10–11) for the brown of `0590` and
+  14 20 30 (12–13 18–20 27–30) for the dark image of `0525`. The bundled
+  TR 005 profile stays the default, since Adobe's may be redistributed
+  only unmodified; the remaining difference with it is the difference
+  between the two press characterizations. `0561` is not a CMYK page: it
+  is an RGB JPEG under a `/DefaultRGB` of Adobe RGB (1998), which cera
+  does not apply (through it the magenta becomes 229 1 127, the
+  references' 230 1 127).
+- LUT-based grey and RGB ICC profiles fall back on the device space of
+  their component count, and are not counted as `icc-lut`.
 
 ## Alternatives considered
 

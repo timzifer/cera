@@ -3,6 +3,7 @@
 //	cera -dpi 150 -page 1 -o page.png input.pdf
 //	cera -dpi 150 -o 'out-%d.png' input.pdf   # all pages
 //	cera -field name=Ada -field agree=Yes -page 1 form.pdf
+//	cera -cmyk-profile CoatedFOGRA39.icc -page 1 print.pdf
 package main
 
 import (
@@ -30,6 +31,8 @@ func main() {
 	workers := flag.Int("workers", 0, "goroutines drawing one page (0 = all cores)")
 	annots := flag.String("annots", "view", "annotations to draw: view, print or none")
 	imageFilter := flag.String("image-filter", "nearest", "how magnified images without /Interpolate are sampled: nearest or smooth")
+	cmykProfile := flag.String("cmyk-profile", "", "ICC profile `file` DeviceCMYK is converted through instead of the bundled SWOP profile")
+	naiveCMYK := flag.Bool("naive-cmyk", false, "convert CMYK naively, as device values, without a profile")
 	var fields []string
 	flag.Func("field", "set a form field, `name=value` (repeatable); a check box or radio button takes the name of its state", func(s string) error {
 		if !strings.Contains(s, "=") {
@@ -59,18 +62,27 @@ func main() {
 		fmt.Fprintf(os.Stderr, "cera: -image-filter %q: want nearest or smooth\n", *imageFilter)
 		os.Exit(2)
 	}
-	if err := run(flag.Arg(0), *dpi, *page, *out, *password, *transparent, *timeout, *verbose, *workers, mode, filter, fields); err != nil {
+	opt := cera.OpenOptions{Password: *password, NaiveCMYK: *naiveCMYK}
+	if *cmykProfile != "" {
+		b, err := os.ReadFile(*cmykProfile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "cera:", err)
+			os.Exit(2)
+		}
+		opt.CMYKProfile = b
+	}
+	if err := run(flag.Arg(0), opt, *dpi, *page, *out, *transparent, *timeout, *verbose, *workers, mode, filter, fields); err != nil {
 		fmt.Fprintln(os.Stderr, "cera:", err)
 		os.Exit(1)
 	}
 }
 
-func run(in string, dpi float64, page int, out, password string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, filter cera.ImageFilter, fields []string) error {
+func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, filter cera.ImageFilter, fields []string) error {
 	data, err := os.ReadFile(in)
 	if err != nil {
 		return err
 	}
-	doc, err := cera.OpenWithPassword(data, password)
+	doc, err := cera.OpenWith(data, opt)
 	if err != nil {
 		return err
 	}

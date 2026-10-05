@@ -11,14 +11,21 @@
 // curves, the table interpolated as Little CMS does, output curves, Lab
 // D50, the profile's black point scaled to zero in XYZ, sRGB with its
 // primaries adapted to D50.
+//
+// Parse reads other CMYK profiles (lut8, lut16 or lutAtoB tables) the
+// same way, and Load tabulates them for drawing, shared by content: a
+// caller's profile for DeviceCMYK, and the profiles of ICCBased spaces.
 package cmyk
 
 import (
+	"crypto/sha256"
 	_ "embed"
 	"encoding/binary"
 	"errors"
 	"math"
+	"runtime"
 	"sync"
+	"weak"
 )
 
 //go:generate go run ./gen -out swop.bin
@@ -28,7 +35,8 @@ var swop []byte
 
 // Lut is an ICC lut16Type table (mft2): an input curve per input, a grid
 // of Grid nodes along each of the In inputs with Out outputs each, and an
-// output curve per output, all in [0, 1].
+// output curve per output, all in [0, 1]. Without curves (the CLUT of a
+// lutAtoBType), values pass unchanged.
 type Lut struct {
 	In, Out, Grid int
 	InCurves      [][]float64
@@ -39,12 +47,13 @@ type Lut struct {
 // Eval runs v (In values in [0, 1]) through the table into out.
 func (t *Lut) Eval(v, out []float64) {
 	var x [4]float64
-	for i := range t.In {
-		x[i] = curve(t.InCurves[i], v[i])
+	copy(x[:t.In], v)
+	for i, c := range t.InCurves {
+		x[i] = curve(c, x[i])
 	}
 	t.interp(x[:t.In], out)
-	for i := range t.Out {
-		out[i] = curve(t.OutCurves[i], out[i])
+	for i, c := range t.OutCurves {
+		out[i] = curve(c, out[i])
 	}
 }
 
@@ -129,9 +138,10 @@ func pow(n, e int) int {
 	return p
 }
 
-// Profile is a CMYK to Lab table with the black point of its profile.
+// Profile is a CMYK to PCS table with the black point of its profile.
 type Profile struct {
-	A2B   *Lut       // CMYK to Lab, the legacy 16-bit encoding of ICC v2
+	A2B   Transform  // CMYK to the PCS
+	PCS   PCS        // how A2B encodes the PCS
 	Black [3]float64 // XYZ, D50
 }
 
@@ -178,9 +188,9 @@ func (p *Profile) RGB(c [4]float64) (r, g, b float64) {
 
 // linear converts inks to linear sRGB components, not clipped.
 func (p *Profile) linear(c [4]float64) [3]float64 {
-	var lab [3]float64
-	p.A2B.Eval(c[:], lab[:])
-	xyz := LabToXYZ(DecodeLab(lab[:]))
+	var pcs [3]float64
+	p.A2B.Eval(c[:], pcs[:])
+	xyz := p.PCS.XYZOf(pcs[:])
 	// Black point compensation: the profile's black to zero, the white
 	// kept.
 	for i := range xyz {
@@ -194,8 +204,8 @@ func (p *Profile) linear(c [4]float64) [3]float64 {
 	}
 }
 
-// Grid is the number of nodes along each ink of the table that RGB and
-// RGB8 interpolate: linear sRGB, unclipped (smooth where a colour leaves
+// Grid is the number of nodes along each ink of the table that a Table
+// interpolates: linear sRGB, unclipped (smooth where a colour leaves
 // sRGB), made from the profile on first use.
 const Grid = 17
 
@@ -287,9 +297,12 @@ var encodeTab = func() *[encodeSteps + 1]float64 {
 // MarshalBinary writes p as swop.bin holds it: little-endian In, Out,
 // Grid and the number of curve entries (uint16 each), the input curves,
 // the grid and the output curves (uint16 over [0, 1]), the black point
-// (float64 each).
+// (float64 each). Only a lut16 table with Lab can be written.
 func (p *Profile) MarshalBinary() ([]byte, error) {
-	t := p.A2B
+	t, ok := p.A2B.(*Lut)
+	if !ok || p.PCS != LabV2 || len(t.InCurves) != t.In || len(t.OutCurves) != t.Out {
+		return nil, errors.New("cmyk: not a lut16 table with Lab")
+	}
 	n := len(t.InCurves[0])
 	b := binary.LittleEndian.AppendUint16(nil, uint16(t.In))
 	b = binary.LittleEndian.AppendUint16(b, uint16(t.Out))
@@ -357,35 +370,103 @@ func (p *Profile) UnmarshalBinary(b []byte) error {
 	return nil
 }
 
-var (
-	swopOnce    sync.Once
-	swopProfile Profile
-	swopGrid    []float32 // linear sRGB at Grid⁴ nodes
-)
+// Table is a profile tabulated for drawing: linear sRGB at Grid⁴ nodes,
+// made on first use, interpolated over the simplex of a cell. It is safe
+// for concurrent use.
+type Table struct {
+	once sync.Once
+	p    *Profile
+	bin  []byte // what p is read from, for the bundled table
+	grid []float32
+}
 
-// SWOP returns the profile cera converts DeviceCMYK with.
-func SWOP() *Profile {
-	swopOnce.Do(func() {
-		if err := swopProfile.UnmarshalBinary(swop); err != nil {
-			panic(err) // a broken build
+// NewTable tabulates p.
+func NewTable(p *Profile) *Table { return &Table{p: p} }
+
+func (t *Table) init() {
+	t.once.Do(func() {
+		if t.p == nil {
+			t.p = new(Profile)
+			if err := t.p.UnmarshalBinary(t.bin); err != nil {
+				panic(err) // a broken build
+			}
 		}
-		swopGrid = swopProfile.grid()
+		t.grid = t.p.grid()
 	})
-	return &swopProfile
 }
 
-// RGB converts inks in [0, 1] to sRGB components in [0, 1] through SWOP.
-func RGB(c, m, y, k float64) (r, g, b float64) {
-	SWOP()
-	return interp(swopGrid, [4]float64{c, m, y, k})
+// Profile returns the profile t tabulates.
+func (t *Table) Profile() *Profile {
+	t.init()
+	return t.p
 }
 
-// RGB8 converts ink bytes (255 is full ink) to sRGB bytes through SWOP.
-// It is RGB for bytes, made fast for images: the cell and fraction of
-// each byte, and sRGB bytes of linear values, come from tables.
-func RGB8(c, m, y, k uint8) (r, g, b uint8) {
-	SWOP()
-	t := swopGrid
+var swopTable = &Table{bin: swop}
+
+// Default returns the table of the bundled profile (SWOP).
+func Default() *Table { return swopTable }
+
+// SWOP returns the bundled profile.
+func SWOP() *Profile { return swopTable.Profile() }
+
+var cache struct {
+	sync.Mutex
+	m map[[32]byte]weak.Pointer[Table]
+}
+
+// Load parses an ICC profile (see Parse) and tabulates it. Tables are
+// shared by content while anyone holds them.
+func Load(icc []byte) (*Table, error) {
+	key := sha256.Sum256(icc)
+	cache.Lock()
+	t := cache.m[key].Value()
+	cache.Unlock()
+	if t != nil {
+		return t, nil
+	}
+	p, err := Parse(icc)
+	if err != nil {
+		return nil, err
+	}
+	t = NewTable(p)
+	cache.Lock()
+	defer cache.Unlock()
+	if old := cache.m[key].Value(); old != nil {
+		return old, nil
+	}
+	if cache.m == nil {
+		cache.m = map[[32]byte]weak.Pointer[Table]{}
+	}
+	cache.m[key] = weak.Make(t)
+	runtime.AddCleanup(t, func(key [32]byte) {
+		cache.Lock()
+		if cache.m[key].Value() == nil {
+			delete(cache.m, key)
+		}
+		cache.Unlock()
+	}, key)
+	return t, nil
+}
+
+// RGB converts inks in [0, 1] to sRGB components in [0, 1] through the
+// bundled profile.
+func RGB(c, m, y, k float64) (r, g, b float64) { return swopTable.RGB(c, m, y, k) }
+
+// RGB8 converts ink bytes to sRGB bytes through the bundled profile.
+func RGB8(c, m, y, k uint8) (r, g, b uint8) { return swopTable.RGB8(c, m, y, k) }
+
+// RGB converts inks in [0, 1] to sRGB components in [0, 1].
+func (t *Table) RGB(c, m, y, k float64) (r, g, b float64) {
+	t.init()
+	return interp(t.grid, [4]float64{c, m, y, k})
+}
+
+// RGB8 converts ink bytes (255 is full ink) to sRGB bytes. It is RGB for
+// bytes, made fast for images: the cell and fraction of each byte, and
+// sRGB bytes of linear values, come from tables.
+func (t *Table) RGB8(c, m, y, k uint8) (r, g, b uint8) {
+	t.init()
+	g8 := t.grid
 	cs, ms, ys, ks := cells[c], cells[m], cells[y], cells[k]
 	at := int(cs.at)*stride0 + int(ms.at)*stride1 + int(ys.at)*stride2 + int(ks.at)*3
 	// The inks in the order of their fractions, largest first (a sorting
@@ -408,8 +489,8 @@ func RGB8(c, m, y, k uint8) (r, g, b uint8) {
 	}
 	const unit = 1.0 / 256
 	w := float32(256-int(a0>>2)) * unit
-	_ = t[at+2]
-	fr, fg, fb := w*t[at], w*t[at+1], w*t[at+2]
+	_ = g8[at+2]
+	fr, fg, fb := w*g8[at], w*g8[at+1], w*g8[at+2]
 	strides := [4]int{stride0, stride1, stride2, 3}
 	for i, a := range [4]uint32{a0, a1, a2, a3} {
 		at += strides[a&3]
@@ -423,10 +504,10 @@ func RGB8(c, m, y, k uint8) (r, g, b uint8) {
 			next = a3
 		}
 		w = float32(int(a>>2)-int(next>>2)) * unit
-		_ = t[at+2]
-		fr += w * t[at]
-		fg += w * t[at+1]
-		fb += w * t[at+2]
+		_ = g8[at+2]
+		fr += w * g8[at]
+		fg += w * g8[at+1]
+		fb += w * g8[at+2]
 	}
 	return encode8(fr), encode8(fg), encode8(fb)
 }

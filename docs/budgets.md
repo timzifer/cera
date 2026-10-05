@@ -26,6 +26,7 @@ A test keeps this table in step with the code.
 | `maxImageBytes` | 256 Mi | `image-too-large` | bytes of one decoded image plane; a larger image is not drawn |
 | `maxCodecPixels` | 64 Mi | `image-too-large` | pixels a JPEG or JPEG 2000 codestream may declare; a larger image is not drawn |
 | `maxKnockoutGlyphs` | 256 | `text-knockout` | glyphs of one run tested for overlap under text knockout; a longer run is taken to overlap |
+| `maxCMYKProfiles` | 16 | `icc-budget` | distinct CMYK ICC profiles one document converts through; spaces of further ones convert through DeviceCMYK's |
 | `maxComps` | 32 | – | components of a colour value; further ones are ignored |
 | `maxFunctionDepth` | 8 | – | stitching functions naming functions; deeper ones do not read (shading-function, tint-transform) |
 | `maxPSStack` | 100 | – | operand stack of a PostScript calculator function; further pushes are dropped |
