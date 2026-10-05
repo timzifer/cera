@@ -25,10 +25,6 @@ github.com/go-opentype/fonts v0.10.0 h1:9f7ik795SlBEJjz6iqBE/ZV2PaTauAj537MMWw9t
 github.com/go-opentype/fonts v0.10.0/go.mod h1:b+o8v1zDZ6B3GixA398jGILAh09+WwfyoYz52zKe7DA=
 github.com/go-opentype/opentype v0.13.0 h1:q9K7IGDfwMP/ik51ZkwiYf6jbaqPfocvAIuojetd0UQ=
 github.com/go-opentype/opentype v0.13.0/go.mod h1:AOixevJf7XQaH7+WG+OMIOZEbYPXfMqklVk26Y6YTUU=
-github.com/go-pdfkit/pdffont v0.3.1 h1:+K7opHGRERDZ5EMkA12s1GT48t8GpncArhnyzyc5bxU=
-github.com/go-pdfkit/pdffont v0.3.1/go.mod h1:eFJ/7t9AvcX76KY5qNJMMKetz8hUUUdVM1qSWLi3S1g=
-github.com/go-pdfkit/reader v0.6.0 h1:KAabNOYUcTlZlNBTbG9bEhWP1NiZhjuhzUdavdTdfes=
-github.com/go-pdfkit/reader v0.6.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
 github.com/go-text/render v0.2.1 h1:qwHhxqGUjjg4L0XyJWj7M7bpY75NZM+kBpv2Yfw5mcg=
 github.com/go-text/render v0.2.1/go.mod h1:HCCAq8MUlm/WRcXshBb4K/n+IkjeXQ1c2Ba+yICSm0A=
 github.com/go-text/typesetting v0.3.4 h1:YYurUOtEb9kGSOz4uE3k4OpBGsp1dDL8+fjCeaFamAU=

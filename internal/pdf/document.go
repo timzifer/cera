@@ -690,5 +690,15 @@ func (d *Document) decode(ctx *loadCtx, t *table, s *Stream) Decoded {
 	return decodeChain(s.Dict, d.Raw(s), resolve)
 }
 
+// DecodeBytes applies the filter chain of dict to raw, following references
+// through the document, without the cache: for data that is not a stream
+// of the file, such as an inline image, or that is decoded once.
+func (d *Document) DecodeBytes(dict Dict, raw []byte) Decoded {
+	ctx := getCtx()
+	defer putCtx(ctx)
+	t := d.tab.Load()
+	return decodeChain(dict, raw, func(o Object) Object { return d.resolve(ctx, t, o) })
+}
+
 // Resolver returns the document's Resolve as a function value.
 func (d *Document) Resolver() func(Object) Object { return d.resolveFn }

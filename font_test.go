@@ -67,7 +67,7 @@ func TestType1BuiltinEncodingWithoutCmap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := d.font(d.dict(d.dict(mustPage(t, d).dict["Resources"])["Font"])["F1"])
+	f := d.font(d.dict(d.dict(mustPage(t, d).dict.Get("Resources")).Get("Font")).Get("F1"))
 	if f.program == nil || f.substituted || f.bad {
 		t.Fatalf("program not read: %+v", f)
 	}

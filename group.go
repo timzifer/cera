@@ -3,7 +3,7 @@ package cera
 import (
 	"image/color"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 	"github.com/timzifer/stilus"
 )
 
@@ -18,13 +18,13 @@ import (
 
 // softMask is the soft mask of a graphics state.
 type softMask struct {
-	form *reader.Stream
-	res  reader.Dict // resources where the ExtGState was set
+	form *pdf.Stream
+	res  pdf.Dict // resources where the ExtGState was set
 	ctm  Matrix
 	sm   SoftMask
 }
 
-var blendModes = map[reader.Name]BlendMode{
+var blendModes = map[pdf.Name]BlendMode{
 	"Normal": BlendNormal, "Compatible": BlendNormal,
 	"Multiply": BlendMultiply, "Screen": BlendScreen, "Overlay": BlendOverlay,
 	"Darken": BlendDarken, "Lighten": BlendLighten,
@@ -36,13 +36,13 @@ var blendModes = map[reader.Name]BlendMode{
 
 // blendMode reads /BM: a name, or an array of names of which the first
 // known one counts.
-func (d *Document) blendMode(o reader.Object) (BlendMode, bool) {
+func (d *Document) blendMode(o pdf.Object) (BlendMode, bool) {
 	o = d.resolve(o)
-	if n, ok := reader.ToName(o); ok {
+	if n, ok := o.Name(); ok {
 		bm, ok := blendModes[n]
 		return bm, ok
 	}
-	if a, ok := reader.ToArray(o); ok {
+	if a, ok := o.Array(); ok {
 		for _, e := range a {
 			if n, ok := d.name(e); ok {
 				if bm, ok := blendModes[n]; ok {
@@ -56,22 +56,22 @@ func (d *Document) blendMode(o reader.Object) (BlendMode, bool) {
 
 // softMask reads the /SMask entry of an ExtGState set in the current
 // state; nil for /None and for what cannot be read.
-func (in *interp) softMask(o reader.Object, res reader.Dict) *softMask {
+func (in *interp) softMask(o pdf.Object, res pdf.Dict) *softMask {
 	doc := in.doc
 	o = doc.resolve(o)
-	if n, ok := reader.ToName(o); ok {
+	if n, ok := o.Name(); ok {
 		if n != "None" {
 			in.st.Errors++
 		}
 		return nil
 	}
-	d, ok := reader.ToDict(o)
+	d, ok := o.Dict()
 	if !ok {
 		in.st.Errors++
 		return nil
 	}
-	s := doc.stream(d["G"])
-	kind, _ := doc.name(d["S"])
+	s := doc.stream(d.Get("G"))
+	kind, _ := doc.name(d.Get("S"))
 	if s == nil || (kind != "Luminosity" && kind != "Alpha") {
 		in.st.Errors++
 		return nil
@@ -79,12 +79,12 @@ func (in *interp) softMask(o reader.Object, res reader.Dict) *softMask {
 	m := &softMask{form: s, res: res, ctm: in.gs.ctm, sm: SoftMask{Luminosity: kind == "Luminosity"}}
 	m.sm.Backdrop = color.RGBA{A: 255}
 	if m.sm.Luminosity {
-		if bc := doc.floats(d["BC"]); len(bc) > 0 {
+		if bc := doc.floats(d.Get("BC")); len(bc) > 0 {
 			cs := spaceGray
-			if g := doc.dict(s.Dict["Group"]); g != nil {
+			if g := doc.dict(s.Dict.Get("Group")); !g.IsZero() {
 				// Depth 1: Default spaces do not remap a group's
 				// blending space.
-				if c, _ := doc.colorSpace(g["CS"], res, 1); c != nil {
+				if c, _ := doc.colorSpace(g.Get("CS"), res, 1); c != nil {
 					cs = c
 				}
 			}
@@ -94,7 +94,7 @@ func (in *interp) softMask(o reader.Object, res reader.Dict) *softMask {
 			}
 		}
 	}
-	if tr, ok := d["TR"]; ok {
+	if tr, ok := d.Lookup("TR"); ok {
 		if n, ok := doc.name(tr); !ok || n != "Identity" {
 			if m.sm.Transfer = lut256(doc.function(tr, 0)); m.sm.Transfer == nil {
 				in.st.unsupported("smask-transfer")
@@ -209,19 +209,19 @@ func (in *interp) strokePad() float64 {
 
 // runForm runs the content of form s in the current state: its matrix,
 // its BBox as a clip, a new path. The caller saves and restores the state.
-func (in *interp) runForm(s *reader.Stream, parent reader.Dict, depth int) {
+func (in *interp) runForm(s *pdf.Stream, parent pdf.Dict, depth int) {
 	in.formSpace(s)
 	in.formContent(s, parent, depth)
 }
 
 // formContent runs the content of form s with a new path.
-func (in *interp) formContent(s *reader.Stream, parent reader.Dict, depth int) {
+func (in *interp) formContent(s *pdf.Stream, parent pdf.Dict, depth int) {
 	doc := in.doc
-	res := doc.dict(s.Dict["Resources"])
-	if res == nil {
+	res := doc.dict(s.Dict.Get("Resources"))
+	if res.IsZero() {
 		res = parent
 	}
-	dec := doc.r.DecodeStreamRecovering(s)
+	dec := doc.r.Decode(s)
 	if dec.Recovered {
 		in.st.Errors++
 	}
@@ -230,7 +230,7 @@ func (in *interp) formContent(s *reader.Stream, parent reader.Dict, depth int) {
 
 // content runs a content stream with a new path, in the current state,
 // which is the space of the patterns it names.
-func (in *interp) content(data []byte, res reader.Dict, depth int) {
+func (in *interp) content(data []byte, res pdf.Dict, depth int) {
 	in.path.Reset()
 	in.hasCur, in.clip = false, -1
 	base := in.base
@@ -243,9 +243,9 @@ func (in *interp) content(data []byte, res reader.Dict, depth int) {
 
 // formSpace applies the /Matrix of form s to the CTM and clips to its
 // /BBox, returning the box (with ok false if it has none).
-func (in *interp) formSpace(s *reader.Stream) (bbox Rect, ok bool) {
+func (in *interp) formSpace(s *pdf.Stream) (bbox Rect, ok bool) {
 	doc := in.doc
-	if a, isArr := reader.ToArray(doc.resolve(s.Dict["Matrix"])); isArr && len(a) == 6 {
+	if a, isArr := doc.resolve(s.Dict.Get("Matrix")).Array(); isArr && len(a) == 6 {
 		var m Matrix
 		valid := true
 		for i, o := range a {
@@ -257,7 +257,7 @@ func (in *interp) formSpace(s *reader.Stream) (bbox Rect, ok bool) {
 			in.gs.ctm = m.Mul(in.gs.ctm)
 		}
 	}
-	if bbox, ok = doc.rect(s.Dict["BBox"]); ok {
+	if bbox, ok = doc.rect(s.Dict.Get("BBox")); ok {
 		in.dev.ClipRect(bbox, in.gs.ctm)
 		in.gs.clips++
 	}

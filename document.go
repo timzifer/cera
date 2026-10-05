@@ -6,7 +6,7 @@ import (
 	"math"
 	"sync"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 
 	"github.com/timzifer/cera/internal/cmyk"
 )
@@ -17,19 +17,19 @@ import (
 // Once a page has been rendered at a scale, further renders of it at that
 // scale only draw its display list and may run concurrently.
 type Document struct {
-	r *reader.Document
+	r *pdf.Document
 
 	fontProvider FontProvider // fonts the document does not embed
 	naiveCMYK    bool         // OpenOptions.NaiveCMYK
 	devCMYK      *colorSpace  // DeviceCMYK as the options convert it
 
 	fontMu sync.Mutex
-	fonts  map[reader.Ref]*Font // loaded fonts, by reference
+	fonts  map[pdf.Ref]*Font // loaded fonts, by reference
 
 	// Decoded images by reference, least recently used last, bounded by
 	// imageCacheBytes.
 	imgMu    sync.Mutex
-	imgs     map[reader.Ref]*list.Element
+	imgs     map[pdf.Ref]*list.Element
 	imgLRU   list.List
 	imgBytes int
 
@@ -42,23 +42,23 @@ type Document struct {
 	ff       formFonts // fonts of generated widget appearances
 
 	pageIdxOnce sync.Once
-	pageIdx     map[reader.Ref]int // page index by reference, for links
+	pageIdx     map[pdf.Ref]int // page index by reference, for links
 
 	// Colour spaces and shadings by reference.
 	csMu     sync.Mutex
-	spaces   map[reader.Ref]csEntry
+	spaces   map[pdf.Ref]csEntry
 	shMu     sync.Mutex
-	shadings map[reader.Ref]*shadingEntry
-	patterns map[reader.Ref]*patternEntry
+	shadings map[pdf.Ref]*shadingEntry
+	patterns map[pdf.Ref]*patternEntry
 
 	// ICCBased CMYK spaces by profile object, and their profiles, at most
 	// maxCMYKProfiles; under csMu.
-	iccSpaces  map[reader.Ref]csEntry
+	iccSpaces  map[pdf.Ref]csEntry
 	cmykTables map[*cmyk.Table]bool
 
 	// Transfer functions by ExtGState reference.
 	trMu      sync.Mutex
-	transfers map[reader.Ref]trEntry
+	transfers map[pdf.Ref]trEntry
 }
 
 // Open parses a PDF file. Damaged cross-reference tables, wrong stream
@@ -89,7 +89,7 @@ func OpenWith(data []byte, opt OpenOptions) (doc *Document, err error) {
 	if opt.NaiveCMYK {
 		devCMYK = spaceCMYKNaive
 	}
-	d, err := reader.OpenWithPassword(data, opt.Password)
+	d, err := pdf.OpenWithPassword(data, opt.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -98,9 +98,6 @@ func OpenWith(data []byte, opt OpenOptions) (doc *Document, err error) {
 
 // NumPages returns the number of pages.
 func (d *Document) NumPages() int { return d.r.PageCount() }
-
-// Reader exposes the underlying parser for features cera does not wrap.
-func (d *Document) Reader() *reader.Document { return d.r }
 
 // Page returns page i (0-based). Pages are lightweight; nothing is
 // interpreted until the page is rendered.
@@ -135,7 +132,7 @@ var letter = Rect{0, 0, 612, 792}
 type Page struct {
 	doc   *Document
 	index int
-	dict  reader.Dict
+	dict  pdf.Dict
 
 	// Box is the visible area in default user space: CropBox clipped to
 	// MediaBox, scaled by UserUnit.
@@ -170,59 +167,50 @@ func (p *Page) Size() (w, h float64) {
 
 func (p *Page) geometry() {
 	d := p.doc
-	media, ok := d.rect(p.dict["MediaBox"])
+	media, ok := d.rect(p.dict.Get("MediaBox"))
 	if !ok {
 		media = letter
 	}
 	box := media
-	if crop, ok := d.rect(p.dict["CropBox"]); ok {
+	if crop, ok := d.rect(p.dict.Get("CropBox")); ok {
 		c := Rect{max(crop.X0, media.X0), max(crop.Y0, media.Y0), min(crop.X1, media.X1), min(crop.Y1, media.Y1)}
 		if c.Dx() > 0 && c.Dy() > 0 {
 			box = c
 		}
 	}
 	p.Box = box
-	if v, ok := d.num(p.dict["Rotate"]); ok {
+	if v, ok := d.num(p.dict.Get("Rotate")); ok {
 		r := int(math.Mod(math.Round(v/90), 4))
 		p.Rotate = (r + 4) % 4 * 90
 	}
 	p.unit = 1
-	if v, ok := d.num(p.dict["UserUnit"]); ok && v > 0 && v < 1000 {
+	if v, ok := d.num(p.dict.Get("UserUnit")); ok && v > 0 && v < 1000 {
 		p.unit = v
 	}
 }
 
-// resolve follows references; broken ones become nil.
-func (d *Document) resolve(o reader.Object) reader.Object {
-	if o == nil {
-		return nil
-	}
-	o, err := d.r.Resolve(o)
-	if err != nil {
-		return nil
-	}
-	return o
-}
+// resolve follows references; broken ones become null.
+func (d *Document) resolve(o pdf.Object) pdf.Object { return d.r.Resolve(o) }
 
-func (d *Document) dict(o reader.Object) reader.Dict {
-	v, _ := reader.ToDict(d.resolve(o))
+func (d *Document) dict(o pdf.Object) pdf.Dict {
+	v, _ := d.resolve(o).Dict()
 	return v
 }
 
-func (d *Document) num(o reader.Object) (float64, bool) {
-	f, ok := reader.ToFloat(d.resolve(o))
+func (d *Document) num(o pdf.Object) (float64, bool) {
+	f, ok := d.resolve(o).Float()
 	if !ok || math.IsNaN(f) || math.IsInf(f, 0) {
 		return 0, false
 	}
 	return f, true
 }
 
-func (d *Document) name(o reader.Object) (reader.Name, bool) {
-	return reader.ToName(d.resolve(o))
+func (d *Document) name(o pdf.Object) (pdf.Name, bool) {
+	return d.resolve(o).Name()
 }
 
-func (d *Document) rect(o reader.Object) (Rect, bool) {
-	a, ok := reader.ToArray(d.resolve(o))
+func (d *Document) rect(o pdf.Object) (Rect, bool) {
+	a, ok := d.resolve(o).Array()
 	if !ok || len(a) != 4 {
 		return Rect{}, false
 	}

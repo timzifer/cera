@@ -4,7 +4,7 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 )
 
 // Appearances for annotations without /AP, generated as content streams
@@ -47,8 +47,8 @@ func (w *csw) color(c []float64, fill bool) {
 
 // annotColor reads a colour array: absent is nil and false, an empty
 // array (transparent) nil and true.
-func (d *Document) annotColor(o reader.Object) ([]float64, bool) {
-	a, ok := reader.ToArray(d.resolve(o))
+func (d *Document) annotColor(o pdf.Object) ([]float64, bool) {
+	a, ok := d.resolve(o).Array()
 	if !ok {
 		return nil, false
 	}
@@ -65,21 +65,21 @@ func (d *Document) annotColor(o reader.Object) ([]float64, bool) {
 
 // border returns the border width and dash pattern of an annotation
 // (/BS, else /Border).
-func (d *Document) border(ad reader.Dict) (w float64, dash []float64) {
+func (d *Document) border(ad pdf.Dict) (w float64, dash []float64) {
 	w = 1
-	if bs := d.dict(ad["BS"]); bs != nil {
-		if v, ok := d.num(bs["W"]); ok {
+	if bs := d.dict(ad.Get("BS")); !bs.IsZero() {
+		if v, ok := d.num(bs.Get("W")); ok {
 			w = math.Abs(v)
 		}
-		if s, _ := d.name(bs["S"]); s == "D" {
-			dash = d.floats(bs["D"])
+		if s, _ := d.name(bs.Get("S")); s == "D" {
+			dash = d.floats(bs.Get("D"))
 			if len(dash) == 0 {
 				dash = []float64{3}
 			}
 		}
 		return w, dash
 	}
-	if b, ok := reader.ToArray(d.resolve(ad["Border"])); ok && len(b) >= 3 {
+	if b, ok := d.resolve(ad.Get("Border")).Array(); ok && len(b) >= 3 {
 		if v, ok := d.num(b[2]); ok {
 			w = math.Abs(v)
 		}
@@ -106,14 +106,14 @@ func (in *interp) generate(b []byte, a *Annotation) []byte {
 	ad := a.dict
 	w := csw(b)
 	bw, dash := d.border(ad)
-	sc, ok := d.annotColor(ad["C"])
+	sc, ok := d.annotColor(ad.Get("C"))
 	if !ok {
 		sc = []float64{0} // black
 		if a.Subtype == "Highlight" {
 			sc = []float64{1, 1, 0}
 		}
 	}
-	fc, _ := d.annotColor(ad["IC"])
+	fc, _ := d.annotColor(ad.Get("IC"))
 	stroke := bw > 0 && len(sc) > 0
 	if stroke {
 		w.color(sc, false)
@@ -148,7 +148,7 @@ func (in *interp) generate(b []byte, a *Annotation) []byte {
 	switch a.Subtype {
 	case "Square", "Circle":
 		r := a.Rect
-		if rd := d.floats(ad["RD"]); len(rd) == 4 {
+		if rd := d.floats(ad.Get("RD")); len(rd) == 4 {
 			r = Rect{r.X0 + rd[0], r.Y0 + rd[1], r.X1 - rd[2], r.Y1 - rd[3]}
 		}
 		if stroke {
@@ -167,17 +167,17 @@ func (in *interp) generate(b []byte, a *Annotation) []byte {
 		paint(true)
 
 	case "Line":
-		l := d.floats(ad["L"])
+		l := d.floats(ad.Get("L"))
 		if len(l) != 4 {
 			return b
 		}
 		x1, y1, x2, y2 := l[0], l[1], l[2], l[3]
-		if ll, ok := d.num(ad["LL"]); ok && ll != 0 {
+		if ll, ok := d.num(ad.Get("LL")); ok && ll != 0 {
 			ex, ey := unit(x2-x1, y2-y1)
 			nx, ny := ey, -ex // clockwise from start to end
 			sgn := math.Copysign(1, ll)
-			lle, _ := d.num(ad["LLE"])
-			llo, _ := d.num(ad["LLO"])
+			lle, _ := d.num(ad.Get("LLE"))
+			llo, _ := d.num(ad.Get("LLO"))
 			for _, p := range [2][2]float64{{x1, y1}, {x2, y2}} {
 				o0, o1 := sgn*math.Abs(llo), ll+sgn*math.Abs(lle)
 				w.moveTo(p[0]+o0*nx, p[1]+o0*ny)
@@ -191,7 +191,7 @@ func (in *interp) generate(b []byte, a *Annotation) []byte {
 		in.endings(&w, ad, [][2]float64{{x1, y1}, {x2, y2}}, bw, paint)
 
 	case "PolyLine", "Polygon":
-		v := d.floats(ad["Vertices"])
+		v := d.floats(ad.Get("Vertices"))
 		pts := pairs(v)
 		if len(pts) < 2 {
 			return b
@@ -209,7 +209,7 @@ func (in *interp) generate(b []byte, a *Annotation) []byte {
 		}
 
 	case "Ink":
-		ink, _ := reader.ToArray(d.resolve(ad["InkList"]))
+		ink, _ := d.resolve(ad.Get("InkList")).Array()
 		w.op("1 J 1 j")
 		for _, o := range ink {
 			pts := pairs(d.floats(o))
@@ -234,7 +234,7 @@ func (in *interp) generate(b []byte, a *Annotation) []byte {
 		if len(sc) == 0 {
 			return b
 		}
-		quads := d.floats(ad["QuadPoints"])
+		quads := d.floats(ad.Get("QuadPoints"))
 		if len(quads) < 8 {
 			r := a.Rect
 			quads = []float64{r.X0, r.Y1, r.X1, r.Y1, r.X0, r.Y0, r.X1, r.Y0}
@@ -316,8 +316,8 @@ func markup(w *csw, kind string, q []float64) {
 }
 
 // endings draws the line endings (/LE) at the ends of the polyline pts.
-func (in *interp) endings(w *csw, ad reader.Dict, pts [][2]float64, bw float64, paint func(closed bool)) {
-	le, _ := reader.ToArray(in.doc.resolve(ad["LE"]))
+func (in *interp) endings(w *csw, ad pdf.Dict, pts [][2]float64, bw float64, paint func(closed bool)) {
+	le, _ := in.doc.resolve(ad.Get("LE")).Array()
 	if len(le) != 2 || len(pts) < 2 {
 		return
 	}
@@ -339,7 +339,7 @@ func (in *interp) endings(w *csw, ad reader.Dict, pts [][2]float64, bw float64, 
 
 // ending draws one line ending of kind at (x, y), with (ux, uy) the unit
 // vector pointing out of the line.
-func ending(w *csw, kind reader.Name, x, y, ux, uy, size float64, paint func(closed bool)) {
+func ending(w *csw, kind pdf.Name, x, y, ux, uy, size float64, paint func(closed bool)) {
 	nx, ny := -uy, ux
 	r := size / 2
 	at := func(along, across float64) (float64, float64) {

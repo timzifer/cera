@@ -6,7 +6,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 	"github.com/timzifer/stilus"
 )
 
@@ -77,8 +77,8 @@ const (
 
 // shading reads the shading o (a dictionary or, for meshes, a stream),
 // once per document when it is named by reference.
-func (d *Document) shading(o reader.Object, res reader.Dict) *shadingEntry {
-	ref, isRef := o.(reader.Ref)
+func (d *Document) shading(o pdf.Object, res pdf.Dict) *shadingEntry {
+	ref, isRef := o.Ref()
 	if isRef {
 		d.shMu.Lock()
 		e := d.shadings[ref]
@@ -91,7 +91,7 @@ func (d *Document) shading(o reader.Object, res reader.Dict) *shadingEntry {
 	if isRef {
 		d.shMu.Lock()
 		if d.shadings == nil {
-			d.shadings = map[reader.Ref]*shadingEntry{}
+			d.shadings = map[pdf.Ref]*shadingEntry{}
 		}
 		d.shadings[ref] = e
 		d.shMu.Unlock()
@@ -99,24 +99,24 @@ func (d *Document) shading(o reader.Object, res reader.Dict) *shadingEntry {
 	return e
 }
 
-func (d *Document) readShading(o reader.Object, res reader.Dict) *shadingEntry {
+func (d *Document) readShading(o pdf.Object, res pdf.Dict) *shadingEntry {
 	e := &shadingEntry{}
-	dict, ok := reader.ToDict(o)
-	s, isStream := reader.ToStream(o)
+	dict, ok := o.Dict()
+	s, isStream := o.Stream()
 	if isStream {
 		dict, ok = s.Dict, true
 	}
 	if !ok {
 		return e
 	}
-	kind, _ := d.integer(dict["ShadingType"])
-	cs, approx := d.colorSpace(dict["ColorSpace"], res, 0)
+	kind, _ := d.integer(dict.Get("ShadingType"))
+	cs, approx := d.colorSpace(dict.Get("ColorSpace"), res, 0)
 	if cs == nil || cs.kind == csPattern || kind < 1 || kind > 7 {
 		return e
 	}
 	sh := &Shading{Type: kind, Matrix: identity}
 	var fn function
-	if f, ok := dict["Function"]; ok {
+	if f, ok := dict.Lookup("Function"); ok {
 		if fn = d.function(f, 0); fn == nil {
 			e.feature = "shading-function"
 			return e
@@ -125,10 +125,10 @@ func (d *Document) readShading(o reader.Object, res reader.Dict) *shadingEntry {
 			return e
 		}
 	}
-	if bb, ok := d.rect(dict["BBox"]); ok {
+	if bb, ok := d.rect(dict.Get("BBox")); ok {
 		sh.BBox, sh.HasBBox = bb, true
 	}
-	if bg := d.floats(dict["Background"]); len(bg) >= cs.n && cs.n > 0 {
+	if bg := d.floats(dict.Get("Background")); len(bg) >= cs.n && cs.n > 0 {
 		r, g, b := cs.rgb(bg)
 		sh.Background = premul(r, g, b, 1)
 	}
@@ -138,24 +138,24 @@ func (d *Document) readShading(o reader.Object, res reader.Dict) *shadingEntry {
 			return e
 		}
 		sh.Domain = Rect{0, 0, 1, 1}
-		if dm := d.floats(dict["Domain"]); len(dm) == 4 {
+		if dm := d.floats(dict.Get("Domain")); len(dm) == 4 {
 			sh.Domain = Rect{dm[0], dm[2], dm[1], dm[3]}
 		}
-		if m := d.floats(dict["Matrix"]); len(m) == 6 {
+		if m := d.floats(dict.Get("Matrix")); len(m) == 6 {
 			sh.Matrix = Matrix(m)
 		}
 		sh.Texture = functionTexture(cs, fn, sh.Domain)
 	case 2, 3:
-		c := d.floats(dict["Coords"])
+		c := d.floats(dict.Get("Coords"))
 		if fn == nil || len(c) < 2*kind {
 			return e
 		}
 		copy(sh.Coords[:], c)
 		t0, t1 := 0.0, 1.0
-		if dm := d.floats(dict["Domain"]); len(dm) == 2 {
+		if dm := d.floats(dict.Get("Domain")); len(dm) == 2 {
 			t0, t1 = dm[0], dm[1]
 		}
-		if a, ok := reader.ToArray(d.resolve(dict["Extend"])); ok && len(a) == 2 {
+		if a, ok := d.resolve(dict.Get("Extend")).Array(); ok && len(a) == 2 {
 			sh.Extend = [2]bool{d.boolean(a[0]), d.boolean(a[1])}
 		}
 		sh.Ramp, sh.Knots = knottedRamp(cs, fn, t0, t1)
@@ -385,15 +385,15 @@ func (r *meshReader) color(v *stilus.MeshVertex) {
 
 // readMesh reads the vertices of a mesh shading (types 4 to 7) into
 // triangles.
-func (d *Document) readMesh(sh *Shading, s *reader.Stream, cs *colorSpace, fn function) (ok, capped bool) {
+func (d *Document) readMesh(sh *Shading, s *pdf.Stream, cs *colorSpace, fn function) (ok, capped bool) {
 	dict := s.Dict
 	r := &meshReader{cs: cs, ncomp: cs.n, param: fn != nil}
 	if fn != nil {
 		r.ncomp = 1
 	}
-	r.bpc, _ = d.integer(dict["BitsPerCoordinate"])
-	r.bpcomp, _ = d.integer(dict["BitsPerComponent"])
-	r.bpf, _ = d.integer(dict["BitsPerFlag"])
+	r.bpc, _ = d.integer(dict.Get("BitsPerCoordinate"))
+	r.bpcomp, _ = d.integer(dict.Get("BitsPerComponent"))
+	r.bpf, _ = d.integer(dict.Get("BitsPerFlag"))
 	switch r.bpc {
 	case 1, 2, 4, 8, 12, 16, 24, 32:
 	default:
@@ -407,7 +407,7 @@ func (d *Document) readMesh(sh *Shading, s *reader.Stream, cs *colorSpace, fn fu
 	if sh.Type != 5 && r.bpf != 2 && r.bpf != 4 && r.bpf != 8 {
 		return false, false
 	}
-	r.decode = d.floats(dict["Decode"])
+	r.decode = d.floats(dict.Get("Decode"))
 	if len(r.decode) < 4+2*r.ncomp {
 		return false, false
 	}
@@ -415,12 +415,12 @@ func (d *Document) readMesh(sh *Shading, s *reader.Stream, cs *colorSpace, fn fu
 		r.t0, r.t1 = r.decode[4], r.decode[5]
 		sh.Ramp = ramp(cs, fn, r.t0, r.t1)
 	}
-	r.data = d.r.DecodeStreamRecovering(s).Data
+	r.data = d.r.Decode(s).Data
 	switch sh.Type {
 	case 4:
 		r.freeForm(sh)
 	case 5:
-		perRow, _ := d.integer(dict["VerticesPerRow"])
+		perRow, _ := d.integer(dict.Get("VerticesPerRow"))
 		if perRow < 2 {
 			return false, false
 		}

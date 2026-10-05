@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 	"github.com/timzifer/stilus"
 )
 
@@ -24,7 +24,7 @@ func formObj(extra, content string) string {
 
 func newCanvas() *stilus.Canvas { return stilus.NewCanvas(noImage) }
 
-func refTo(n int) reader.Ref { return reader.Ref{Num: n} }
+func refTo(n int) pdf.Ref { return pdf.Ref{Num: int32(n)} }
 
 func renderTransparent(t *testing.T, content, resources string, objs ...string) (*image.RGBA, Stats) {
 	t.Helper()
@@ -394,7 +394,7 @@ func TestFunctions(t *testing.T) {
 		{101, 0.25, 0.5}, {101, 0.75, 0.5},
 		{102, 0.25, 0.5}, {102, 0.75, 1},
 	} {
-		f := doc.function(refTo(c.obj), 0)
+		f := doc.function(refTo(c.obj).Object(), 0)
 		if f == nil {
 			t.Fatalf("function %d not read", c.obj)
 		}

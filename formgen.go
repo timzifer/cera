@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 )
 
 // Appearances of widgets (PDF 2.0, 12.7.4.3), generated from a field's
@@ -19,44 +19,44 @@ import (
 
 // widgetLook decides how annotation a, the widget w with value v, is drawn:
 // from the appearance stream ap, generated (gen), or not at all.
-func (d *Document) widgetLook(a *Annotation, w *Widget, v Value) (ap *reader.Stream, gen bool) {
+func (d *Document) widgetLook(a *Annotation, w *Widget, v Value) (ap *pdf.Stream, gen bool) {
 	f := w.Field
 	switch f.Type {
 	case FieldSignature:
 		return d.appearance(a, a.state), false
 	case FieldPushButton:
 		ap = d.appearance(a, a.state)
-		return ap, ap == nil && a.dict["AP"] == nil
+		return ap, ap == nil && a.dict.Get("AP").IsNull()
 	case FieldCheckBox, FieldRadio:
-		state := reader.Name("Off")
+		state := pdf.Name("Off")
 		if v.text == w.OnState {
-			state = reader.Name(w.OnState)
+			state = pdf.Name(w.OnState)
 		}
 		if ap = d.appearance(a, state); ap != nil {
 			return ap, false
 		}
 		// A state the appearance dictionary leaves out shows nothing,
 		// as in other viewers; a widget without one is generated.
-		return nil, d.dict(d.dict(a.dict["AP"])["N"]) == nil
+		return nil, d.dict(d.dict(a.dict.Get("AP")).Get("N")).IsZero()
 	}
 	ap = d.appearance(a, a.state)
 	return ap, ap == nil || f.form.NeedAppearances || !v.Equal(f.Saved)
 }
 
-// fontRes is a font the interpreter did not find in the document: the
-// stand-in that generated appearances use. It is an Object only to sit in
-// a resource dictionary; Document.font recognizes it.
-type fontRes struct{ f *Font }
-
-func (*fontRes) Kind() reader.Kind { return reader.KindNull }
+// helvRef stands for the document's Helvetica, the stand-in generated
+// appearances use, in the resource dictionaries they are drawn with. No
+// file defines a negative object number; Document.font recognizes it.
+var helvRef = pdf.Ref{Num: -1}
 
 // helvetica returns the document's Helvetica with WinAnsiEncoding.
 func (d *Document) helvetica() *Font {
 	d.ff.once.Do(func() {
-		d.ff.helv = d.loadFont(reader.Dict{
-			"Type": reader.Name("Font"), "Subtype": reader.Name("Type1"),
-			"BaseFont": reader.Name("Helvetica"), "Encoding": reader.Name("WinAnsiEncoding"),
-		})
+		d.ff.helv = d.loadFont(pdf.NewDict(
+			pdf.Entry{Key: "Type", Val: pdf.Name("Font").Object()},
+			pdf.Entry{Key: "Subtype", Val: pdf.Name("Type1").Object()},
+			pdf.Entry{Key: "BaseFont", Val: pdf.Name("Helvetica").Object()},
+			pdf.Entry{Key: "Encoding", Val: pdf.Name("WinAnsiEncoding").Object()},
+		))
 	})
 	return d.ff.helv
 }
@@ -64,7 +64,7 @@ func (d *Document) helvetica() *Font {
 // encoder is a font of a generated appearance and how it encodes text.
 type encoder struct {
 	f    *Font
-	name reader.Name
+	name pdf.Name
 }
 
 // encode returns the codes of s, false if the font lacks a character.
@@ -137,10 +137,10 @@ func (f *Font) encoding() map[rune]byte {
 
 // genFont returns the font for showing the texts of w and the resources
 // that name it: the /DA font if it can encode all of them, else Helvetica.
-func (in *interp) genFont(w *Widget, texts []string) (encoder, reader.Dict) {
+func (in *interp) genFont(w *Widget, texts []string) (encoder, pdf.Dict) {
 	d := in.doc
 	form := w.Field.form
-	if o := d.dict(form.dr["Font"])[w.fontRes]; o != nil && w.fontRes != "" {
+	if o := d.dict(form.dr.Get("Font")).Get(w.fontRes); !o.IsNull() && w.fontRes != "" {
 		if f := d.font(o); f != nil && !f.composite() && !f.Type3() {
 			e := encoder{f, w.fontRes}
 			ok := true
@@ -151,12 +151,18 @@ func (in *interp) genFont(w *Widget, texts []string) (encoder, reader.Dict) {
 				}
 			}
 			if ok {
-				return e, reader.Dict{"Font": reader.Dict{w.fontRes: o}}
+				return e, fontResources(w.fontRes, o)
 			}
 		}
 	}
 	e := encoder{d.helvetica(), "CeraHelv"}
-	return e, reader.Dict{"Font": reader.Dict{e.name: &fontRes{e.f}}}
+	return e, fontResources(e.name, helvRef.Object())
+}
+
+// fontResources is a resource dictionary naming one font.
+func fontResources(name pdf.Name, font pdf.Object) pdf.Dict {
+	fonts := pdf.NewDict(pdf.Entry{Key: name, Val: font})
+	return pdf.NewDict(pdf.Entry{Key: "Font", Val: fonts.Object()})
 }
 
 // widgetMatrix maps the widget's box, [0 W]×[0 H] with its content
@@ -179,14 +185,14 @@ var selectionColor = []float64{0.6, 0.75862, 0.86275}
 
 // generateWidget appends the appearance of w showing v to b, and returns
 // the resources it needs.
-func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, reader.Dict) {
+func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, pdf.Dict) {
 	d := in.doc
 	f := w.Field
 	wd := w.dict
 	cw := csw(b)
 	m, W, H := widgetMatrix(w)
 	if W <= 0 || H <= 0 {
-		return b, nil
+		return b, pdf.Dict{}
 	}
 	cw.op("q")
 	for _, x := range m {
@@ -194,9 +200,9 @@ func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, reader.D
 	}
 	cw.op("cm")
 
-	mk := d.dict(wd["MK"])
-	bg, _ := d.annotColor(mk["BG"])
-	bc, _ := d.annotColor(mk["BC"])
+	mk := d.dict(wd.Get("MK"))
+	bg, _ := d.annotColor(mk.Get("BG"))
+	bc, _ := d.annotColor(mk.Get("BC"))
 	a := &w.Appearance
 	bw := a.BorderWidth
 	if len(bc) == 0 {
@@ -250,14 +256,14 @@ func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, reader.D
 		}
 	}
 
-	var res reader.Dict
+	var res pdf.Dict
 	inner := Rect{inset, inset, W - inset, H - inset}
 	if inner.Dx() <= 0 || inner.Dy() <= 0 {
 		cw.op("Q")
-		return cw, nil
+		return cw, pdf.Dict{}
 	}
 	tc := parseDA(f.da).comps
-	if s, ok := reader.ToString(d.resolve(wd["DA"])); ok {
+	if s, ok := d.resolve(wd.Get("DA")).Str(); ok {
 		tc = parseDA(string(s)).comps
 	}
 

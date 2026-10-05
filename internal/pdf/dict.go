@@ -4,6 +4,7 @@ import (
 	"iter"
 	"slices"
 	"strings"
+	"unsafe"
 )
 
 // An Entry is one key and value of a dictionary.
@@ -74,6 +75,15 @@ func (d Dict) Get(k Name) Object {
 	return Null
 }
 
+// Lookup returns the value of key k and whether the dictionary has an
+// entry for it, even a null one.
+func (d Dict) Lookup(k Name) (Object, bool) {
+	if i := d.index(string(k)); i >= 0 {
+		return d.e[i].Val, true
+	}
+	return Null, false
+}
+
 // Has reports whether the dictionary has an entry for k, even a null one.
 func (d Dict) Has(k Name) bool { return d.index(string(k)) >= 0 }
 
@@ -123,6 +133,12 @@ func (d Dict) search(k string) int {
 		return lo
 	}
 	return -1
+}
+
+// Same reports whether d and e are the same dictionary, not merely equal
+// ones: the same object of the file, or both no dictionary.
+func (d Dict) Same(e Dict) bool {
+	return unsafe.SliceData(d.e) == unsafe.SliceData(e.e) && len(d.e) == len(e.e)
 }
 
 // Entries returns the entries. They must not be written to.

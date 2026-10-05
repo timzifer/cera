@@ -266,7 +266,7 @@ func (d *Document) tabOrder(form *Form, i int) []*Widget {
 	if err != nil {
 		return ws
 	}
-	switch tabs, _ := d.name(pd["Tabs"]); tabs {
+	switch tabs, _ := d.name(pd.Get("Tabs")); tabs {
 	case "R": // rows: top to bottom, then left to right
 		slices.SortStableFunc(ws, func(a, b *Widget) int {
 			if c := cmpFloat(b.Rect.Y1, a.Rect.Y1); c != 0 {

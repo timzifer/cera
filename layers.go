@@ -7,7 +7,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 )
 
 // Optional content (PDF 2.0, 8.11): layers that a configuration of the
@@ -27,7 +27,7 @@ type Layer struct {
 	Locked  bool
 
 	index int // in the document's /OCGs
-	ref   reader.Ref
+	ref   pdf.Ref
 }
 
 // LayerNode is an entry of the layer tree a viewer shows (/Order): a layer
@@ -67,7 +67,7 @@ const (
 	numUsages
 )
 
-var usageNames = [numUsages]struct{ event, dict, state reader.Name }{
+var usageNames = [numUsages]struct{ event, dict, state pdf.Name }{
 	{"View", "View", "ViewState"},
 	{"Print", "Print", "PrintState"},
 	{"Export", "Export", "ExportState"},
@@ -153,13 +153,13 @@ func (d *Document) LayerConfigs() []*LayerConfig { return d.ocProps().configs }
 
 // ocProps is the optional content of a document, read once.
 type ocProps struct {
-	ocgs    []reader.Ref
-	index   map[reader.Ref]int
+	ocgs    []pdf.Ref
+	index   map[pdf.Ref]int
 	def     *LayerConfig
 	configs []*LayerConfig
 
 	mu    sync.Mutex
-	exprs map[reader.Ref]*ocExpr // compiled membership, nil if always on
+	exprs map[pdf.Ref]*ocExpr // compiled membership, nil if always on
 }
 
 func (d *Document) ocProps() *ocProps {
@@ -189,16 +189,16 @@ func (oc *ocProps) read(d *Document) {
 	if err != nil {
 		return
 	}
-	props := d.dict(cat["OCProperties"])
-	if props == nil {
+	props := d.dict(cat.Get("OCProperties"))
+	if props.IsZero() {
 		return
 	}
-	arr, _ := reader.ToArray(d.resolve(props["OCGs"]))
-	oc.index = make(map[reader.Ref]int, len(arr))
-	oc.exprs = map[reader.Ref]*ocExpr{}
+	arr, _ := d.resolve(props.Get("OCGs")).Array()
+	oc.index = make(map[pdf.Ref]int, len(arr))
+	oc.exprs = map[pdf.Ref]*ocExpr{}
 	for _, o := range arr {
-		ref, ok := o.(reader.Ref)
-		if _, dup := oc.index[ref]; !ok || dup || d.dict(ref) == nil {
+		ref, ok := o.Ref()
+		if _, dup := oc.index[ref]; !ok || dup || d.dict(ref.Object()).IsZero() {
 			continue
 		}
 		oc.index[ref] = len(oc.ocgs)
@@ -207,11 +207,11 @@ func (oc *ocProps) read(d *Document) {
 	if len(oc.ocgs) == 0 {
 		return
 	}
-	dd := d.dict(props["D"])
+	dd := d.dict(props.Get("D"))
 	oc.def = oc.config(d, dd, nil)
-	cs, _ := reader.ToArray(d.resolve(props["Configs"]))
+	cs, _ := d.resolve(props.Get("Configs")).Array()
 	for _, o := range cs {
-		if c := d.dict(o); c != nil {
+		if c := d.dict(o); !c.IsZero() {
 			oc.configs = append(oc.configs, oc.config(d, c, oc.def))
 		}
 	}
@@ -219,27 +219,27 @@ func (oc *ocProps) read(d *Document) {
 
 // config reads a configuration dictionary; def is the default one, which
 // BaseState /Unchanged of an alternate configuration starts from.
-func (oc *ocProps) config(d *Document, cd reader.Dict, def *LayerConfig) *LayerConfig {
-	c := &LayerConfig{Name: textString(d.resolve(cd["Name"]))}
+func (oc *ocProps) config(d *Document, cd pdf.Dict, def *LayerConfig) *LayerConfig {
+	c := &LayerConfig{Name: textString(d.resolve(cd.Get("Name")))}
 	base := true
-	if n, _ := d.name(cd["BaseState"]); n == "OFF" {
+	if n, _ := d.name(cd.Get("BaseState")); n == "OFF" {
 		base = false
 	}
-	unchanged := def != nil && isName(d, cd["BaseState"], "Unchanged")
-	intents := ocIntents(d, cd["Intent"])
+	unchanged := def != nil && isName(d, cd.Get("BaseState"), "Unchanged")
+	intents := ocIntents(d, cd.Get("Intent"))
 	c.Layers = make([]*Layer, len(oc.ocgs))
 	ignored := make([]bool, len(oc.ocgs))
 	for i, ref := range oc.ocgs {
-		g := d.dict(ref)
-		l := &Layer{Name: textString(d.resolve(g["Name"])), Visible: base, index: i, ref: ref}
+		g := d.dict(ref.Object())
+		l := &Layer{Name: textString(d.resolve(g.Get("Name"))), Visible: base, index: i, ref: ref}
 		if unchanged {
 			l.Visible = def.Layers[i].Visible
 		}
-		ignored[i] = !intents.matches(ocIntents(d, g["Intent"]))
+		ignored[i] = !intents.matches(ocIntents(d, g.Get("Intent")))
 		c.Layers[i] = l
 	}
-	set := func(key reader.Name, f func(*Layer)) {
-		a, _ := reader.ToArray(d.resolve(cd[key]))
+	set := func(key pdf.Name, f func(*Layer)) {
+		a, _ := d.resolve(cd.Get(key)).Array()
 		for _, o := range a {
 			if l := c.layer(oc, o); l != nil {
 				f(l)
@@ -254,11 +254,11 @@ func (oc *ocProps) config(d *Document, cd reader.Dict, def *LayerConfig) *LayerC
 			l.Visible = true // a group of another intent is not optional here
 		}
 	}
-	order, _ := reader.ToArray(d.resolve(cd["Order"]))
+	order, _ := d.resolve(cd.Get("Order")).Array()
 	c.Order = c.order(d, oc, order, 0)
-	rbs, _ := reader.ToArray(d.resolve(cd["RBGroups"]))
+	rbs, _ := d.resolve(cd.Get("RBGroups")).Array()
 	for _, o := range rbs {
-		a, _ := reader.ToArray(d.resolve(o))
+		a, _ := d.resolve(o).Array()
 		var g []*Layer
 		for _, e := range a {
 			if l := c.layer(oc, e); l != nil {
@@ -276,7 +276,7 @@ func (oc *ocProps) config(d *Document, cd reader.Dict, def *LayerConfig) *LayerC
 			off = setBit(off, i)
 		}
 	}
-	as, _ := reader.ToArray(d.resolve(cd["AS"]))
+	as, _ := d.resolve(cd.Get("AS")).Array()
 	for u := range numUsages {
 		v := Visibility{off: off}
 		c.autoState(d, oc, as, u, &v, ignored)
@@ -296,43 +296,43 @@ func setBit(b []uint64, i int) []uint64 {
 // autoState applies the usage application dictionaries of /AS for usage
 // u (PDF 2.0, 8.11.4.4) to v: a group is off if any of the categories
 // listed for it says so, and limited to a zoom range by /Zoom.
-func (c *LayerConfig) autoState(d *Document, oc *ocProps, as reader.Array, u Usage, v *Visibility, ignored []bool) {
+func (c *LayerConfig) autoState(d *Document, oc *ocProps, as pdf.Array, u Usage, v *Visibility, ignored []bool) {
 	names := usageNames[u]
 	var off []uint64
 	copied := false
 	for _, o := range as {
 		ad := d.dict(o)
-		if ev, _ := d.name(ad["Event"]); ev != names.event {
+		if ev, _ := d.name(ad.Get("Event")); ev != names.event {
 			continue
 		}
-		cats, _ := reader.ToArray(d.resolve(ad["Category"]))
-		groups, _ := reader.ToArray(d.resolve(ad["OCGs"]))
+		cats, _ := d.resolve(ad.Get("Category")).Array()
+		groups, _ := d.resolve(ad.Get("OCGs")).Array()
 		for _, g := range groups {
 			l := c.layer(oc, g)
 			if l == nil || ignored[l.index] {
 				continue
 			}
-			usage := d.dict(d.dict(l.ref)["Usage"])
+			usage := d.dict(d.dict(l.ref.Object()).Get("Usage"))
 			state, decided := true, false
 			for _, cat := range cats {
 				cn, _ := d.name(cat)
 				switch cn {
 				case "View", "Print", "Export":
-					ud := d.dict(usage[cn])
-					s, ok := d.name(ud[stateKey(cn)])
+					ud := d.dict(usage.Get(cn))
+					s, ok := d.name(ud.Get(stateKey(cn)))
 					if ok && (s == "ON" || s == "OFF") {
 						state, decided = state && s == "ON", true
 					}
 				case "Zoom":
-					zd := d.dict(usage["Zoom"])
-					if zd == nil {
+					zd := d.dict(usage.Get("Zoom"))
+					if zd.IsZero() {
 						continue
 					}
 					z := ocZoom{ocg: l.index, min: 0, max: math.Inf(1)}
-					if f, ok := d.num(zd["min"]); ok {
+					if f, ok := d.num(zd.Get("min")); ok {
 						z.min = f
 					}
-					if f, ok := d.num(zd["max"]); ok {
+					if f, ok := d.num(zd.Get("max")); ok {
 						z.max = f
 					}
 					v.zoom = append(v.zoom, z)
@@ -359,7 +359,7 @@ func (c *LayerConfig) autoState(d *Document, oc *ocProps, as reader.Array, u Usa
 	}
 }
 
-func stateKey(cat reader.Name) reader.Name {
+func stateKey(cat pdf.Name) pdf.Name {
 	for _, n := range usageNames {
 		if n.dict == cat {
 			return n.state
@@ -369,8 +369,8 @@ func stateKey(cat reader.Name) reader.Name {
 }
 
 // layer returns the configuration's layer of the group o refers to.
-func (c *LayerConfig) layer(oc *ocProps, o reader.Object) *Layer {
-	ref, ok := o.(reader.Ref)
+func (c *LayerConfig) layer(oc *ocProps, o pdf.Object) *Layer {
+	ref, ok := o.Ref()
 	if !ok {
 		return nil
 	}
@@ -382,7 +382,7 @@ func (c *LayerConfig) layer(oc *ocProps, o reader.Object) *Layer {
 
 // order reads an /Order array: groups, each optionally followed by the
 // array of its children, and arrays starting with a label.
-func (c *LayerConfig) order(d *Document, oc *ocProps, a reader.Array, depth int) []LayerNode {
+func (c *LayerConfig) order(d *Document, oc *ocProps, a pdf.Array, depth int) []LayerNode {
 	if depth >= maxLayerDepth {
 		return nil
 	}
@@ -392,14 +392,14 @@ func (c *LayerConfig) order(d *Document, oc *ocProps, a reader.Array, depth int)
 			nodes = append(nodes, LayerNode{Layer: l})
 			continue
 		}
-		sub, ok := reader.ToArray(d.resolve(o))
+		sub, ok := d.resolve(o).Array()
 		if !ok {
 			continue
 		}
 		label, labelled := "", false
 		if len(sub) > 0 {
-			if s, ok := reader.ToString(d.resolve(sub[0])); ok {
-				label, labelled = textString(reader.String(s)), true
+			if s, ok := d.resolve(sub[0]).Str(); ok {
+				label, labelled = textString(pdf.String(s)), true
 				sub = sub[1:]
 			}
 		}
@@ -423,8 +423,8 @@ const (
 	intentAll = intentView | intentDesign | intentOther
 )
 
-func ocIntents(d *Document, o reader.Object) ocIntent {
-	one := func(o reader.Object) ocIntent {
+func ocIntents(d *Document, o pdf.Object) ocIntent {
+	one := func(o pdf.Object) ocIntent {
 		switch n, _ := d.name(o); n {
 		case "View":
 			return intentView
@@ -438,7 +438,7 @@ func ocIntents(d *Document, o reader.Object) ocIntent {
 		return intentOther
 	}
 	o = d.resolve(o)
-	if a, ok := reader.ToArray(o); ok {
+	if a, ok := o.Array(); ok {
 		var s ocIntent
 		for _, e := range a {
 			s |= one(e)
@@ -453,7 +453,7 @@ func ocIntents(d *Document, o reader.Object) ocIntent {
 
 func (s ocIntent) matches(t ocIntent) bool { return s&t != 0 }
 
-func isName(d *Document, o reader.Object, want reader.Name) bool {
+func isName(d *Document, o pdf.Object, want pdf.Name) bool {
 	n, _ := d.name(o)
 	return n == want
 }
@@ -505,15 +505,15 @@ func (e *ocExpr) eval(v *Visibility, zoom float64) bool {
 // group or membership dictionary, or nil when its content is always
 // visible. bad reports a dictionary that does not read; its content is
 // drawn.
-func (d *Document) membership(o reader.Object) (e *ocExpr, bad bool) {
+func (d *Document) membership(o pdf.Object) (e *ocExpr, bad bool) {
 	oc := d.ocProps()
 	if len(oc.ocgs) == 0 {
 		return nil, false // without /OCProperties, optional content is ignored
 	}
-	if o == nil {
+	if o.IsNull() {
 		return nil, true // a missing /Properties entry
 	}
-	ref, isRef := o.(reader.Ref)
+	ref, isRef := o.Ref()
 	if isRef {
 		oc.mu.Lock()
 		e, ok := oc.exprs[ref]
@@ -534,37 +534,37 @@ func (d *Document) membership(o reader.Object) (e *ocExpr, bad bool) {
 	return e, !ok
 }
 
-func (oc *ocProps) compile(d *Document, o reader.Object, depth int) (ocExpr, bool) {
+func (oc *ocProps) compile(d *Document, o pdf.Object, depth int) (ocExpr, bool) {
 	if depth > maxLayerDepth {
 		return ocExpr{}, false
 	}
-	if ref, ok := o.(reader.Ref); ok {
+	if ref, ok := o.Ref(); ok {
 		if i, ok := oc.index[ref]; ok {
 			return ocExpr{op: ocLeaf, ocg: i}, true
 		}
 	}
 	md := d.dict(o)
-	if md == nil {
+	if md.IsZero() {
 		return ocExpr{}, false
 	}
-	switch t, _ := d.name(md["Type"]); {
-	case t == "OCG", t != "OCMD" && md["OCGs"] == nil && md["VE"] == nil:
+	switch t, _ := d.name(md.Get("Type")); {
+	case t == "OCG", t != "OCMD" && md.Get("OCGs").IsNull() && md.Get("VE").IsNull():
 		return ocExpr{}, true // a group not in /OCGs: not optional
 	}
-	if ve, ok := reader.ToArray(d.resolve(md["VE"])); ok {
+	if ve, ok := d.resolve(md.Get("VE")).Array(); ok {
 		return oc.visExpr(d, ve, depth+1)
 	}
 	var leaves []ocExpr
-	ocgs := d.resolve(md["OCGs"])
-	if a, ok := reader.ToArray(ocgs); ok {
+	ocgs := d.resolve(md.Get("OCGs"))
+	if a, ok := ocgs.Array(); ok {
 		for _, g := range a {
-			if ref, ok := g.(reader.Ref); ok {
+			if ref, ok := g.Ref(); ok {
 				if i, ok := oc.index[ref]; ok {
 					leaves = append(leaves, ocExpr{op: ocLeaf, ocg: i})
 				}
 			}
 		}
-	} else if ref, ok := md["OCGs"].(reader.Ref); ok {
+	} else if ref, ok := md.Get("OCGs").Ref(); ok {
 		if i, ok := oc.index[ref]; ok {
 			leaves = append(leaves, ocExpr{op: ocLeaf, ocg: i})
 		}
@@ -572,7 +572,7 @@ func (oc *ocProps) compile(d *Document, o reader.Object, depth int) (ocExpr, boo
 	if len(leaves) == 0 {
 		return ocExpr{}, true // no groups: the dictionary has no effect
 	}
-	p, _ := d.name(md["P"])
+	p, _ := d.name(md.Get("P"))
 	switch p {
 	case "AllOn":
 		return ocExpr{op: ocAnd, args: leaves}, true
@@ -586,7 +586,7 @@ func (oc *ocProps) compile(d *Document, o reader.Object, depth int) (ocExpr, boo
 
 // visExpr compiles a visibility expression: [/And e …], [/Or e …] or
 // [/Not e], whose operands are groups or expressions.
-func (oc *ocProps) visExpr(d *Document, a reader.Array, depth int) (ocExpr, bool) {
+func (oc *ocProps) visExpr(d *Document, a pdf.Array, depth int) (ocExpr, bool) {
 	if depth > maxLayerDepth || len(a) < 2 {
 		return ocExpr{}, false
 	}
@@ -608,13 +608,13 @@ func (oc *ocProps) visExpr(d *Document, a reader.Array, depth int) (ocExpr, bool
 	for _, o := range a[1:] {
 		var x ocExpr
 		var ok bool
-		if ref, isRef := o.(reader.Ref); isRef {
+		if ref, isRef := o.Ref(); isRef {
 			if i, known := oc.index[ref]; known {
 				x, ok = ocExpr{op: ocLeaf, ocg: i}, true
 			}
 		}
 		if !ok {
-			sub, isArr := reader.ToArray(d.resolve(o))
+			sub, isArr := d.resolve(o).Array()
 			if !isArr {
 				x, ok = ocExpr{}, true // a group not in /OCGs counts as on
 			} else if x, ok = oc.visExpr(d, sub, depth+1); !ok {
@@ -628,8 +628,8 @@ func (oc *ocProps) visExpr(d *Document, a reader.Array, depth int) (ocExpr, bool
 
 // textString decodes a PDF text string: UTF-16BE or UTF-8 with a byte
 // order mark, else PDFDocEncoding.
-func textString(o reader.Object) string {
-	b, ok := reader.ToString(o)
+func textString(o pdf.Object) string {
+	b, ok := o.Str()
 	if !ok {
 		return ""
 	}

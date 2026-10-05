@@ -4,7 +4,7 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 )
 
 // PDF functions (PDF 2.0, 7.10): sampled (type 0), exponential (2),
@@ -20,8 +20,8 @@ type function interface {
 }
 
 // function reads a function or an array of functions, nil if it cannot.
-func (d *Document) function(o reader.Object, depth int) function {
-	if arr, ok := reader.ToArray(d.resolve(o)); ok {
+func (d *Document) function(o pdf.Object, depth int) function {
+	if arr, ok := d.resolve(o).Array(); ok {
 		parts := make([]function, 0, len(arr))
 		for _, e := range arr {
 			f := d.oneFunction(e, depth)
@@ -61,24 +61,24 @@ func (f *fnArray) eval(in []float64) []float64 {
 	return out
 }
 
-func (d *Document) oneFunction(o reader.Object, depth int) function {
+func (d *Document) oneFunction(o pdf.Object, depth int) function {
 	if depth > maxFunctionDepth {
 		return nil
 	}
 	o = d.resolve(o)
-	dict, ok := reader.ToDict(o)
-	var s *reader.Stream
-	if st, isStream := reader.ToStream(o); isStream {
+	dict, ok := o.Dict()
+	var s *pdf.Stream
+	if st, isStream := o.Stream(); isStream {
 		dict, ok, s = st.Dict, true, st
 	}
 	if !ok {
 		return nil
 	}
-	kind, ok := d.integer(dict["FunctionType"])
+	kind, ok := d.integer(dict.Get("FunctionType"))
 	if !ok {
 		return nil
 	}
-	base := fnBase{domain: d.floats(dict["Domain"]), rng: d.floats(dict["Range"])}
+	base := fnBase{domain: d.floats(dict.Get("Domain")), rng: d.floats(dict.Get("Range"))}
 	if len(base.domain) < 2 {
 		return nil
 	}
@@ -102,8 +102,8 @@ type fnBase struct {
 }
 
 // floats reads an array of numbers, nil if it is not one.
-func (d *Document) floats(o reader.Object) []float64 {
-	arr, ok := reader.ToArray(d.resolve(o))
+func (d *Document) floats(o pdf.Object) []float64 {
+	arr, ok := d.resolve(o).Array()
 	if !ok {
 		return nil
 	}
@@ -172,15 +172,15 @@ type sampledFn struct {
 
 func (f *sampledFn) outputs() int { return f.n }
 
-func (d *Document) sampledFunction(base fnBase, dict reader.Dict, s *reader.Stream) function {
+func (d *Document) sampledFunction(base fnBase, dict pdf.Dict, s *pdf.Stream) function {
 	if s == nil || len(base.rng) < 2 {
 		return nil
 	}
-	sizes := d.floats(dict["Size"])
+	sizes := d.floats(dict.Get("Size"))
 	if len(sizes) == 0 || len(sizes) != len(base.domain)/2 || len(sizes) > 8 {
 		return nil
 	}
-	f := &sampledFn{fnBase: base, n: len(base.rng) / 2, samples: d.r.DecodeStreamRecovering(s).Data}
+	f := &sampledFn{fnBase: base, n: len(base.rng) / 2, samples: d.r.Decode(s).Data}
 	total := 1
 	for _, v := range sizes {
 		if !(v >= 1 && v <= 1<<20) {
@@ -191,21 +191,21 @@ func (d *Document) sampledFunction(base fnBase, dict reader.Dict, s *reader.Stre
 			return nil
 		}
 	}
-	bps, _ := d.integer(dict["BitsPerSample"])
+	bps, _ := d.integer(dict.Get("BitsPerSample"))
 	switch bps {
 	case 1, 2, 4, 8, 12, 16, 24, 32:
 		f.bps = bps
 	default:
 		return nil
 	}
-	f.encode = d.floats(dict["Encode"])
+	f.encode = d.floats(dict.Get("Encode"))
 	if len(f.encode) != 2*len(f.size) {
 		f.encode = nil
 		for _, v := range f.size {
 			f.encode = append(f.encode, 0, float64(v-1))
 		}
 	}
-	f.decode = d.floats(dict["Decode"])
+	f.decode = d.floats(dict.Get("Decode"))
 	if len(f.decode) != len(base.rng) {
 		f.decode = base.rng
 	}
@@ -278,12 +278,12 @@ type expFn struct {
 
 func (f *expFn) outputs() int { return len(f.c0) }
 
-func (d *Document) expFunction(base fnBase, dict reader.Dict) function {
+func (d *Document) expFunction(base fnBase, dict pdf.Dict) function {
 	f := &expFn{fnBase: base, n: 1}
-	if v, ok := d.num(dict["N"]); ok {
+	if v, ok := d.num(dict.Get("N")); ok {
 		f.n = v
 	}
-	f.c0, f.c1 = d.floats(dict["C0"]), d.floats(dict["C1"])
+	f.c0, f.c1 = d.floats(dict.Get("C0")), d.floats(dict.Get("C1"))
 	if f.c0 == nil {
 		f.c0 = []float64{0}
 	}
@@ -323,8 +323,8 @@ func (f *stitchingFn) outputs() int {
 	return f.parts[0].outputs()
 }
 
-func (d *Document) stitchingFunction(base fnBase, dict reader.Dict, depth int) function {
-	arr, ok := reader.ToArray(d.resolve(dict["Functions"]))
+func (d *Document) stitchingFunction(base fnBase, dict pdf.Dict, depth int) function {
+	arr, ok := d.resolve(dict.Get("Functions")).Array()
 	if !ok || len(arr) == 0 {
 		return nil
 	}
@@ -336,7 +336,7 @@ func (d *Document) stitchingFunction(base fnBase, dict reader.Dict, depth int) f
 		}
 		f.parts = append(f.parts, p)
 	}
-	f.bounds, f.encode = d.floats(dict["Bounds"]), d.floats(dict["Encode"])
+	f.bounds, f.encode = d.floats(dict.Get("Bounds")), d.floats(dict.Get("Encode"))
 	if len(f.bounds) != len(f.parts)-1 || len(f.encode) != 2*len(f.parts) {
 		return nil
 	}
@@ -377,11 +377,11 @@ type psOp struct {
 	isBlk bool
 }
 
-func (d *Document) calculatorFunction(base fnBase, s *reader.Stream) function {
+func (d *Document) calculatorFunction(base fnBase, s *pdf.Stream) function {
 	if s == nil || len(base.rng) < 2 {
 		return nil
 	}
-	toks := psTokens(d.r.DecodeStreamRecovering(s).Data)
+	toks := psTokens(d.r.Decode(s).Data)
 	if len(toks) < 2 || toks[0] != "{" {
 		return nil
 	}

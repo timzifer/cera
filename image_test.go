@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 
 	"github.com/timzifer/cera/internal/cmyk"
 )
@@ -559,11 +559,11 @@ func BenchmarkDecodeMatte(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			s := doc.stream(reader.Ref{Num: 100})
+			s := doc.stream(pdf.Ref{Num: 100}.Object())
 			b.ReportAllocs()
 			b.SetBytes(4 * w * h)
 			for b.Loop() {
-				if r := doc.decodeImage(s.Dict, s.Raw, nil); r.img == nil {
+				if r := doc.decodeImage(s.Dict, doc.r.Raw(s), pdf.Dict{}); r.img == nil {
 					b.Fatal("not decoded")
 				}
 			}

@@ -1,7 +1,7 @@
 package cera
 
 import (
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 )
 
 // The parts of the graphics state ADR 0007 adds: the font set through gs,
@@ -12,9 +12,9 @@ import (
 
 // extGStateMore reads the entries of ExtGState d (the object ref, when it
 // is indirect) that extGState leaves to this file.
-func (in *interp) extGStateMore(d reader.Dict, ref reader.Ref) {
+func (in *interp) extGStateMore(d pdf.Dict, ref pdf.Ref) {
 	doc := in.doc
-	if a, ok := reader.ToArray(doc.resolve(d["Font"])); ok {
+	if a, ok := doc.resolve(d.Get("Font")).Array(); ok {
 		// Like Tf: a font reference and a size.
 		var f *Font
 		size, sized := 0.0, false
@@ -29,25 +29,25 @@ func (in *interp) extGStateMore(d reader.Dict, ref reader.Ref) {
 		}
 	}
 	// OP sets both kinds of overprint unless op is there for fills.
-	if o, ok := d["OP"]; ok {
+	if o, ok := d.Lookup("OP"); ok {
 		in.gs.opStroke = doc.boolean(o)
-		if _, ok := d["op"]; !ok {
+		if _, ok := d.Lookup("op"); !ok {
 			in.gs.opFill = in.gs.opStroke
 		}
 	}
-	if o, ok := d["op"]; ok {
+	if o, ok := d.Lookup("op"); ok {
 		in.gs.opFill = doc.boolean(o)
 	}
-	if v, ok := doc.num(d["OPM"]); ok {
+	if v, ok := doc.num(d.Get("OPM")); ok {
 		in.gs.opm1 = v == 1
 	}
-	if o, ok := d["TK"]; ok {
+	if o, ok := d.Lookup("TK"); ok {
 		in.gs.text.noKnockout = !doc.boolean(o)
 	}
 	// TR2 takes precedence over TR.
-	tr, ok := d["TR2"]
+	tr, ok := d.Lookup("TR2")
 	if !ok {
-		tr, ok = d["TR"]
+		tr, ok = d.Lookup("TR")
 	}
 	if ok {
 		t, read := doc.transfer(tr, ref)
@@ -121,11 +121,11 @@ func (t *transfer) apply(r, g, b float64) (float64, float64, float64) {
 // is drawn as (read false). A function is applied to every component; an
 // array of four applies its first three to red, green and blue. Tables
 // are made once per ExtGState object.
-func (d *Document) transfer(o reader.Object, ref reader.Ref) (t *transfer, read bool) {
+func (d *Document) transfer(o pdf.Object, ref pdf.Ref) (t *transfer, read bool) {
 	if n, ok := d.name(o); ok {
 		return nil, n == "Identity" || n == "Default"
 	}
-	if ref != (reader.Ref{}) {
+	if ref != (pdf.Ref{}) {
 		d.trMu.Lock()
 		e, ok := d.transfers[ref]
 		d.trMu.Unlock()
@@ -134,10 +134,10 @@ func (d *Document) transfer(o reader.Object, ref reader.Ref) (t *transfer, read 
 		}
 	}
 	t, read = d.readTransfer(o)
-	if ref != (reader.Ref{}) {
+	if ref != (pdf.Ref{}) {
 		d.trMu.Lock()
 		if d.transfers == nil {
-			d.transfers = map[reader.Ref]trEntry{}
+			d.transfers = map[pdf.Ref]trEntry{}
 		}
 		d.transfers[ref] = trEntry{t, read}
 		d.trMu.Unlock()
@@ -150,9 +150,9 @@ type trEntry struct {
 	read bool
 }
 
-func (d *Document) readTransfer(o reader.Object) (*transfer, bool) {
+func (d *Document) readTransfer(o pdf.Object) (*transfer, bool) {
 	var fs [3]function
-	if a, ok := reader.ToArray(d.resolve(o)); ok {
+	if a, ok := d.resolve(o).Array(); ok {
 		if len(a) != 4 {
 			return nil, false
 		}

@@ -5,9 +5,8 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"reflect"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 	"github.com/timzifer/stilus"
 
 	"github.com/timzifer/cera/internal/content"
@@ -148,7 +147,7 @@ func (in *interp) initState(ctm Matrix) {
 
 // run interprets a page's content stream under ctm and unwinds the state
 // stack afterwards.
-func (in *interp) run(data []byte, res reader.Dict, ctm Matrix, depth int) {
+func (in *interp) run(data []byte, res pdf.Dict, ctm Matrix, depth int) {
 	in.initState(ctm)
 	in.base = ctm
 	in.exec(data, res, depth)
@@ -158,7 +157,7 @@ func (in *interp) run(data []byte, res reader.Dict, ctm Matrix, depth int) {
 }
 
 // exec interprets one content stream in the current state.
-func (in *interp) exec(data []byte, res reader.Dict, depth int) {
+func (in *interp) exec(data []byte, res pdf.Dict, depth int) {
 	for len(in.scanners) <= depth {
 		in.scanners = append(in.scanners, new(content.Scanner))
 	}
@@ -193,14 +192,14 @@ func (in *interp) expired() bool {
 
 // lookupRef returns the entry of the resource category cat named by the
 // operand name, unresolved, so that a reference can serve as a cache key.
-func (in *interp) lookupRef(res reader.Dict, cat reader.Name, sc *content.Scanner, name *content.Operand) reader.Object {
+func (in *interp) lookupRef(res pdf.Dict, cat pdf.Name, sc *content.Scanner, name *content.Operand) pdf.Object {
 	if name == nil || name.Kind != content.Name {
-		return nil
+		return pdf.Null
 	}
-	return in.doc.dict(res[cat])[reader.Name(sc.Text(name))]
+	return in.doc.dict(res.Get(cat)).Get(pdf.Name(sc.Text(name)))
 }
 
-func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int) {
+func (in *interp) do(sc *content.Scanner, op []byte, res pdf.Dict, depth int) {
 	var v [6]float64
 	bad := func() { in.st.Errors++ }
 	switch string(op) {
@@ -263,8 +262,8 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 		in.setDash(in.dashBuf, phase.Num)
 	case "gs":
 		o := in.lookupRef(res, "ExtGState", sc, sc.Last())
-		ref, _ := o.(reader.Ref)
-		d, _ := reader.ToDict(in.doc.resolve(o))
+		ref, _ := o.Ref()
+		d, _ := in.doc.resolve(o).Dict()
 		in.extGState(d, ref, res)
 	case "ri", "i":
 
@@ -392,7 +391,7 @@ func (in *interp) do(sc *content.Scanner, op []byte, res reader.Dict, depth int)
 }
 
 // color runs the colour operators.
-func (in *interp) color(sc *content.Scanner, op []byte, res reader.Dict) {
+func (in *interp) color(sc *content.Scanner, op []byte, res pdf.Dict) {
 	var v [4]float64
 	switch string(op) {
 	case "CS", "cs":
@@ -445,7 +444,7 @@ func (in *interp) color(sc *content.Scanner, op []byte, res reader.Dict) {
 
 // colorSpaceOperand resolves the colour space named by the last operand.
 // The device spaces are recognised without touching the resources.
-func (in *interp) colorSpaceOperand(sc *content.Scanner, res reader.Dict) *colorSpace {
+func (in *interp) colorSpaceOperand(sc *content.Scanner, res pdf.Dict) *colorSpace {
 	o := sc.Last()
 	if o == nil || o.Kind != content.Name {
 		return nil
@@ -464,7 +463,7 @@ func (in *interp) colorSpaceOperand(sc *content.Scanner, res reader.Dict) *color
 	case "Pattern":
 		return spacePattern
 	}
-	cs, approx := in.doc.colorSpace(reader.Name(sc.Text(o)), res, 0)
+	cs, approx := in.doc.colorSpace(pdf.Name(sc.Text(o)).Object(), res, 0)
 	if approx != "" {
 		in.st.unsupported(approx)
 	}
@@ -473,8 +472,8 @@ func (in *interp) colorSpaceOperand(sc *content.Scanner, res reader.Dict) *color
 
 // deviceSpace is the device space of n components as res remaps it
 // (Document.defaultSpace), resolved once per resource dictionary.
-func (in *interp) deviceSpace(res reader.Dict, n int) *colorSpace {
-	if reflect.ValueOf(res).UnsafePointer() != reflect.ValueOf(in.defs.res).UnsafePointer() {
+func (in *interp) deviceSpace(res pdf.Dict, n int) *colorSpace {
+	if !res.Same(in.defs.res) {
 		in.defs = defaultMemo{res: res}
 	}
 	if in.defs.cs[n] == nil {
@@ -488,7 +487,7 @@ func (in *interp) deviceSpace(res reader.Dict, n int) *colorSpace {
 
 // defaultMemo holds the device spaces of one resource dictionary.
 type defaultMemo struct {
-	res    reader.Dict    // compared by identity, and kept so that it stays unique
+	res    pdf.Dict       // compared by identity, and kept so that it stays unique
 	cs     [5]*colorSpace // by components
 	approx [5]string
 }
@@ -678,26 +677,26 @@ func (in *interp) setDash(arr []float64, phase float64) {
 	}
 }
 
-func (in *interp) extGState(d reader.Dict, ref reader.Ref, res reader.Dict) {
-	if d == nil {
+func (in *interp) extGState(d pdf.Dict, ref pdf.Ref, res pdf.Dict) {
+	if d.IsZero() {
 		in.st.Errors++
 		return
 	}
 	doc := in.doc
-	if v, ok := doc.num(d["LW"]); ok {
+	if v, ok := doc.num(d.Get("LW")); ok {
 		in.gs.style.Width = math.Abs(v)
 	}
-	if v, ok := doc.num(d["LC"]); ok {
+	if v, ok := doc.num(d.Get("LC")); ok {
 		in.gs.style.Cap = stilus.Cap(min(max(int(v), 0), 2))
 	}
-	if v, ok := doc.num(d["LJ"]); ok {
+	if v, ok := doc.num(d.Get("LJ")); ok {
 		in.gs.style.Join = stilus.Join(min(max(int(v), 0), 2))
 	}
-	if v, ok := doc.num(d["ML"]); ok {
+	if v, ok := doc.num(d.Get("ML")); ok {
 		in.gs.style.MiterLimit = v
 	}
-	if a, ok := reader.ToArray(doc.resolve(d["D"])); ok && len(a) == 2 {
-		arr, _ := reader.ToArray(doc.resolve(a[0]))
+	if a, ok := doc.resolve(d.Get("D")).Array(); ok && len(a) == 2 {
+		arr, _ := doc.resolve(a[0]).Array()
 		phase, _ := doc.num(a[1])
 		in.dashBuf = in.dashBuf[:0]
 		for _, o := range arr {
@@ -710,23 +709,23 @@ func (in *interp) extGState(d reader.Dict, ref reader.Ref, res reader.Dict) {
 		}
 		in.setDash(in.dashBuf, phase)
 	}
-	if v, ok := doc.num(d["CA"]); ok {
+	if v, ok := doc.num(d.Get("CA")); ok {
 		in.gs.strokeAlp = clamp01(v)
 	}
-	if v, ok := doc.num(d["ca"]); ok {
+	if v, ok := doc.num(d.Get("ca")); ok {
 		in.gs.fillAlpha = clamp01(v)
 	}
-	if o, ok := d["BM"]; ok {
+	if o, ok := d.Lookup("BM"); ok {
 		bm, known := doc.blendMode(o)
 		if !known {
 			in.st.unsupported("blend-mode")
 		}
 		in.gs.blend = bm
 	}
-	if o, ok := d["SMask"]; ok {
+	if o, ok := d.Lookup("SMask"); ok {
 		in.gs.smask = in.softMask(o, res)
 	}
-	if doc.boolean(d["AIS"]) {
+	if doc.boolean(d.Get("AIS")) {
 		in.st.unsupported("alpha-is-shape")
 	}
 	in.extGStateMore(d, ref)
@@ -734,7 +733,7 @@ func (in *interp) extGState(d reader.Dict, ref reader.Ref, res reader.Dict) {
 
 // enterOC applies the membership o of content that begins; the caller
 // has saved ocCur on mc.
-func (in *interp) enterOC(o reader.Object) {
+func (in *interp) enterOC(o pdf.Object) {
 	e, bad := in.doc.membership(o)
 	if bad {
 		in.st.unsupported("oc-bad") // drawn visible
@@ -797,18 +796,18 @@ func (c *clipsOnly) EndMask()                                       {}
 
 // xobject draws the XObject o. One that is optional content of its own
 // (/OC) is tagged like marked content.
-func (in *interp) xobject(o reader.Object, res reader.Dict, depth int) {
+func (in *interp) xobject(o pdf.Object, res pdf.Dict, depth int) {
 	if in.rec == nil && in.ocCur != 0 {
 		return // hidden: an XObject changes no state outside itself
 	}
 	doc := in.doc
-	ref, _ := o.(reader.Ref)
-	s, ok := reader.ToStream(doc.resolve(o))
+	ref, _ := o.Ref()
+	s, ok := doc.resolve(o).Stream()
 	if !ok {
 		in.st.Errors++
 		return
 	}
-	if oc, ok := s.Dict["OC"]; ok {
+	if oc, ok := s.Dict.Lookup("OC"); ok {
 		n := len(in.mc)
 		in.mc = append(in.mc, in.ocCur)
 		in.enterOC(oc)
@@ -821,9 +820,9 @@ func (in *interp) xobject(o reader.Object, res reader.Dict, depth int) {
 	in.drawXObject(ref, s, res, depth)
 }
 
-func (in *interp) drawXObject(ref reader.Ref, s *reader.Stream, res reader.Dict, depth int) {
+func (in *interp) drawXObject(ref pdf.Ref, s *pdf.Stream, res pdf.Dict, depth int) {
 	doc := in.doc
-	sub, _ := doc.name(s.Dict["Subtype"])
+	sub, _ := doc.name(s.Dict.Get("Subtype"))
 	switch sub {
 	case "Image":
 		r := doc.image(ref, s, res)
@@ -839,7 +838,7 @@ func (in *interp) drawXObject(ref reader.Ref, s *reader.Stream, res reader.Dict,
 // form runs a form XObject (PDF 2.0, 8.10) inside q … Q. A transparency
 // group, or any form painted with a blend mode or soft mask, is drawn as a
 // group.
-func (in *interp) form(s *reader.Stream, parent reader.Dict, depth int) {
+func (in *interp) form(s *pdf.Stream, parent pdf.Dict, depth int) {
 	if depth >= maxFormDepth || len(in.stack)+1 >= maxStateDepth {
 		in.st.unsupported("nesting-budget")
 		return
@@ -847,10 +846,10 @@ func (in *interp) form(s *reader.Stream, parent reader.Dict, depth int) {
 	doc := in.doc
 	var g Group
 	isGroup := false
-	if gd := doc.dict(s.Dict["Group"]); gd != nil {
-		if n, _ := doc.name(gd["S"]); n == "Transparency" {
+	if gd := doc.dict(s.Dict.Get("Group")); !gd.IsZero() {
+		if n, _ := doc.name(gd.Get("S")); n == "Transparency" {
 			isGroup = true
-			g.Isolated, g.Knockout = doc.boolean(gd["I"]), doc.boolean(gd["K"])
+			g.Isolated, g.Knockout = doc.boolean(gd.Get("I")), doc.boolean(gd.Get("K"))
 		}
 	}
 	grouped := isGroup || in.transparent()
@@ -974,42 +973,42 @@ func (in *interp) stencilPattern(img *Image) {
 
 // inlineImage draws the inline image of a BI operation. Inline images
 // are small and not cached.
-func (in *interp) inlineImage(sc *content.Scanner, res reader.Dict) {
+func (in *interp) inlineImage(sc *content.Scanner, res pdf.Dict) {
 	op, data := sc.Image()
 	if op == nil {
 		in.st.Errors++
 		return
 	}
-	d, _ := operandObject(sc, op).(reader.Dict)
-	d = (&reader.InlineImage{Dict: d}).Expanded()
+	d, _ := operandObject(sc, op).Dict()
+	d = pdf.ExpandInline(d)
 	r := in.doc.decodeImage(d, data, res)
 	in.drawImage(&r)
 }
 
 // operandObject converts an operand to a reader object (for inline image
 // dictionaries; it allocates).
-func operandObject(sc *content.Scanner, o *content.Operand) reader.Object {
+func operandObject(sc *content.Scanner, o *content.Operand) pdf.Object {
 	switch o.Kind {
 	case content.Number:
 		if o.Int && math.Abs(o.Num) < 1<<53 {
-			return reader.Integer(int64(o.Num))
+			return pdf.Integer(int64(o.Num))
 		}
-		return reader.Real(o.Num)
+		return pdf.Real(o.Num)
 	case content.Name:
-		return reader.Name(sc.Text(o))
+		return pdf.Name(sc.Text(o)).Object()
 	case content.String, content.HexString:
-		return reader.String(bytes.Clone(sc.Text(o)))
+		return pdf.String(bytes.Clone(sc.Text(o)))
 	case content.Bool:
-		return reader.Bool(o.Num != 0)
+		return pdf.Boolean(o.Num != 0)
 	case content.Array:
-		var a reader.Array
+		var a pdf.Array
 		sc.Elems(o, func(e *content.Operand) bool {
 			a = append(a, operandObject(sc, e))
 			return true
 		})
-		return a
+		return a.Object()
 	case content.Dict:
-		d := reader.Dict{}
+		var entries []pdf.Entry
 		var key *content.Operand
 		sc.Elems(o, func(e *content.Operand) bool {
 			if key == nil {
@@ -1017,13 +1016,13 @@ func operandObject(sc *content.Scanner, o *content.Operand) reader.Object {
 				return true
 			}
 			if key.Kind == content.Name {
-				k := reader.Name(sc.Text(key)) // before Text is called again
-				d[k] = operandObject(sc, e)
+				k := pdf.Name(sc.Text(key)) // before Text is called again
+				entries = append(entries, pdf.Entry{Key: k, Val: operandObject(sc, e)})
 			}
 			key = nil
 			return true
 		})
-		return d
+		return pdf.NewDict(entries...).Object()
 	}
-	return reader.Null{}
+	return pdf.Null
 }

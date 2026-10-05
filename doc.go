@@ -2,13 +2,12 @@
 //
 // cera joins four layers:
 //
-//   - parsing: github.com/go-pdfkit/reader (objects, cross-references,
-//     filters, repair, encryption);
+//   - parsing: internal/pdf (objects, cross-references, filters, repair,
+//     encryption, a cache of decoded streams), safe for concurrent use;
 //   - interpretation: this package scans content streams without
 //     allocating per operand and turns their operators into calls on a
 //     Device (graphics state, paths, clips, colours, forms, text), with
-//     fonts read by github.com/go-pdfkit/pdffont and
-//     github.com/go-opentype/opentype;
+//     fonts read by internal/pdffont and github.com/go-opentype/opentype;
 //   - a display list: what a page draws at one scale, with device-space
 //     boxes and a band index, so a page is interpreted once and only the
 //     visible part is drawn, by several cores;
