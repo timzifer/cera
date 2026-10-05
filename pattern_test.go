@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/color"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,28 @@ func TestShadingHardStop(t *testing.T) {
 func hatchPattern(paintType int, extra, cell string) string {
 	return streamObj(fmt.Sprintf("/PatternType 1 /PaintType %d /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10"+
 		" /Resources << >> %s", paintType, extra), []byte(cell))
+}
+
+func TestStencilMaskPattern(t *testing.T) {
+	// An image mask filled with a pattern paints the pattern through the
+	// stencil: here its left sample (0 paints), not its right one.
+	stencil := streamObj("/Subtype /Image /ImageMask true /Width 2 /Height 1 /BitsPerComponent 1", []byte{0x40})
+	green := color.RGBA{0, 255, 0, 255}
+	for _, c := range []struct {
+		name, pattern string
+		want          color.RGBA
+	}{
+		{"tiling", hatchPattern(1, "", "0 1 0 rg 0 0 10 10 re f"), green},
+		{"shading", "<< /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0]" +
+			" /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [1 0 0] /N 1 >> >> >>", red},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			img := renderPaint(t, "/Pattern cs /P scn 200 0 0 100 0 0 cm /I Do",
+				"/Pattern << /P 100 0 R >> /XObject << /I 101 0 R >>", c.pattern, stencil)
+			assertNear(t, img, 50, 50, c.want, 8)
+			assertNear(t, img, 150, 50, white, 8)
+		})
+	}
 }
 
 func TestTilingPatternTile(t *testing.T) {

@@ -921,6 +921,10 @@ func (in *interp) drawImage(r *imageResult) {
 		in.gs.smask = nil
 		defer func() { in.gs.smask = sm }()
 	}
+	if img.Stencil && in.gs.fillCS.kind == csPattern {
+		in.stencilPattern(img)
+		return
+	}
 	bm, grouped := in.gs.blend, in.transparent()
 	if img.Stencil {
 		if !in.setPaint(in.gs.fillCS, in.gs.fill[:], in.gs.fillAlpha) {
@@ -941,6 +945,31 @@ func (in *interp) drawImage(r *imageResult) {
 		defer in.dev.EndGroup()
 	}
 	in.dev.DrawImage(img, in.gs.ctm, &in.paint)
+}
+
+// stencilPattern paints the fill pattern through the stencil mask img:
+// the stencil, drawn opaque, is the alpha soft mask of a group the
+// pattern fills.
+func (in *interp) stencilPattern(img *Image) {
+	if !in.patternReady(&in.gs.fillPat, in.gs.fillAlpha) {
+		return
+	}
+	in.st.Images++
+	unit, m := Rect{0, 0, 1, 1}, in.gs.ctm
+	if in.transparent() {
+		in.beginObject(unit, m, in.gs.blend, false)
+		defer in.dev.EndGroup()
+	}
+	in.st.Groups++
+	in.dev.BeginMask(unit, m, &SoftMask{})
+	in.dev.DrawImage(img, m, &Paint{Color: color.RGBA{255, 255, 255, 255}})
+	in.dev.EndMask()
+	in.st.Groups++
+	in.dev.BeginGroup(unit, m, &Group{Isolated: true, Blend: BlendNormal, Alpha: 255, Masked: true})
+	in.dev.ClipRect(unit, m)
+	in.paintPattern(false, deviceBoxPoints([]stilus.Point{{X: 0, Y: 0}, {X: 1, Y: 1}}, m, 1))
+	in.dev.PopClip()
+	in.dev.EndGroup()
 }
 
 // inlineImage draws the inline image of a BI operation. Inline images
