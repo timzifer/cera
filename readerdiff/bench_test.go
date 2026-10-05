@@ -162,7 +162,7 @@ func BenchmarkOpen(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				for _, f := range fs {
-					r.open(f.data, f.password)
+					_, _ = r.open(f.data, f.password)
 				}
 			}
 		})

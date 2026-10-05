@@ -217,7 +217,7 @@ func TestConcurrentRepair(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for i := int32(1); i <= 4; i++ {
-					d.Get(Ref{Num: (i+int32(g))%4 + 1})
+					_, _ = d.Get(Ref{Num: (i+int32(g))%4 + 1})
 				}
 				d.PageCount()
 			}()

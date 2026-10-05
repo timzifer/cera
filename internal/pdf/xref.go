@@ -130,7 +130,8 @@ func (x *xrefReader) set(num int64, e rawEntry) {
 	}
 	e.sec, e.table = x.sec, !x.stm
 	old := x.acc.get(int32(num))
-	if old.kind != 0 && !(x.stm && old.sec == x.sec && old.table && old.kind == 'f') {
+	hidden := x.stm && old.sec == x.sec && old.table && old.kind == 'f'
+	if old.kind != 0 && !hidden {
 		return
 	}
 	x.acc.put(int32(num), e)

@@ -88,7 +88,9 @@ func TestNumberKinds(t *testing.T) {
 			}
 			got, _ := o.Float()
 			var want float64
-			fmt.Sscan(s, &want)
+			if _, err := fmt.Sscan(s, &want); err != nil {
+				t.Fatal(err)
+			}
 			if got != want {
 				t.Fatalf("%s: got %v, want %v", s, got, want)
 			}

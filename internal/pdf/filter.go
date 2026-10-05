@@ -149,7 +149,7 @@ func filterChain(d Dict, resolve func(Object) Object) ([]Name, []Dict, error) {
 func applyFilter(f Name, data []byte, parm Dict, resolve func(Object) Object) ([]byte, error) {
 	switch f {
 	case "FlateDecode", "Fl":
-		out, err := flateDecode(data, sizeHint(parm, len(data), resolve))
+		out, err := flateDecode(data, sizeHint(len(data)))
 		if err != nil {
 			return salvage(out, err, parm, resolve)
 		}
@@ -209,12 +209,9 @@ func intParm(parm Dict, key Name, def int, resolve func(Object) Object) int {
 	return int(n)
 }
 
-// sizeHint guesses what a Flate stream inflates to, for the first
-// allocation of its output.
-func sizeHint(parm Dict, n int, resolve func(Object) Object) int {
-	h := 4 * n
-	return min(max(h, 512), 16<<20)
-}
+// sizeHint guesses what n bytes of Flate inflate to, for the first
+// allocation of the output.
+func sizeHint(n int) int { return min(max(4*n, 512), 16<<20) }
 
 // flateDecoders are reused: a Flate decompressor's tables cost tens of
 // kilobytes to allocate.
@@ -230,11 +227,10 @@ func inflate(data []byte, hint int) ([]byte, error) {
 	f, _ := flateDecoders.Get().(*inflater)
 	if f == nil {
 		f = &inflater{}
-		f.br.Reset(data)
+	}
+	f.br.Reset(data)
+	if f.r == nil || f.r.(flate.Resetter).Reset(&f.br, nil) != nil {
 		f.r = flate.NewReader(&f.br)
-	} else {
-		f.br.Reset(data)
-		f.r.(flate.Resetter).Reset(&f.br, nil)
 	}
 	out, err := readCapped(f.r, hint)
 	f.br.Reset(nil)

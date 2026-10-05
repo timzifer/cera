@@ -82,7 +82,7 @@ type Number struct {
 }
 
 // ParseNumber reads a number starting at b[p] and returns it with the
-// position after it. It accepts what producers write and readers tolerate:
+// position after it. A number too large for a float64 is not one. It accepts what producers write and readers tolerate:
 // a doubled sign ("--5", only the first counts; the number is then a real),
 // a leading or trailing point, and it stops at the first byte that cannot
 // continue the number ("3.4-5" is two numbers). ok is false when the bytes
@@ -157,7 +157,11 @@ func ParseNumber(b []byte, p int) (n Number, end int, ok bool) {
 			f *= pow10[exp]
 		}
 	} else {
-		f = parseSlow(b[start:p], signs)
+		var err error
+		if f, err = parseSlow(b[start:p], signs); err != nil {
+			// Out of range: a syntax error, as strconv says.
+			return Number{}, p, false
+		}
 	}
 	if neg {
 		f = -f
@@ -172,19 +176,18 @@ var pow10 = [...]float64{1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10,
 
 // parseSlow is strconv.ParseFloat on the unsigned digits, copied to the
 // stack when they fit so the conversion to string does not escape.
-func parseSlow(s []byte, signs int) float64 {
+func parseSlow(s []byte, signs int) (float64, error) {
 	s = s[signs:]
 	var buf [64]byte
 	var f float64
+	var err error
 	if len(s) <= len(buf) {
 		n := copy(buf[:], s)
-		f, _ = strconv.ParseFloat(string(buf[:n]), 64)
+		f, err = strconv.ParseFloat(string(buf[:n]), 64)
 	} else {
-		f, _ = strconv.ParseFloat(string(s), 64)
+		f, err = strconv.ParseFloat(string(s), 64)
 	}
-	// ParseFloat reports a range error with ±Inf, which is what a number
-	// that large is.
-	return math.Abs(f)
+	return math.Abs(f), err
 }
 
 // DecodeName appends the bytes of a name with its #xx escapes resolved to

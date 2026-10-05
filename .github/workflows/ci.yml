@@ -140,6 +140,9 @@ jobs:
           - { name: FuzzForm, pkg: . }
           - { name: FuzzScan, pkg: ./internal/content }
           - { name: FuzzParse, pkg: ./internal/cmap }
+          - { name: FuzzParseObject, pkg: ./internal/pdf }
+          - { name: FuzzOpen, pkg: ./internal/pdf }
+          - { name: FuzzFilters, pkg: ./internal/pdf }
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -157,6 +160,44 @@ jobs:
             testdata/fuzz
             internal/content/testdata/fuzz
             internal/cmap/testdata/fuzz
+            internal/pdf/testdata/fuzz
+
+  # cera's own reader against go-pdfkit/reader v0.6.0, the one it replaces
+  # (ADR 0012): every object, decoded stream and page of the pinned corpus
+  # must agree, except for differences readerdiff/allowlist.txt names with a
+  # reason. readerdiff is a module of its own so go-pdfkit stays out of
+  # cera's go.mod.
+  readerdiff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: readerdiff/go.mod
+          cache-dependency-path: readerdiff/go.sum
+      - name: go mod tidy, vet and test
+        working-directory: readerdiff
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go vet ./...
+          go test ./...
+      - uses: actions/cache@v6
+        with:
+          path: testdata/corpus
+          key: corpus-${{ hashFiles('internal/corpus/manifest.json') }}
+      - name: Fetch corpus (SHA-256 verified)
+        run: go run ./cmd/corpus fetch -dir testdata/corpus
+      - name: Write synthetic drawings
+        run: go run ./cmd/corpus scenes -dir testdata/corpus
+      - name: Compare the readers
+        working-directory: readerdiff
+        run: go run . objects -a v06 -b pdf -dir ../testdata/corpus
+      - name: Benchmark the readers
+        working-directory: readerdiff
+        run: |
+          go test -run '^$' -bench . -benchmem -count 5 | tee bench.txt
+          go run golang.org/x/perf/cmd/benchstat@latest -col /reader bench.txt >> "$GITHUB_STEP_SUMMARY" || true
 
   # Pinned corpus (pdf.js feature files, arXiv papers, synthetic technical
   # drawings): every page must render without panic, hang or deadline.
