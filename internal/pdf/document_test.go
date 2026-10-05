@@ -270,3 +270,33 @@ func TestHugeObjectNumber(t *testing.T) {
 		t.Error("object 2147483647 not found")
 	}
 }
+
+func TestSASLprep(t *testing.T) {
+	for in, want := range map[string]string{
+		"SªSL­prep": "SaSLprep", // pdf.js saslprep-r6.pdf: ª → a, soft hyphen dropped
+		"pass word": "pass word",
+		"ﬁle":       "file",
+		"plain":     "plain",
+	} {
+		if got := string(saslprep(in)); got != want {
+			t.Errorf("saslprep(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if n := len(saslprep(strings.Repeat("ä", 100))); n != 127 {
+		t.Errorf("a long password prepares to %d bytes, not 127", n)
+	}
+}
+
+func TestUnreadableEncryptDictionary(t *testing.T) {
+	// An /Encrypt object too damaged to parse: the file opens unencrypted,
+	// as PDFium opens pdf.js' PDFBOX-4352-0.pdf.
+	objs := onePage("0 0 m 1 1 l S")
+	objs[5] = "E< /Filter /Standard /V 5 /R 6 >>"
+	d := mustOpen(t, file{objs: objs, trailer: "/Root 1 0 R /Encrypt 5 0 R"}.bytes())
+	if _, ok := d.Protection(); ok {
+		t.Error("an unreadable /Encrypt dictionary set up decryption")
+	}
+	if c, _ := d.PageContents(1); string(c.Data) != "0 0 m 1 1 l S" {
+		t.Errorf("contents %q", c.Data)
+	}
+}

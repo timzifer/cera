@@ -2,3 +2,5 @@ github.com/go-pdfkit/pdffont v0.3.1 h1:+K7opHGRERDZ5EMkA12s1GT48t8GpncArhnyzyc5b
 github.com/go-pdfkit/pdffont v0.3.1/go.mod h1:eFJ/7t9AvcX76KY5qNJMMKetz8hUUUdVM1qSWLi3S1g=
 github.com/go-pdfkit/reader v0.6.0 h1:KAabNOYUcTlZlNBTbG9bEhWP1NiZhjuhzUdavdTdfes=
 github.com/go-pdfkit/reader v0.6.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
+golang.org/x/text v0.34.0 h1:oL/Qq0Kdaqxa1KbNeMKwQq0reLCCaFtqu2eNuSeNHbk=
+golang.org/x/text v0.34.0/go.mod h1:homfLqTYRFyVYemLBFl5GgL/DWEiH5wcsQ5gSh1yziA=

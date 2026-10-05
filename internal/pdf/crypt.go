@@ -300,11 +300,16 @@ func deriveKeyR5(enc Dict, password string, get func(Dict, Name) Object) (key []
 	if len(user) < 48 {
 		return nil, false, fmt.Errorf("pdf: /U is %d bytes, not the 48 this revision needs", len(user))
 	}
-	pw := []byte(password)
-	for _, candidate := range [][]byte{pw, nil} {
-		if candidate == nil && password == "" {
-			break
-		}
+	// The password as SASLprep prepares it, then as given (a producer
+	// that skipped the preparation), then the empty one.
+	candidates := [][]byte{saslprep(password)}
+	if raw := []byte(password); string(raw) != string(candidates[0]) {
+		candidates = append(candidates, raw)
+	}
+	if password != "" {
+		candidates = append(candidates, nil)
+	}
+	for _, candidate := range candidates {
 		if key := unlockR5(candidate, user, userE, nil, rev); key != nil {
 			return key, false, nil
 		}

@@ -28,7 +28,7 @@ func TestParseObject(t *testing.T) {
 		{"(a\\(b\\)c)", `"a(b)c"`},
 		{"(line\\\nfeed)", `"linefeed"`},
 		{"(\\101\\60)", `"A0"`},
-		{"(a\r\nb)", `"a\nb"`},
+		{"(a\r\nb)", `"a\r\nb"`}, // raw end-of-line bytes are kept
 		{"(nested (paren))", `"nested (paren)"`},
 		{"<48656C6C6F>", `"Hello"`},
 		{"<4 8 6>", `"H` + "`" + `"`},

@@ -230,20 +230,14 @@ func DecodeHex(dst, raw []byte) []byte {
 }
 
 // DecodeLiteral appends the bytes a literal string's raw text (without the
-// outer parentheses) denotes to dst: escapes resolved, every end-of-line
-// written as a line feed.
+// outer parentheses) denotes to dst, its escapes resolved. An end-of-line
+// written into the string stays as it is: the specification asks for a
+// line feed, but strings carry binary data — encryption hashes, IDs — and
+// pdf.js, MuPDF and PDFium keep the bytes.
 func DecodeLiteral(dst, raw []byte) []byte {
 	for i := 0; i < len(raw); i++ {
 		c := raw[i]
-		switch c {
-		case '\r':
-			if i+1 < len(raw) && raw[i+1] == '\n' {
-				i++
-			}
-			dst = append(dst, '\n')
-			continue
-		case '\\':
-		default:
+		if c != '\\' {
 			dst = append(dst, c)
 			continue
 		}
@@ -284,8 +278,7 @@ func DecodeLiteral(dst, raw []byte) []byte {
 
 // LiteralEnd returns the position after the ')' that closes a literal
 // string whose '(' is at b[p], and whether the string needs DecodeLiteral
-// (it holds an escape or a carriage return). end is -1 for an unterminated
-// string.
+// (it holds an escape). end is -1 for an unterminated string.
 func LiteralEnd(b []byte, p int) (end int, escaped bool) {
 	depth := 0
 	for ; p < len(b); p++ {
@@ -293,8 +286,6 @@ func LiteralEnd(b []byte, p int) (end int, escaped bool) {
 		case '\\':
 			escaped = true
 			p++
-		case '\r':
-			escaped = true
 		case '(':
 			depth++
 		case ')':

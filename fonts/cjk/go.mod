@@ -15,6 +15,7 @@ require (
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
 	github.com/timzifer/stilus v0.7.1-0.20261004051204-eaa0881d5596 // indirect
 	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 )
 
 replace github.com/timzifer/cera => ../..

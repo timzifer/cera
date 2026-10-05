@@ -21,6 +21,9 @@ var reasons = map[string]string{
 	"tiff-subbyte":       "the TIFF predictor is applied at 1, 2 and 4 bits per component",
 	"macroman-encoding":  "MacRomanEncoding is its own table, not StandardEncoding",
 	"macexpert-encoding": "MacExpertEncoding is its own table, not StandardEncoding",
+	"saslprep":           "revision 5 and 6 passwords are prepared with SASLprep (RFC 4013)",
+	"encrypt-unreadable": "a file whose /Encrypt dictionary does not parse is read unencrypted, as PDFium does",
+	"literal-eol":        "a literal string keeps its raw end-of-line bytes, as pdf.js, MuPDF and PDFium do",
 }
 
 // An allowlist names differences that are expected, one per line:
@@ -28,8 +31,8 @@ var reasons = map[string]string{
 //	<file glob> <key prefix> <reason>
 //
 // The glob matches the file's name or its slash-separated path, the prefix the
-// snapshot key (for example "decoded/12 0" or "obj/"). Blank lines and
-// lines starting with # are ignored.
+// snapshot key (for example "decoded/12 0" or "obj/"; "*" for every key).
+// Blank lines and lines starting with # are ignored.
 type allowlist []allowEntry
 
 type allowEntry struct{ glob, prefix, reason string }
@@ -71,7 +74,7 @@ func (l allowlist) reason(file, key string) string {
 	for _, e := range l {
 		okName, _ := path.Match(e.glob, path.Base(file))
 		okPath, _ := path.Match(e.glob, file)
-		if (okName || okPath) && strings.HasPrefix(key, e.prefix) {
+		if (okName || okPath) && (e.prefix == "*" || strings.HasPrefix(key, e.prefix)) {
 			return e.reason
 		}
 	}

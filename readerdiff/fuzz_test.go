@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/go-pdfkit/reader"
@@ -20,6 +21,9 @@ func FuzzParseDiff(f *testing.F) {
 	f.Fuzz(func(t *testing.T, b []byte) {
 		if depth(b) > pdf.MaxNesting-2 {
 			return // nesting-limit
+		}
+		if bytes.IndexByte(b, '\r') >= 0 && bytes.IndexByte(b, '(') >= 0 {
+			return // literal-eol: v0.6 turns a raw CR in a string into \n
 		}
 		vo, vn, verr := reader.ParseObject(b)
 		po, pn, perr := pdf.ParseObject(b)

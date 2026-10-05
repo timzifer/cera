@@ -56,13 +56,17 @@ func (d *Document) setUpDecryption(ctx *loadCtx, t *table, trailer Dict) (*decry
 	if isRef {
 		v, err := d.get(ctx, t, r.Num)
 		if err != nil {
-			return nil, err
+			// An /Encrypt dictionary that does not even parse names no key
+			// to derive: the file is read as it is, as PDFium does, rather
+			// than refused. Its encrypted strings and streams then read as
+			// the damage they are.
+			return nil, nil
 		}
 		eo = d.resolve(ctx, t, v)
 	}
 	enc, ok := eo.Dict()
 	if !ok {
-		return nil, fmt.Errorf("pdf: /Encrypt is a %s, not a dictionary", eo.kind)
+		return nil, nil
 	}
 	var id []byte
 	if arr, ok := trailer.Get("ID").Array(); ok && len(arr) > 0 {
