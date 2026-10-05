@@ -115,6 +115,17 @@ func TestImageIndexed(t *testing.T) {
 	assertPixel(t, img, 75, 50, blue)
 }
 
+func TestImageIndexedDeviceN(t *testing.T) {
+	// A palette over five colorants: its entries are wider than CMYK
+	// (borb's 0499.pdf). The tint transform keeps the first as red.
+	im := streamObj("/Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8 /ColorSpace [/Indexed [/DeviceN [/A /B /C /D /E] /DeviceRGB 101 0 R] 1 <ff00000000 0000000000>]",
+		[]byte{0, 1})
+	fn := streamObj("/FunctionType 4 /Domain [0 1 0 1 0 1 0 1 0 1] /Range [0 1 0 1 0 1]", []byte("{pop pop pop pop 0 0}"))
+	img, _ := renderImagePage(t, imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q", im, fn), RenderOptions{})
+	assertPixel(t, img, 25, 50, red)
+	assertPixel(t, img, 75, 50, black)
+}
+
 func TestImageCMYKAnd16Bit(t *testing.T) {
 	inks := streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceCMYK /BitsPerComponent 8", []byte{0, 255, 255, 0})
 	gray16 := streamObj("/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 16", []byte{0x80, 0x00})
