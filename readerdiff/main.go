@@ -3,12 +3,17 @@
 //
 //	go run . snapshot -backend v06 file.pdf
 //	go run . objects -a v06 -b pdf -dir ../testdata/corpus
+//	go run . fonts -dir ../testdata/corpus
 //
 // objects reads every PDF below -dir with both backends and compares their
 // snapshots entry by entry: open result, version, repair, trailer, page tree
 // with inherited attributes, every object reachable from the trailer and the
 // pages, and what decoding made of every stream. A difference fails the run
 // unless allowlist.txt names it with a reason.
+//
+// fonts compares go-pdfkit/pdffont v0.3.1 with internal/pdffont on every
+// font the pages use: kind, matrix, program, and per code its text, width,
+// glyph name and glyph number.
 //
 // It is a module of its own so go-pdfkit never enters cera's go.mod.
 package main
@@ -46,6 +51,13 @@ func main() {
 		max := fl.Int("max", 5, "differences printed per file")
 		fl.Parse(os.Args[2:])
 		err = runObjects(*a, *b, *dir, *allow, *max)
+	case "fonts":
+		fl := flag.NewFlagSet("fonts", flag.ExitOnError)
+		dir := fl.String("dir", "../testdata/corpus", "comma-separated directories of PDFs")
+		allow := fl.String("allow", "allowlist.txt", "allowed differences")
+		max := fl.Int("max", 5, "differences printed per file")
+		fl.Parse(os.Args[2:])
+		err = runFonts(*dir, *allow, *max)
 	default:
 		usage()
 	}
@@ -56,7 +68,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: readerdiff snapshot|objects [flags]")
+	fmt.Fprintln(os.Stderr, "usage: readerdiff snapshot|objects|fonts [flags]")
 	os.Exit(2)
 }
 

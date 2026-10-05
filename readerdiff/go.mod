@@ -7,4 +7,6 @@ require (
 	github.com/timzifer/cera v0.0.0
 )
 
+require github.com/go-pdfkit/pdffont v0.3.1
+
 replace github.com/timzifer/cera => ../
