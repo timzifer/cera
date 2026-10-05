@@ -173,12 +173,13 @@ func newExec(id, bin, versionFlag string, annots bool) (engine, error) {
 func (e *execEngine) name() string { return e.id }
 
 // version keys the cache; mutool draw has no switch for annotations, so
-// its renderings are the same in both modes.
+// its renderings are the same in both modes. Poppler and Ghostscript
+// renderings name the crop box, which older cached ones did not draw.
 func (e *execEngine) version() string {
 	if e.id == "mupdf" {
 		return e.ver
 	}
-	return e.ver + contentSuffix(e.annots)
+	return e.ver + "-cropbox" + contentSuffix(e.annots)
 }
 func (e *execEngine) close() {}
 
@@ -198,7 +199,7 @@ func (e *execEngine) render(f *file, pages []int, scale float64) ([]*image.RGBA,
 		var args []string
 		switch e.id {
 		case "poppler":
-			args = []string{"-r", dpi, "-f", fmt.Sprint(i + 1), "-l", fmt.Sprint(i + 1), "-png", "-singlefile", "-aa", "yes", "-aaVector", "yes"}
+			args = []string{"-r", dpi, "-f", fmt.Sprint(i + 1), "-l", fmt.Sprint(i + 1), "-png", "-singlefile", "-aa", "yes", "-aaVector", "yes", "-cropbox"}
 			if !e.annots {
 				args = append(args, "-hide-annotations")
 			}
@@ -212,7 +213,7 @@ func (e *execEngine) render(f *file, pages []int, scale float64) ([]*image.RGBA,
 			sz, pt := f.sizes[i], f.pts[i]
 			shift := (float64(sz.Y) - pt.h*scale) / scale
 			args = []string{"-q", "-dNOPAUSE", "-dBATCH", "-dSAFER", "-sDEVICE=png16m", "-r" + dpi,
-				"-dTextAlphaBits=4", "-dGraphicsAlphaBits=4", fmt.Sprintf("-g%dx%d", sz.X, sz.Y), "-dFIXEDMEDIA",
+				"-dTextAlphaBits=4", "-dGraphicsAlphaBits=4", fmt.Sprintf("-g%dx%d", sz.X, sz.Y), "-dFIXEDMEDIA", "-dUseCropBox",
 				fmt.Sprintf("-dFirstPage=%d", i+1), fmt.Sprintf("-dLastPage=%d", i+1), "-o", out}
 			if !e.annots {
 				args = append(args, "-dShowAnnots=false")
