@@ -1,0 +1,3 @@
+# Differences between go-pdfkit/reader v0.6.0 and internal/pdf that ADR 0012
+# expects. One per line: <file glob> <snapshot key prefix> <reason>.
+# Reasons: see reasons in allowlist.go.
