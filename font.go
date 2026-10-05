@@ -400,7 +400,7 @@ func (f *Font) simpleGlyphIndex(code int) opentype.GlyphIndex {
 				return gid
 			}
 		}
-		if !p.HasCharacterMap() {
+		if !p.HasCharacterMap() && isTrueType(p) {
 			if i, ok := macGlyphIndex()[name]; ok && i < p.NumGlyphs() {
 				return opentype.GlyphIndex(i)
 			}
@@ -413,6 +413,14 @@ func (f *Font) simpleGlyphIndex(code int) opentype.GlyphIndex {
 		return gid
 	}
 	return opentype.GlyphIndex(code)
+}
+
+// isTrueType reports a program with TrueType outlines. Only those may be
+// read in the Macintosh glyph order: a Type 1 or CFF program without a
+// cmap keeps its glyphs in its own order and has its own encoding.
+func isTrueType(p *opentype.Font) bool {
+	_, ok := p.Table("glyf")
+	return ok
 }
 
 // byChar looks a code up as a character, then in the range reserved for a

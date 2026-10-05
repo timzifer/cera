@@ -54,7 +54,7 @@ const (
 )
 
 // budget is a row of the table of budgets, limits and caches documented in
-// the README.
+// docs/budgets.md.
 type budget struct {
 	name  string // the constant
 	limit int
@@ -62,7 +62,7 @@ type budget struct {
 	what  string
 }
 
-// budgets lists every bound of the renderer. A test checks that the README
+// budgets lists every bound of the renderer. A test checks that docs/budgets.md
 // documents each of them with its value and key.
 var budgets = []budget{
 	{"maxFormDepth", maxFormDepth, "nesting-budget", "forms, Type 3 glyphs, pattern cells and soft masks nested in each other; deeper ones are not drawn"},
