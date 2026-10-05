@@ -33,6 +33,9 @@ func runFonts(dirs, allowPath string, max int) error {
 			return err
 		}
 		pw, _ := corpus.Password(f)
+		if os.Getenv("READERDIFF_TRACE") != "" {
+			fmt.Fprintln(os.Stderr, "file:", filepath.ToSlash(f))
+		}
 		start := time.Now()
 		s, n := safeFontSnapshot(data, pw)
 		if el := time.Since(start); el > 5*time.Second {
@@ -204,6 +207,7 @@ func macEncoding(d *reader.Document, dict reader.Dict) string {
 func fontRefs(d *reader.Document) []reader.Ref {
 	seen := map[reader.Ref]bool{}
 	res := map[reader.Ref]bool{}
+	forms := map[reader.Ref]bool{} // form XObjects already walked
 	var out []reader.Ref
 	var walkRes func(o reader.Object, depth int)
 	walkRes = func(o reader.Object, depth int) {
@@ -233,6 +237,12 @@ func fontRefs(d *reader.Document) []reader.Ref {
 		xv, _ := d.Resolve(rd.Get("XObject"))
 		if xs, ok := reader.ToDict(xv); ok {
 			for _, x := range xs {
+				if r, ok := x.(reader.Ref); ok {
+					if forms[r] {
+						continue
+					}
+					forms[r] = true
+				}
 				xo, _ := d.Resolve(x)
 				if s, ok := reader.ToStream(xo); ok {
 					if st, _ := reader.ToName(s.Dict.Get("Subtype")); st == "Form" {

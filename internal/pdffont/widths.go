@@ -1,7 +1,6 @@
 package pdffont
 
 import (
-	"cmp"
 	"math"
 	"slices"
 )
@@ -66,25 +65,29 @@ func (b *cidWidthBuilder) build() cidWidths {
 	if ordered {
 		return slices.Clip(runs)
 	}
-	// Lay the runs down in order, each cutting what it covers out of the
-	// ones before it.
-	var out []cidRun
+	// Runs out of order or overlapping: give every identifier the width of
+	// the last run naming it, then join neighbours of equal width again.
+	// Each run spans less than 1<<20 identifiers (readCIDWidths), as in
+	// v0.3.1, which kept one map entry per identifier.
+	byCID := map[int64]float64{}
 	for _, r := range runs {
-		var next []cidRun
-		for _, o := range out {
-			if o.hi < r.lo || o.lo > r.hi {
-				next = append(next, o)
-				continue
-			}
-			if o.lo < r.lo {
-				next = append(next, cidRun{o.lo, r.lo - 1, o.w})
-			}
-			if o.hi > r.hi {
-				next = append(next, cidRun{r.hi + 1, o.hi, o.w})
-			}
+		for c := r.lo; c <= r.hi; c++ {
+			byCID[c] = r.w
 		}
-		out = append(next, r)
 	}
-	slices.SortFunc(out, func(a, b cidRun) int { return cmp.Compare(a.lo, b.lo) })
+	cids := make([]int64, 0, len(byCID))
+	for c := range byCID {
+		cids = append(cids, c)
+	}
+	slices.Sort(cids)
+	var out []cidRun
+	for _, c := range cids {
+		w := byCID[c]
+		if n := len(out); n > 0 && out[n-1].hi+1 == c && out[n-1].w == w {
+			out[n-1].hi = c
+			continue
+		}
+		out = append(out, cidRun{c, c, w})
+	}
 	return out
 }

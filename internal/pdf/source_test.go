@@ -71,11 +71,11 @@ func TestReaderAtAgrees(t *testing.T) {
 	objs[5] = "<</Name (a string \\(with\\) escapes) /Hex <414243> /N 12345.678 /Arr [1 2 3 /Names #20 4 0 R]>>"
 	objs[6] = stream("/Filter /FlateDecode", deflate([]byte(strings.Repeat("big content ", 500))))
 	files := map[string][]byte{
-		"simple":   file{objs: objs, trailer: "/Root 1 0 R"}.bytes(),
-		"shifted":  file{objs: objs, trailer: "/Root 1 0 R", shift: 9}.bytes(),
-		"no xref":  file{objs: objs, trailer: "/Root 1 0 R", noXref: true}.bytes(),
-		"objstm":   objStmFile(t, false),
-		"hybrid":   objStmFile(t, true),
+		"simple":  file{objs: objs, trailer: "/Root 1 0 R"}.bytes(),
+		"shifted": file{objs: objs, trailer: "/Root 1 0 R", shift: 9}.bytes(),
+		"no xref": file{objs: objs, trailer: "/Root 1 0 R", noXref: true}.bytes(),
+		"objstm":  objStmFile(t, false),
+		"hybrid":  objStmFile(t, true),
 		"wrong /Length": func() []byte {
 			o := onePage("")
 			o[4] = "<</Length 3>>\nstream\n" + strings.Repeat("x", 3000) + "\nendstream"
