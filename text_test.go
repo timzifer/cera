@@ -369,3 +369,25 @@ func TestType3Clip(t *testing.T) {
 		t.Errorf("stats %+v", st)
 	}
 }
+
+// TestMacRomanEncoding reads text in a font that names MacRomanEncoding:
+// code 0x27 is the straight quote and codes above 127 the Mac's accented
+// letters (ADR 0012), not StandardEncoding's quoteright and nothing.
+func TestMacRomanEncoding(t *testing.T) {
+	doc, err := Open(textPDF("BT /F1 12 Tf 10 50 Td (it\047s \212 \232 \237 \247) Tj ET",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /MacRomanEncoding >>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := doc.Page(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := p.Text(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(text.String()); got != "it's ä ö ü ß" {
+		t.Errorf("text %q, want %q", got, "it's ä ö ü ß")
+	}
+}
