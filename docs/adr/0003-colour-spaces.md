@@ -83,6 +83,18 @@ linear sRGB at 17⁴ nodes, so fills, shading functions and images keep the
 one fast path. The escape hatch is per document (`OpenOptions`), not per
 render: the image cache holds converted pixels.
 
+**Default spaces** (#40). A device space named directly — by `g`, `rg`,
+`k` and their stroking forms, by `cs`/`CS`, as an image's, inline
+image's or shading's `/ColorSpace` — converts through the
+`DefaultGray`, `DefaultRGB` or `DefaultCMYK` of the resources in effect
+(PDF 2.0, 8.6.5.6), if that is a space of as many components (not a
+pattern or Indexed space); `NaiveCMYK` keeps DeviceCMYK naive. As in
+PDFium, device spaces inside other spaces (the base of Indexed, the
+alternate of Separation and DeviceN) and a transparency group's
+blending space are not remapped. Images and shadings are cached by
+reference with the spaces of the resources they were first drawn with,
+as for named spaces already.
+
 **Rendering intent** (`ri`, `/Intent`) stays ignored; it only matters with a
 real CMS. **Output intents** are ignored.
 
@@ -164,8 +176,11 @@ Not done yet:
   only unmodified; the remaining difference with it is the difference
   between the two press characterizations. `0561` is not a CMYK page: it
   is an RGB JPEG under a `/DefaultRGB` of Adobe RGB (1998), which cera
-  does not apply (through it the magenta becomes 229 1 127, the
-  references' 230 1 127).
+  did not apply; since #40 it does (the magenta becomes 229 1 127, the
+  references' 230 1 127; cera's outlier share on the page falls from
+  37.2 % to 1.9 %). Of the 22 files of the pinned, pdf.js and borb
+  corpora with Default spaces, no other page in the first three changes
+  measurably.
 - LUT-based grey and RGB ICC profiles fall back on the device space of
   their component count, and are not counted as `icc-lut`.
 

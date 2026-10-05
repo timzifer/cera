@@ -82,7 +82,9 @@ func (in *interp) softMask(o reader.Object, res reader.Dict) *softMask {
 		if bc := doc.floats(d["BC"]); len(bc) > 0 {
 			cs := spaceGray
 			if g := doc.dict(s.Dict["Group"]); g != nil {
-				if c, _ := doc.colorSpace(g["CS"], res, 0); c != nil {
+				// Depth 1: Default spaces do not remap a group's
+				// blending space.
+				if c, _ := doc.colorSpace(g["CS"], res, 1); c != nil {
 					cs = c
 				}
 			}

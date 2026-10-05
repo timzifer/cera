@@ -52,6 +52,7 @@ Fonts a file does not embed:
 | ICCBased | grey and RGB matrix/TRC profiles; CMYK profiles of lut8, lut16 or lutAtoB tables (Lab or XYZ); others by channel count |
 | Separation, DeviceN | tint transforms; `/None` paints nothing |
 | Indexed | on any of the above |
+| DefaultGray, DefaultRGB, DefaultCMYK | remap device colours, images and shadings of their resources; not the device spaces inside other spaces |
 
 ### Transparency and graphics state
 
