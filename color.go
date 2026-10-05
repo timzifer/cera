@@ -156,12 +156,17 @@ type csEntry struct {
 
 // colorSpace resolves a colour space operand or resource entry. approx names
 // a feature that is only approximated, or is empty. Spaces named by
-// reference are made once per document.
+// reference are made once per document. A device space named at depth 0
+// (an operand, an image's or a shading's /ColorSpace) is remapped by the
+// Default space of res; the device spaces inside other spaces are not.
 func (d *Document) colorSpace(o reader.Object, res reader.Dict, depth int) (cs *colorSpace, approx string) {
 	if depth > 4 {
 		return nil, ""
 	}
 	if n, ok := o.(reader.Name); ok {
+		if dev := deviceComps(n); dev > 0 && depth == 0 {
+			return d.defaultSpace(res, dev)
+		}
 		switch n {
 		case "DeviceGray", "G", "CalGray":
 			return spaceGray, ""
@@ -194,6 +199,46 @@ func (d *Document) colorSpace(o reader.Object, res reader.Dict, depth int) (cs *
 		}
 		d.spaces[ref] = csEntry{cs, approx}
 		d.csMu.Unlock()
+	}
+	return cs, approx
+}
+
+// deviceComps returns the components of the device space a name (or its
+// inline image abbreviation) names, 0 for any other name.
+func deviceComps(n reader.Name) int {
+	switch n {
+	case "DeviceGray", "G":
+		return 1
+	case "DeviceRGB", "RGB":
+		return 3
+	case "DeviceCMYK", "CMYK":
+		return 4
+	}
+	return 0
+}
+
+// defaultNames are the Default spaces by the components of their device
+// space.
+var defaultNames = [5]reader.Name{1: "DefaultGray", 3: "DefaultRGB", 4: "DefaultCMYK"}
+
+// defaultSpace is the device space of n components as the resources res
+// remap it (PDF 2.0, 8.6.5.6): through their DefaultGray, DefaultRGB or
+// DefaultCMYK, if it is a space of as many components (not a pattern or
+// Indexed space), else the device space itself. NaiveCMYK keeps
+// DeviceCMYK naive.
+func (d *Document) defaultSpace(res reader.Dict, n int) (*colorSpace, string) {
+	dev := d.deviceSpace(n)
+	if n == 4 && d.naiveCMYK {
+		return dev, ""
+	}
+	o, ok := d.dict(res["ColorSpace"])[defaultNames[n]]
+	if !ok {
+		return dev, ""
+	}
+	// Depth 1: the Default space is not remapped in turn.
+	cs, approx := d.colorSpace(o, nil, 1)
+	if cs == nil || cs.n != n || cs.kind == csPattern || cs.kind == csIndexed {
+		return dev, ""
 	}
 	return cs, approx
 }

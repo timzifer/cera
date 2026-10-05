@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"reflect"
 
 	"github.com/go-pdfkit/reader"
 	"github.com/timzifer/stilus"
@@ -83,6 +84,7 @@ type interp struct {
 	masks     int                // soft masks drawn
 	maskDepth int                // soft masks being drawn
 	dashes    []float64          // dash patterns of this page, append-only
+	defs      defaultMemo        // device spaces of the resources last used
 	dashBuf   []float64
 
 	// Optional content. out is the device the page is drawn to; rec is
@@ -419,13 +421,14 @@ func (in *interp) color(sc *content.Scanner, op []byte, res reader.Dict) {
 			in.setPattern(sc, res, &in.gs.fillPat)
 		}
 	default: // G g RG rg K k
-		cs := spaceGray
+		n := 1
 		switch op[0] {
 		case 'R', 'r':
-			cs = spaceRGB
+			n = 3
 		case 'K', 'k':
-			cs = in.doc.cmykSpace()
+			n = 4
 		}
+		cs := in.deviceSpace(res, n)
 		if !sc.Nums(v[:cs.n]) {
 			in.st.Errors++
 			return
@@ -448,12 +451,16 @@ func (in *interp) colorSpaceOperand(sc *content.Scanner, res reader.Dict) *color
 		return nil
 	}
 	switch string(sc.Text(o)) {
-	case "DeviceGray", "G", "CalGray":
-		return spaceGray
-	case "DeviceRGB", "RGB", "CalRGB":
-		return spaceRGB
+	case "DeviceGray", "G":
+		return in.deviceSpace(res, 1)
+	case "DeviceRGB", "RGB":
+		return in.deviceSpace(res, 3)
 	case "DeviceCMYK", "CMYK":
-		return in.doc.cmykSpace()
+		return in.deviceSpace(res, 4)
+	case "CalGray":
+		return spaceGray
+	case "CalRGB":
+		return spaceRGB
 	case "Pattern":
 		return spacePattern
 	}
@@ -462,6 +469,28 @@ func (in *interp) colorSpaceOperand(sc *content.Scanner, res reader.Dict) *color
 		in.st.unsupported(approx)
 	}
 	return cs
+}
+
+// deviceSpace is the device space of n components as res remaps it
+// (Document.defaultSpace), resolved once per resource dictionary.
+func (in *interp) deviceSpace(res reader.Dict, n int) *colorSpace {
+	if reflect.ValueOf(res).UnsafePointer() != reflect.ValueOf(in.defs.res).UnsafePointer() {
+		in.defs = defaultMemo{res: res}
+	}
+	if in.defs.cs[n] == nil {
+		in.defs.cs[n], in.defs.approx[n] = in.doc.defaultSpace(res, n)
+	}
+	if a := in.defs.approx[n]; a != "" {
+		in.st.unsupported(a)
+	}
+	return in.defs.cs[n]
+}
+
+// defaultMemo holds the device spaces of one resource dictionary.
+type defaultMemo struct {
+	res    reader.Dict    // compared by identity, and kept so that it stays unique
+	cs     [5]*colorSpace // by components
+	approx [5]string
 }
 
 func (in *interp) restore() {
