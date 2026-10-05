@@ -6,6 +6,7 @@ package pdf
 
 import (
 	"bytes"
+	"errors"
 	"math"
 	"sync"
 	"unsafe"
@@ -16,6 +17,10 @@ import (
 // MaxNesting bounds how deeply arrays and dictionaries may nest in one
 // object. Deeper nesting is a syntax error rather than a stack overflow.
 const MaxNesting = 128
+
+// errNeedMore says the window of the file a parser was given ended before
+// the object did: the caller reads a larger one and parses again.
+var errNeedMore = errors.New("pdf: object runs past the window read")
 
 // fPend marks an object the builder has not laid out yet: its data is at
 // index v of the parser's scratch (fin for an array, ent for a dictionary,
@@ -36,6 +41,12 @@ type parser struct {
 	// crypt decrypts every string in place and returns what is left of
 	// it; nil when strings are not encrypted.
 	crypt func([]byte) []byte
+	// partial says buf is a window that ends before the file does: an
+	// object that reaches its end may be cut off.
+	partial bool
+	// noAlias makes strings and names copies rather than views of buf,
+	// which is then a window read for this parse alone.
+	noAlias bool
 
 	stack []Object // values being parsed
 	fin   []Object // elements of closed arrays
@@ -61,6 +72,7 @@ func (p *parser) free() {
 	clear(p.ent)
 	p.stack, p.fin, p.ent, p.bytes = p.stack[:0], p.fin[:0], p.ent[:0], p.bytes[:0]
 	p.lex, p.length, p.crypt, p.copyStrings, p.depth = lexer{}, nil, nil, false, 0
+	p.partial, p.noAlias = false, false
 	parserPool.Put(p)
 }
 
@@ -86,6 +98,22 @@ func (p *parser) object() (Object, error) {
 		return Null, err
 	}
 	return *p.finish(nil), nil
+}
+
+// objectChecked is object for a window: an object that reaches the end of
+// a partial window may be cut off.
+func (p *parser) objectChecked() (Object, error) {
+	o, err := p.object()
+	if err != nil {
+		if p.partial {
+			return Null, errNeedMore
+		}
+		return Null, err
+	}
+	if p.partial && p.lex.pos+32 > len(p.lex.buf) {
+		return Null, errNeedMore
+	}
+	return o, nil
 }
 
 // expectUint reads a non-negative integer.
@@ -159,6 +187,10 @@ func (p *parser) indirect(crypt func(r Ref, stream bool, d []Entry) func([]byte)
 		p.lex.pos = save
 	}
 	p.accept("endobj")
+	if p.partial && p.lex.pos+32 > len(p.lex.buf) {
+		// Too near the end of the window to be sure the object ended.
+		return ref, nil, errNeedMore
+	}
 	if crypt != nil {
 		top := p.stack[len(p.stack)-1]
 		var d []Entry
@@ -204,14 +236,22 @@ func (p *parser) streamData(dict Object, kwPos int) ([]byte, error) {
 		i++
 	}
 	start := i
-	if n, ok := p.streamLength(dict); ok && n <= int64(len(b)-start) {
-		if end := endstreamAt(b, start+int(n)); end >= 0 {
-			p.lex.pos = end
-			return b[start : start+int(n) : start+int(n)], nil
+	if n, ok := p.streamLength(dict); ok {
+		if p.partial && n+32 > int64(len(b)-start) {
+			return nil, errNeedMore
+		}
+		if n <= int64(len(b)-start) {
+			if end := endstreamAt(b, start+int(n)); end >= 0 {
+				p.lex.pos = end
+				return b[start : start+int(n) : start+int(n)], nil
+			}
 		}
 	}
 	j := bytes.Index(b[start:], []byte("endstream"))
 	if j < 0 {
+		if p.partial {
+			return nil, errNeedMore
+		}
 		return nil, &SyntaxError{kwPos, "unterminated stream"}
 	}
 	end := start + j
@@ -315,7 +355,7 @@ func (p *parser) maybeRef(t token) {
 // input; any other is decoded into the scratch bytes.
 func (p *parser) str(t token) Object {
 	text := p.lex.text(t)
-	if !t.esc && !p.copyStrings {
+	if !t.esc && !p.copyStrings && !p.noAlias {
 		return String(text)
 	}
 	off := len(p.bytes)
@@ -347,6 +387,9 @@ func (p *parser) name(t token) Name {
 	}
 	if len(text) == 0 {
 		return ""
+	}
+	if p.noAlias {
+		return Name(text)
 	}
 	return Name(unsafe.String(&text[0], len(text)))
 }

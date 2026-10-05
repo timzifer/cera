@@ -3,6 +3,7 @@ package cera
 import (
 	"container/list"
 	"fmt"
+	"io"
 	"math"
 	"sync"
 
@@ -77,6 +78,20 @@ func OpenWithPassword(data []byte, password string) (*Document, error) {
 // fonts the document does not embed, and how CMYK is converted. It fails
 // on a CMYKProfile it cannot read.
 func OpenWith(data []byte, opt OpenOptions) (doc *Document, err error) {
+	return open(func(o pdf.Options) (*pdf.Document, error) { return pdf.OpenWith(data, o) }, opt)
+}
+
+// OpenReaderAt is OpenWith for a file of size bytes read through r as it
+// is needed, rather than held in memory: a large file, or one in a browser
+// read through the File API. r must not change while the Document is used,
+// and must be safe for concurrent use if pages are rendered concurrently,
+// as an *os.File is. A file with damaged cross-reference tables is read in
+// full once to rebuild them.
+func OpenReaderAt(r io.ReaderAt, size int64, opt OpenOptions) (doc *Document, err error) {
+	return open(func(o pdf.Options) (*pdf.Document, error) { return pdf.OpenReaderAt(r, size, o) }, opt)
+}
+
+func open(read func(pdf.Options) (*pdf.Document, error), opt OpenOptions) (doc *Document, err error) {
 	defer recoverPanic(&err)
 	devCMYK := spaceCMYK
 	if opt.CMYKProfile != nil {
@@ -89,7 +104,7 @@ func OpenWith(data []byte, opt OpenOptions) (doc *Document, err error) {
 	if opt.NaiveCMYK {
 		devCMYK = spaceCMYKNaive
 	}
-	d, err := pdf.OpenWithPassword(data, opt.Password)
+	d, err := read(pdf.Options{Password: opt.Password})
 	if err != nil {
 		return nil, err
 	}

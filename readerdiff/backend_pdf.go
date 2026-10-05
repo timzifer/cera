@@ -1,22 +1,38 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 
 	"github.com/timzifer/cera/internal/pdf"
 )
 
-// pdfBackend is cera's own reader, internal/pdf.
-type pdfBackend struct{}
+// pdfBackend is cera's own reader, internal/pdf, reading the file from
+// memory or, with readerAt, through an io.ReaderAt.
+type pdfBackend struct{ readerAt bool }
 
-func init() { register(pdfBackend{}) }
+func init() {
+	register(pdfBackend{})
+	register(pdfBackend{readerAt: true})
+}
 
-func (pdfBackend) name() string { return "pdf" }
+func (b pdfBackend) name() string {
+	if b.readerAt {
+		return "pdfra"
+	}
+	return "pdf"
+}
 
-func (pdfBackend) snapshot(data []byte, password string) *snapshot {
+func (b pdfBackend) snapshot(data []byte, password string) *snapshot {
 	s := &snapshot{}
-	d, err := pdf.OpenWithPassword(data, password)
+	var d *pdf.Document
+	var err error
+	if b.readerAt {
+		d, err = pdf.OpenReaderAt(bytes.NewReader(data), int64(len(data)), pdf.Options{Password: password})
+	} else {
+		d, err = pdf.OpenWithPassword(data, password)
+	}
 	if err != nil {
 		s.set("open", "error")
 		return s

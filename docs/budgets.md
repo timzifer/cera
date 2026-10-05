@@ -45,6 +45,7 @@ A test keeps this table in step with the code.
 | `pdf.MaxXrefSections` | 1 Ki | – | cross-reference sections of one /Prev chain; older ones are not read |
 | `pdf.MaxObjects` | 8 Mi | – | cross-reference entries of one file; past it the file is rebuilt by scanning |
 | `pdf.MaxPageTreeDepth` | 64 | – | page tree nodes nested in each other; deeper pages are not found |
+| `pdf.MaxObjectWindow` | 64 Mi | – | bytes read to parse one object of a file opened with OpenReaderAt; a larger object is not read |
 | `imageCacheBytes` | 256 Mi | – | decoded images a document keeps |
 | `pdf.DefaultStreamCacheBytes` | 64 Mi | – | decoded streams (content, forms, Type 3 glyphs, functions) a document keeps |
 | `pdf.MaxCachedStream` | 8 Mi | – | largest decoded stream kept; larger ones are decoded on every use |

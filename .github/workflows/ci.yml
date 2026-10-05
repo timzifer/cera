@@ -143,6 +143,8 @@ jobs:
           - { name: FuzzParseObject, pkg: ./internal/pdf }
           - { name: FuzzOpen, pkg: ./internal/pdf }
           - { name: FuzzFilters, pkg: ./internal/pdf }
+          - { name: FuzzReaderAt, pkg: ./internal/pdf }
+          - { name: FuzzToUnicode, pkg: ./internal/pdffont }
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -161,6 +163,7 @@ jobs:
             internal/content/testdata/fuzz
             internal/cmap/testdata/fuzz
             internal/pdf/testdata/fuzz
+            internal/pdffont/testdata/fuzz
 
   # cera's own reader against go-pdfkit/reader v0.6.0, the one it replaces
   # (ADR 0012): every object, decoded stream and page of the pinned corpus
@@ -192,7 +195,9 @@ jobs:
         run: go run ./cmd/corpus scenes -dir testdata/corpus
       - name: Compare the readers
         working-directory: readerdiff
-        run: go run . objects -a v06 -b pdf -dir ../testdata/corpus
+        run: |
+          go run . objects -a v06 -b pdf -dir ../testdata/corpus
+          go run . objects -a v06 -b pdfra -dir ../testdata/corpus
       - name: Compare the font layers
         working-directory: readerdiff
         run: go run . fonts -dir ../testdata/corpus

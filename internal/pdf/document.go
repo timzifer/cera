@@ -7,7 +7,9 @@ package pdf
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 )
@@ -25,7 +27,7 @@ var inheritable = [...]Name{"Resources", "MediaBox", "CropBox", "Rotate"}
 // trailer, and lazy access to every object in it. It is safe for concurrent
 // use; objects it returns are shared and must not be modified.
 type Document struct {
-	buf      []byte
+	src      source
 	password string
 	version  string
 
@@ -60,7 +62,19 @@ func OpenWithPassword(b []byte, password string) (*Document, error) {
 
 // OpenWith is Open with options.
 func OpenWith(b []byte, opt Options) (*Document, error) {
-	d := &Document{buf: b, password: opt.Password, version: version(b)}
+	return open(memSource(b), opt)
+}
+
+// OpenReaderAt is OpenWith for a file read on demand through r, size bytes
+// long: only the parts of the file that are needed are read, and objects
+// keep copies of what they hold rather than views of the file. Opening a
+// damaged file reads all of it to rebuild its tables.
+func OpenReaderAt(r io.ReaderAt, size int64, opt Options) (*Document, error) {
+	return open(readerSource{r, size}, opt)
+}
+
+func open(src source, opt Options) (*Document, error) {
+	d := &Document{src: src, password: opt.Password, version: version(src)}
 	d.resolveFn = d.Resolve
 	switch {
 	case opt.StreamCacheBytes == 0:
@@ -98,7 +112,10 @@ func OpenWith(b []byte, opt Options) (*Document, error) {
 	return d, nil
 }
 
-func version(b []byte) string {
+// version reads the header version. A file read on demand is searched in
+// its first megabyte for it, one in memory throughout.
+func version(src source) string {
+	b, _ := src.window(0, 1<<20)
 	i := bytes.Index(b, []byte("%PDF-"))
 	if i < 0 || i+8 > len(b) {
 		return ""
@@ -206,7 +223,7 @@ func (d *Document) get(ctx *loadCtx, t *table, num int32) (Object, error) {
 // does not hold the expected object means the tables are wrong, which is
 // common enough that it triggers a rebuild rather than an error.
 func (d *Document) atOffset(ctx *loadCtx, t *table, num int32, e *xentry) (*Object, error) {
-	if e.off < 0 || e.off >= int64(len(d.buf)) {
+	if e.off < 0 || e.off >= d.src.size() {
 		return d.retryAfterRepair(ctx, t, num, fmt.Errorf("pdf: object %d is at offset %d, outside the file", num, e.off))
 	}
 	got, p, err := d.parseAt(ctx, t, e.off)
@@ -219,11 +236,38 @@ func (d *Document) atOffset(ctx *loadCtx, t *table, num int32, e *xentry) (*Obje
 	return p, nil
 }
 
+// windowed runs parse over the file from off on. A file in memory is parsed
+// in one go; one read on demand is read a window at a time, a larger one
+// whenever the object may run past the end of the last.
+func (d *Document) windowed(off int64, parse func(p *parser) error) error {
+	for size := firstWindow; ; size *= 4 {
+		b, mem := d.src.window(off, size)
+		p := newParser(b, 0)
+		p.partial = !whole(d.src, off, b, mem)
+		p.noAlias = !mem
+		err := parse(p)
+		partial := p.partial
+		p.free()
+		if err == nil || !partial || size >= MaxObjectWindow {
+			if errors.Is(err, errNeedMore) {
+				err = &SyntaxError{int(off), "object larger than MaxObjectWindow"}
+			}
+			return err
+		}
+	}
+}
+
 // parseAt parses the indirect object at off, decrypting its strings and
 // marking its stream for decryption with t's key.
-func (d *Document) parseAt(ctx *loadCtx, t *table, off int64) (Ref, *Object, error) {
-	p := newParser(d.buf, int(off))
-	defer p.free()
+func (d *Document) parseAt(ctx *loadCtx, t *table, off int64) (ref Ref, obj *Object, err error) {
+	err = d.windowed(off, func(p *parser) error {
+		ref, obj, err = d.parseIndirect(ctx, t, p)
+		return err
+	})
+	return ref, obj, err
+}
+
+func (d *Document) parseIndirect(ctx *loadCtx, t *table, p *parser) (Ref, *Object, error) {
 	p.length = func(r Ref) Object {
 		o, err := d.get(ctx, t, r.Num)
 		if err != nil {
@@ -273,7 +317,7 @@ func (d *Document) retryAfterRepair(ctx *loadCtx, t *table, num int32, cause err
 		return nil, cause
 	}
 	p := new(Object)
-	if e := nt.entry(num); e != nil && e.kind == 'n' && e.off < int64(len(d.buf)) && e.off >= 0 {
+	if e := nt.entry(num); e != nil && e.kind == 'n' && e.off < d.src.size() && e.off >= 0 {
 		if got, o, err := d.parseAt(ctx, nt, e.off); err == nil && got.Num == num {
 			p = o
 		}

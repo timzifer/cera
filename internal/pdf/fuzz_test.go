@@ -1,6 +1,7 @@
 package pdf
 
 import (
+	"bytes"
 	"testing"
 )
 
@@ -113,6 +114,31 @@ func FuzzFilters(f *testing.F) {
 		out, _ := applyFilter(f, data, parm, none)
 		if len(out) > MaxStreamBytes+1<<16 {
 			t.Fatalf("%s made %d bytes", f, len(out))
+		}
+	})
+}
+
+// FuzzReaderAt opens a file from memory and through an io.ReaderAt with
+// small windows: both must read the same.
+func FuzzReaderAt(f *testing.F) {
+	f.Add(file{objs: onePage("0 0 m 1 1 l S"), trailer: "/Root 1 0 R"}.bytes())
+	f.Add(file{objs: onePage("q Q"), trailer: "/Root 1 0 R", shift: 5}.bytes())
+	f.Add(file{objs: onePage("q Q"), noXref: true}.bytes())
+	f.Add(objStmFile(&testing.T{}, true))
+	savedW, savedC, savedS := firstWindow, scanChunk, MaxStreamBytes
+	firstWindow, scanChunk, MaxStreamBytes = 16, 600, 1<<20
+	defer func() { firstWindow, scanChunk, MaxStreamBytes = savedW, savedC, savedS }()
+	f.Fuzz(func(t *testing.T, b []byte) {
+		mem, err1 := Open(b)
+		ra, err2 := OpenReaderAt(bytes.NewReader(b), int64(len(b)), Options{})
+		if (err1 == nil) != (err2 == nil) {
+			t.Fatalf("memory: %v, ReaderAt: %v", err1, err2)
+		}
+		if err1 != nil {
+			return
+		}
+		if x, y := dump(mem), dump(ra); x != y {
+			t.Fatalf("readers disagree\nmemory:\n%s\nReaderAt:\n%s", x, y)
 		}
 	})
 }

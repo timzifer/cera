@@ -26,17 +26,19 @@ const startxrefWindow = 4096
 
 // findStartxref reads the offset the file's last startxref names.
 func (d *Document) findStartxref() (int64, error) {
-	from := max(len(d.buf)-startxrefWindow, 0)
-	i := bytes.LastIndex(d.buf[from:], []byte("startxref"))
+	from := max(d.src.size()-startxrefWindow, 0)
+	b, _ := d.src.window(from, startxrefWindow)
+	b = b[:min(len(b), startxrefWindow)]
+	i := bytes.LastIndex(b, []byte("startxref"))
 	if i < 0 {
 		return 0, fmt.Errorf("pdf: no startxref in the last %d bytes", startxrefWindow)
 	}
-	l := &lexer{buf: d.buf, pos: from + i + len("startxref")}
+	l := &lexer{buf: b, pos: i + len("startxref")}
 	t, err := l.next()
 	if err != nil {
 		return 0, err
 	}
-	if t.kind != tokInteger || t.num.Int < 0 || t.num.Int >= int64(len(d.buf)) {
+	if t.kind != tokInteger || t.num.Int < 0 || t.num.Int >= d.src.size() {
 		return 0, &SyntaxError{t.pos, "startxref does not name an offset inside the file"}
 	}
 	return t.num.Int, nil
@@ -139,37 +141,37 @@ func (x *xrefReader) set(num int64, e rawEntry) {
 
 // readSection reads whichever of the two forms is at off into sec and
 // returns its trailer dictionary.
-func (x *xrefReader) readSection(off int64) (Dict, error) {
-	b := x.d.buf
-	if off < 0 || off >= int64(len(b)) {
+func (x *xrefReader) readSection(off int64) (tr Dict, err error) {
+	if off < 0 || off >= x.d.src.size() {
 		return Dict{}, fmt.Errorf("pdf: cross-reference offset %d is outside the file", off)
 	}
-	l := &lexer{buf: b, pos: int(off)}
-	t, err := l.next()
-	if err != nil {
-		return Dict{}, err
-	}
-	if l.isKeyword(t, "xref") {
-		return x.readTable(l)
-	}
-	p := newParser(b, int(off))
-	_, obj, err := p.indirect(nil)
-	p.free()
-	if err != nil {
-		return Dict{}, err
-	}
-	s, ok := obj.Stream()
-	if !ok {
-		return Dict{}, &SyntaxError{int(off), "neither an xref table nor an xref stream"}
-	}
-	return x.readStream(s)
+	err = x.d.windowed(off, func(p *parser) error {
+		t, err := p.lex.next()
+		if err != nil {
+			return err
+		}
+		if p.lex.isKeyword(t, "xref") {
+			tr, err = x.readTable(p)
+			return err
+		}
+		p.lex.pos = 0
+		_, obj, err := p.indirect(nil)
+		if err != nil {
+			return err
+		}
+		s, ok := obj.Stream()
+		if !ok {
+			return &SyntaxError{int(off), "neither an xref table nor an xref stream"}
+		}
+		tr, err = x.readStream(s)
+		return err
+	})
+	return tr, err
 }
 
 // readTable reads the classic subsection form, the xref keyword already
 // consumed, up to and including its trailer dictionary.
-func (x *xrefReader) readTable(l *lexer) (Dict, error) {
-	p := newParser(l.buf, l.pos)
-	defer p.free()
+func (x *xrefReader) readTable(p *parser) (Dict, error) {
 	for {
 		save := p.lex.pos
 		t, err := p.lex.next()

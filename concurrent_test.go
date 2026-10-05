@@ -89,6 +89,42 @@ func TestConcurrentPages(t *testing.T) {
 	}
 }
 
+// TestOpenReaderAt renders pages of a document read through an io.ReaderAt,
+// concurrently, as they render from memory.
+func TestOpenReaderAt(t *testing.T) {
+	data := sharedResourcesPDF(4)
+	mem, err := Open(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ra, err := OpenReaderAt(bytes.NewReader(data), int64(len(data)), OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(doc *Document, i int) []byte {
+		p, err := doc.Page(i)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dst := image.NewRGBA(p.Bounds(1))
+		if err := p.Render(context.Background(), dst, RenderOptions{Scale: 1}); err != nil {
+			t.Error(err)
+		}
+		return dst.Pix
+	}
+	got := make([][]byte, 4)
+	var wg sync.WaitGroup
+	for i := range 4 {
+		wg.Go(func() { got[i] = render(ra, i) })
+	}
+	wg.Wait()
+	for i := range 4 {
+		if !bytes.Equal(got[i], render(mem, i)) {
+			t.Errorf("page %d differs read through an io.ReaderAt", i)
+		}
+	}
+}
+
 // TestConcurrentCorpusPages is TestConcurrentPages over every PDF below
 // $CERA_CORPUS (for example testdata/corpus), at most 8 pages a file: real
 // files bring embedded, composite and Type 3 fonts, images and patterns.

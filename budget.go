@@ -102,6 +102,7 @@ var budgets = []budget{
 	{"pdf.MaxXrefSections", pdf.MaxXrefSections, "", "cross-reference sections of one /Prev chain; older ones are not read"},
 	{"pdf.MaxObjects", pdf.MaxObjects, "", "cross-reference entries of one file; past it the file is rebuilt by scanning"},
 	{"pdf.MaxPageTreeDepth", pdf.MaxPageTreeDepth, "", "page tree nodes nested in each other; deeper pages are not found"},
+	{"pdf.MaxObjectWindow", pdf.MaxObjectWindow, "", "bytes read to parse one object of a file opened with OpenReaderAt; a larger object is not read"},
 
 	{"imageCacheBytes", imageCacheBytes, "", "decoded images a document keeps"},
 	{"pdf.DefaultStreamCacheBytes", pdf.DefaultStreamCacheBytes, "", "decoded streams (content, forms, Type 3 glyphs, functions) a document keeps"},

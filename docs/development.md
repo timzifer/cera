@@ -50,6 +50,7 @@ The reader comparison runs from its own module:
 ```sh
 cd readerdiff
 go run . objects -a v06 -b pdf -dir ../testdata/corpus   # objects, streams, pages
+go run . objects -a v06 -b pdfra -dir ../testdata/corpus # the same through io.ReaderAt
 go run . fonts -dir ../testdata/corpus                   # every font code
 go test -bench . -benchmem                               # both readers, for benchstat
 go test -fuzz FuzzParseDiff                              # differential fuzzing

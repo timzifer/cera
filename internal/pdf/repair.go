@@ -19,8 +19,8 @@ import (
 // key read so far.
 func (d *Document) repair(ctx *loadCtx, old *table) (*table, error) {
 	var acc xrefAcc
-	for _, h := range scanObjectHeaders(d.buf) {
-		acc.put(h.num, rawEntry{kind: 'n', off: int64(h.offset), gen: h.gen})
+	for _, h := range d.objectHeaders() {
+		acc.put(h.num, rawEntry{kind: 'n', off: h.offset, gen: h.gen})
 	}
 	t := newTable(&acc)
 	t.repaired = true
@@ -79,7 +79,7 @@ func (d *Document) setUpDecryption(ctx *loadCtx, t *table, trailer Dict) (*decry
 // establishDecryption derives the file key from a trailer the scan can see,
 // for a rebuild that runs before the tables could name /Encrypt.
 func (d *Document) establishDecryption(ctx *loadCtx, t *table) error {
-	if t.dec != nil || !bytes.Contains(d.buf, []byte("/Encrypt")) {
+	if t.dec != nil || !containsAnywhere(d.src, []byte("/Encrypt")) {
 		// /Encrypt can only be named by a trailer, and no trailer is
 		// compressed: a file without those bytes is not encrypted.
 		return nil
@@ -105,7 +105,7 @@ func (d *Document) establishDecryption(ctx *loadCtx, t *table) error {
 // then the dictionary of each cross-reference stream, highest object number
 // first.
 func (d *Document) trailerCandidates(ctx *loadCtx, t *table) []Dict {
-	out := append([]Dict{t.trailer}, scanTrailers(d.buf)...)
+	out := append([]Dict{t.trailer}, d.trailers()...)
 	var streams []Dict
 	for _, num := range t.nums {
 		o, _ := d.get(ctx, t, num)
@@ -127,7 +127,7 @@ func (d *Document) trailerCandidates(ctx *loadCtx, t *table) []Dict {
 // pages survive.
 func (d *Document) loadRepairedTrailer(ctx *loadCtx, t *table) {
 	previous := t.trailer
-	for _, tr := range scanTrailers(d.buf) {
+	for _, tr := range d.trailers() {
 		if _, err := d.catalog(ctx, t, tr); err == nil {
 			t.trailer = tr
 			return
@@ -211,30 +211,51 @@ func (d *Document) indexObjectStreams(ctx *loadCtx, t *table) {
 // An objectHeader is one "N G obj" found by scanning.
 type objectHeader struct {
 	num, gen int32
-	offset   int
+	offset   int64
 }
 
-// scanObjectHeaders finds every indirect object header in the file, in the
+// scanMargin is half the overlap of the chunks a file read on demand is
+// scanned in: a chunk answers for the keywords more than this far from
+// its edges, so it sees the bytes around each of them.
+const scanMargin = 128
+
+// objectHeaders finds every indirect object header in the file, in the
 // order they appear.
-func scanObjectHeaders(b []byte) []objectHeader {
+func (d *Document) objectHeaders() []objectHeader {
 	var out []objectHeader
-	for i := 0; i+3 <= len(b); {
-		j := bytes.Index(b[i:], []byte("obj"))
-		if j < 0 {
-			return out
-		}
-		at := i + j
-		i = at + 3
+	d.scanKeyword([]byte("obj"), func(b []byte, at int, base int64) {
 		if at+3 < len(b) && isRegular(b[at+3]) {
-			continue
+			return
 		}
-		h, ok := headerBefore(b, at)
-		if !ok {
-			continue
+		if h, ok := headerBefore(b, at); ok {
+			h.offset += base
+			out = append(out, h)
 		}
-		out = append(out, h)
-	}
+	})
 	return out
+}
+
+// scanKeyword calls f for every occurrence of kw in the file, in order,
+// with the chunk it is in, its position there and the chunk's offset.
+func (d *Document) scanKeyword(kw []byte, f func(b []byte, at int, base int64)) {
+	size := d.src.size()
+	scanChunks(d.src, 2*scanMargin, func(b []byte, base int64) {
+		lo, hi := 0, len(b)
+		if base > 0 {
+			lo = scanMargin
+		}
+		if base+int64(len(b)) < size {
+			hi = len(b) - scanMargin
+		}
+		for i := lo; i < hi; {
+			j := bytes.Index(b[i:], kw)
+			if j < 0 || i+j >= hi {
+				return
+			}
+			f(b, i+j, base)
+			i += j + len(kw)
+		}
+	})
 }
 
 // headerBefore reads the "N G" that must precede an obj keyword at at.
@@ -255,7 +276,7 @@ func headerBefore(b []byte, at int) (objectHeader, bool) {
 	if !ok {
 		return objectHeader{}, false
 	}
-	return objectHeader{num: num, gen: gen, offset: p}, true
+	return objectHeader{num: num, gen: gen, offset: int64(p)}, true
 }
 
 func skipSpaceBack(b []byte, p int) int {
@@ -281,16 +302,20 @@ func digitsBack(b []byte, p int) (int32, int, bool) {
 	return clamp32(v), p, true
 }
 
-// scanTrailers finds the file's trailer dictionaries, newest first.
-func scanTrailers(b []byte) []Dict {
+// trailers finds the file's trailer dictionaries, newest first.
+func (d *Document) trailers() []Dict {
+	var at []int64
+	d.scanKeyword([]byte("trailer"), func(_ []byte, i int, base int64) {
+		at = append(at, base+int64(i))
+	})
 	var out []Dict
-	for i := len(b); i > 0; {
-		j := bytes.LastIndex(b[:i], []byte("trailer"))
-		if j < 0 {
-			break
-		}
-		i = j
-		o, _, err := ParseObject(b[j+len("trailer"):])
+	for k := len(at) - 1; k >= 0; k-- {
+		var o Object
+		err := d.windowed(at[k]+int64(len("trailer")), func(p *parser) error {
+			var err error
+			o, err = p.objectChecked()
+			return err
+		})
 		if err != nil {
 			continue
 		}
