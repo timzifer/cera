@@ -42,6 +42,9 @@ func init() {
 	}
 }
 
+// go-fitz takes no password, so MuPDF opens no encrypted file a pdf.js
+// manifest gives one for; the other engines are passed it.
+
 // newMuPDF ignores annots: ImageDPI runs the page content only
 // (fz_run_page_contents), never the annotations.
 func newMuPDF(bool) (engine, error) { return &muPDF{}, nil }

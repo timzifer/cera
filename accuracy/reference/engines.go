@@ -23,6 +23,7 @@ import (
 // which every rendering is cropped or padded to).
 type file struct {
 	path, rel, category string
+	password            string // from a pdf.js manifest (corpus.Password)
 	data                []byte
 	key                 string // SHA-256 prefix
 	sizes               []image.Point
@@ -31,6 +32,13 @@ type file struct {
 }
 
 type point struct{ w, h float64 }
+
+// openOptions are the options cera opens f with.
+func (f *file) openOptions() cera.OpenOptions {
+	opt := openOptions
+	opt.Password = f.password
+	return opt
+}
 
 // engine renders the pages of a file. Engines are not used concurrently.
 type engine interface {
@@ -82,7 +90,7 @@ func (ceraEngine) close()          {}
 
 func (c ceraEngine) render(f *file, pages []int, scale float64) ([]*image.RGBA, []error) {
 	imgs, errs := make([]*image.RGBA, len(pages)), make([]error, len(pages))
-	doc, err := cera.OpenWith(f.data, openOptions)
+	doc, err := cera.OpenWith(f.data, f.openOptions())
 	if err != nil {
 		for i := range errs {
 			errs[i] = err
@@ -140,7 +148,7 @@ func contentSuffix(annots bool) string {
 
 func (e *pdfiumEngine) render(f *file, pages []int, scale float64) ([]*image.RGBA, []error) {
 	imgs, errs := make([]*image.RGBA, len(pages)), make([]error, len(pages))
-	doc, err := e.p.Open(f.data)
+	doc, err := e.p.OpenPassword(f.data, f.password)
 	if err != nil {
 		for i := range errs {
 			errs[i] = err
@@ -203,9 +211,16 @@ func (e *execEngine) render(f *file, pages []int, scale float64) ([]*image.RGBA,
 			if !e.annots {
 				args = append(args, "-hide-annotations")
 			}
+			if f.password != "" {
+				args = append(args, "-opw", f.password, "-upw", f.password)
+			}
 			args = append(args, f.path, strings.TrimSuffix(out, ".png"))
 		case "mupdf":
-			args = []string{"draw", "-q", "-r", dpi, "-o", out, f.path, fmt.Sprint(i + 1)}
+			args = []string{"draw", "-q", "-r", dpi, "-o", out}
+			if f.password != "" {
+				args = append(args, "-p", f.password)
+			}
+			args = append(args, f.path, fmt.Sprint(i+1))
 		case "ghostscript":
 			// Ghostscript anchors pages at the bottom left of a bitmap of
 			// rounded size; the page is drawn into cera's size, moved up by
@@ -217,6 +232,9 @@ func (e *execEngine) render(f *file, pages []int, scale float64) ([]*image.RGBA,
 				fmt.Sprintf("-dFirstPage=%d", i+1), fmt.Sprintf("-dLastPage=%d", i+1), "-o", out}
 			if !e.annots {
 				args = append(args, "-dShowAnnots=false")
+			}
+			if f.password != "" {
+				args = append(args, "-sPDFPassword="+f.password)
 			}
 			args = append(args, "-c", fmt.Sprintf("<< /Install { 0 %.6f translate } >> setpagedevice", shift), "-f", f.path)
 		}

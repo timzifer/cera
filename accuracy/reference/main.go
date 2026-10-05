@@ -258,7 +258,8 @@ func listFiles(dirs []string, match string) ([]*file, error) {
 			default:
 				cat = "local"
 			}
-			files = append(files, &file{path: path, rel: rel, category: cat})
+			pw, _ := corpus.Password(path)
+			files = append(files, &file{path: path, rel: rel, category: cat, password: pw})
 			return nil
 		})
 		if err != nil {
@@ -277,7 +278,7 @@ func (f *file) load(scale float64) error {
 	f.data = data
 	sum := sha256.Sum256(data)
 	f.key = hex.EncodeToString(sum[:12])
-	doc, err := cera.OpenWith(data, openOptions)
+	doc, err := cera.OpenWith(data, f.openOptions())
 	if err != nil {
 		return fmt.Errorf("cera does not open it: %w", err)
 	}

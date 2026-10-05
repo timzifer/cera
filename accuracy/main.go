@@ -202,7 +202,9 @@ func run() error {
 	return nil
 }
 
-type corpusFile struct{ path, rel, cat string }
+// corpusFile is a file to compare; password opens it if a pdf.js manifest
+// gives one (corpus.Password).
+type corpusFile struct{ path, rel, cat, password string }
 
 func listFiles(dirs []string, match string) ([]corpusFile, error) {
 	cats := corpus.Categories()
@@ -225,7 +227,8 @@ func listFiles(dirs []string, match string) ([]corpusFile, error) {
 			default:
 				cat = "local"
 			}
-			files = append(files, corpusFile{path, rel, cat})
+			pw, _ := corpus.Password(path)
+			files = append(files, corpusFile{path, rel, cat, pw})
 			return nil
 		})
 		if err != nil {
@@ -262,7 +265,7 @@ func (c config) compareFile(f corpusFile, ref **pdfium.Engine) (ps []page, skip 
 			}
 		}
 		if pd == nil {
-			if pd, err = (*ref).Open(data); err != nil {
+			if pd, err = (*ref).OpenPassword(data, f.password); err != nil {
 				return nil, 0, err
 			}
 		}
@@ -278,7 +281,7 @@ func (c config) compareFile(f corpusFile, ref **pdfium.Engine) (ps []page, skip 
 		return img, t, writePNG(path, img)
 	}
 
-	doc, err := cera.Open(data)
+	doc, err := cera.OpenWith(data, cera.OpenOptions{Password: f.password})
 	if err != nil {
 		// Whether PDFium opens it decides whether this is cera's failure.
 		if _, _, rerr := refPage(0); rerr != nil {
@@ -545,7 +548,8 @@ func (c config) writeDiffs(dir string, ps []page, n int) error {
 		if err != nil {
 			return err
 		}
-		doc, err := cera.Open(data)
+		pw, _ := corpus.Password(p.path)
+		doc, err := cera.OpenWith(data, cera.OpenOptions{Password: pw})
 		if err != nil {
 			continue
 		}

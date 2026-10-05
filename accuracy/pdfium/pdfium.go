@@ -54,8 +54,15 @@ type Doc struct {
 }
 
 // Open opens a document.
-func (p *Engine) Open(data []byte) (*Doc, error) {
-	r, err := p.inst.OpenDocument(&requests.OpenDocument{File: &data})
+func (p *Engine) Open(data []byte) (*Doc, error) { return p.OpenPassword(data, "") }
+
+// OpenPassword opens a document with a password ("" for none).
+func (p *Engine) OpenPassword(data []byte, password string) (*Doc, error) {
+	req := &requests.OpenDocument{File: &data}
+	if password != "" {
+		req.Password = &password
+	}
+	r, err := p.inst.OpenDocument(req)
 	if err != nil {
 		return nil, err
 	}

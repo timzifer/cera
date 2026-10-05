@@ -268,7 +268,8 @@ func (c runConfig) file(path, rel, cat string) ([]result, error) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		rs, err := c.render(data, rel, cat)
+		pw, _ := corpus.Password(path)
+		rs, err := c.render(data, pw, rel, cat)
 		done <- outcome{rs, err}
 	}()
 	budget := c.timeout * time.Duration(max(c.runs, 1)+2)
@@ -285,8 +286,9 @@ func (c runConfig) file(path, rel, cat string) ([]result, error) {
 	}
 }
 
-func (c runConfig) render(data []byte, rel, cat string) ([]result, error) {
-	doc, err := cera.Open(data)
+// render renders a document; password opens it if it is encrypted.
+func (c runConfig) render(data []byte, password, rel, cat string) ([]result, error) {
+	doc, err := cera.OpenWith(data, cera.OpenOptions{Password: password})
 	if err != nil {
 		return []result{{file: rel, category: cat, page: -1, err: err}}, nil
 	}
