@@ -130,7 +130,7 @@ func TestParseRejects(t *testing.T) {
 	}
 	// Every truncation of a good profile fails cleanly, without a panic.
 	for n := range len(good) {
-		Parse(good[:n])
+		_, _ = Parse(good[:n])
 	}
 }
 
@@ -200,15 +200,13 @@ func iccFile(version uint32, tags [][2]any) []byte {
 	copy(h[36:], "acsp")
 	binary.BigEndian.PutUint32(h[64:], 1) // relative colorimetric
 	putXYZ(h[68:], D50)
-	out := bytes.NewBuffer(h)
-	binary.Write(out, binary.BigEndian, uint32(len(table)))
+	b := binary.BigEndian.AppendUint32(h, uint32(len(table)))
 	for _, e := range table {
-		out.WriteString(e.sig)
-		binary.Write(out, binary.BigEndian, uint32(e.off))
-		binary.Write(out, binary.BigEndian, uint32(e.size))
+		b = append(b, e.sig...)
+		b = binary.BigEndian.AppendUint32(b, uint32(e.off))
+		b = binary.BigEndian.AppendUint32(b, uint32(e.size))
 	}
-	out.Write(body.Bytes())
-	b := out.Bytes()
+	b = append(b, body.Bytes()...)
 	binary.BigEndian.PutUint32(b, uint32(len(b)))
 	return b
 }
