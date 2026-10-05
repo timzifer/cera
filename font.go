@@ -37,6 +37,9 @@ type Font struct {
 	// fdScales replaces perEm per glyph for a CID-keyed CFF program that
 	// gives its FontMatrix in the FDArray (cffcid.go).
 	fdScales *cffFDScales
+	// shear is the linear part of the program's FontMatrix when it does
+	// more than scale (fontmatrix.go); it replaces perEm.
+	shear *[4]float64
 	// substituted says the program is a stand-in for one the document
 	// does not carry (from a FontProvider or built in); bad that the
 	// document carries one cera cannot read.
@@ -199,6 +202,9 @@ func (d *Document) loadFont(dict reader.Dict) *Font {
 			if key == "FontFile3" {
 				f.fdScales = readCFFFDScales(data)
 			}
+			if m, ok := fontShear(string(key), data); ok {
+				f.shear = &m
+			}
 		} else {
 			f.bad = true
 		}
@@ -336,12 +342,17 @@ func (f *Font) glyph(code int) (gid opentype.GlyphIndex, outline *Path) {
 	if f.fdScales != nil {
 		ux, uy = f.fdScales.scale(int(gid))
 	}
+	m := [4]float64{sx * ux, 0, 0, uy}
+	if f.shear != nil {
+		m = *f.shear
+		m[0], m[2] = sx*m[0], sx*m[2]
+	}
 	segs, ok := f.face.GlyphOutline(gid)
 	if ok && len(segs) > 0 {
 		if f.bolden > 0 {
 			segs = embolden(segs, f.bolden*f.perEm)
 		}
-		outline = segmentsPath(segs, sx*ux, uy)
+		outline = segmentsPath(segs, m)
 	}
 	if f.outlines == nil {
 		f.outlines = map[opentype.GlyphIndex]*Path{}
@@ -350,11 +361,13 @@ func (f *Font) glyph(code int) (gid opentype.GlyphIndex, outline *Path) {
 	return gid, outline
 }
 
-// segmentsPath converts an outline in font units to a Path scaled by sx
-// and sy.
-func segmentsPath(segs []opentype.Segment, sx, sy float64) *Path {
+// segmentsPath converts an outline in font units to a Path transformed by
+// m: x' = m[0]x + m[2]y, y' = m[1]x + m[3]y.
+func segmentsPath(segs []opentype.Segment, m [4]float64) *Path {
 	p := new(Path)
-	pt := func(q opentype.Point) (float32, float32) { return float32(q.X * sx), float32(q.Y * sy) }
+	pt := func(q opentype.Point) (float32, float32) {
+		return float32(m[0]*q.X + m[2]*q.Y), float32(m[1]*q.X + m[3]*q.Y)
+	}
 	for _, g := range segs {
 		switch g.Op {
 		case opentype.SegMoveTo:
