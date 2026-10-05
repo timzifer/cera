@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/timzifer/cera/actions/workflows/ci.yml/badge.svg)](https://github.com/timzifer/cera/actions/workflows/ci.yml)
 [![Large corpora](https://github.com/timzifer/cera/actions/workflows/corpus-large.yml/badge.svg)](https://github.com/timzifer/cera/actions/workflows/corpus-large.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/timzifer/cera/badges/coverage.json)](https://github.com/timzifer/cera/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/timzifer/cera.svg)](https://pkg.go.dev/github.com/timzifer/cera)
 
 A PDF renderer in pure Go, aiming to be the fastest and leanest in the Go
