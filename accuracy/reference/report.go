@@ -32,9 +32,11 @@ type report struct {
 	Engines     []string `json:"engines"`
 	Missing     []string `json:"missing,omitempty"`
 	Skipped     []string `json:"skipped,omitempty"`
-	Files       int      `json:"files"`
-	Pages       int      `json:"pages"`
-	Compared    int      `json:"compared_pages"`
+	// Excepted lists the pages left out (exceptions.go), with the reason.
+	Excepted []string `json:"excepted,omitempty"`
+	Files    int      `json:"files"`
+	Pages    int      `json:"pages"`
+	Compared int      `json:"compared_pages"`
 
 	// Fine compares pixels; Coarse boxes of Box×Box pixels, which leaves
 	// out how edges are antialiased and keeps what is drawn.
@@ -111,6 +113,9 @@ func summarize(rs []pageResult, engs []engine, exactOn bool) *report {
 	for i := range rs {
 		files[rs[i].rel] = true
 		rep.Pages++
+		if rs[i].excepted != "" {
+			rep.Excepted = append(rep.Excepted, fmt.Sprintf("%s p%d: %s", rs[i].rel, rs[i].page, rs[i].excepted))
+		}
 		if rs[i].fine.pair != nil {
 			rep.Compared++
 		}
@@ -360,7 +365,7 @@ func writeCSV(path string, rs []pageResult, engines []string) error {
 			}
 		}
 	}
-	head = append(head, "failed", "unsupported")
+	head = append(head, "failed", "unsupported", "excepted")
 	w.Write(head)
 	for i := range rs {
 		r := &rs[i]
@@ -381,7 +386,7 @@ func writeCSV(path string, rs []pageResult, engines []string) error {
 			failed = append(failed, e+": "+msg)
 		}
 		slices.Sort(failed)
-		row = append(row, strings.Join(failed, "; "), strings.Join(r.unsupported, " "))
+		row = append(row, strings.Join(failed, "; "), strings.Join(r.unsupported, " "), r.excepted)
 		w.Write(row)
 	}
 	w.Flush()

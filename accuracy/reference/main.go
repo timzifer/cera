@@ -59,6 +59,7 @@ type pageResult struct {
 	failed        map[string]string
 	fine, coarse  pageStats // pixels, and boxes of Box×Box pixels
 	unsupported   []string
+	excepted      string             // why the page is left out (exceptions)
 	ms            map[string]float64 // render time, 0 when cached
 }
 
@@ -180,7 +181,8 @@ func run() error {
 			}
 			r.engines = names
 			r.unsupported = f.unsupported[i]
-			if len(names) < 3 {
+			r.excepted = excepted(f.rel, i+1, *annots)
+			if len(names) < 3 || r.excepted != "" {
 				results = append(results, r)
 				continue
 			}

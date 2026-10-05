@@ -173,6 +173,7 @@ any rendering. The synthetic drawings are also compared with an exact rendering.
 <div><img src="{{.Outly}}" alt="outlier map"><div class="cap">outliers</div></div></div></div>{{end}}</div>
 {{end}}
 
+{{if .R.Excepted}}<h2>Left out</h2><p class="note">Pages the references cannot judge (exceptions.go).</p><ul>{{range .R.Excepted}}<li>{{.}}</li>{{end}}</ul>{{end}}
 {{if .R.Skipped}}<h2>Skipped</h2><ul>{{range .R.Skipped}}<li>{{.}}</li>{{end}}</ul>{{end}}
 </main>
 <div id="tip" role="tooltip"></div>
