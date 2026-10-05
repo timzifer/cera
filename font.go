@@ -45,6 +45,9 @@ type Font struct {
 	// stretch scales the outlines of a stand-in horizontally (narrow
 	// faces); 0 is 1.
 	stretch float64
+	// bolden thickens the strokes of a stand-in by this much, in em
+	// (fontsubst.go); 0 for none.
+	bolden float64
 	// std is the alphabet of a font named Symbol or ZapfDingbats (its
 	// built-in encoding, AFM widths and characters), stdGlyphs that its
 	// program is cera's stand-in for it.
@@ -230,7 +233,16 @@ func (f *Font) attach(p *opentype.Font) {
 		f.perEm = 1000
 	}
 	f.face = p.NewFace(p.UnitsPerEm())
-	if a, dsc := float64(p.Ascent())/f.perEm, float64(p.Descent())/f.perEm; a > 0 && a < 2 && dsc <= 0 && dsc > -1 {
+	f.lineMetrics(p)
+}
+
+// lineMetrics takes the ascent and descent of p, when they are sane.
+func (f *Font) lineMetrics(p *opentype.Font) {
+	em := float64(p.UnitsPerEm())
+	if !(em > 0) {
+		em = 1000
+	}
+	if a, dsc := float64(p.Ascent())/em, float64(p.Descent())/em; a > 0 && a < 2 && dsc <= 0 && dsc > -1 {
 		f.ascent, f.descent = a, dsc
 	}
 }
@@ -272,8 +284,8 @@ func parseSFNT(data []byte) (*opentype.Font, error) {
 // advance returns how far the pen moves for code (a CID for a composite
 // font), in em. A stand-in for a font the document gives no widths for
 // moves by the AFM widths of Symbol and ZapfDingbats, or by its own
-// advances (Arimo, Tinos and Cousine are metric-compatible with
-// Helvetica, Times and Courier).
+// advances (all stand-ins are metric-compatible with Helvetica, Times or
+// Courier).
 func (f *Font) advance(code int) float64 {
 	if f.pdf.HasWidth(code) || !f.substituted || f.composite() {
 		return f.pdf.Width(code)
@@ -326,6 +338,9 @@ func (f *Font) glyph(code int) (gid opentype.GlyphIndex, outline *Path) {
 	}
 	segs, ok := f.face.GlyphOutline(gid)
 	if ok && len(segs) > 0 {
+		if f.bolden > 0 {
+			segs = embolden(segs, f.bolden*f.perEm)
+		}
 		outline = segmentsPath(segs, sx*ux, uy)
 	}
 	if f.outlines == nil {

@@ -4,12 +4,18 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"maps"
 	"math"
+	"slices"
 	"sync"
 	"testing"
 
 	"github.com/go-opentype/fonts/arimo"
 	"github.com/go-opentype/fonts/cousine"
+	"github.com/go-opentype/opentype"
+	"github.com/go-pdfkit/reader"
+
+	"github.com/timzifer/cera/internal/stdfont"
 )
 
 // pageText opens data with a font provider and extracts its text.
@@ -121,7 +127,9 @@ func TestClassOf(t *testing.T) {
 		{FontRequest{Name: "Arial-BoldMT"}, &sansFamily, 0},
 		{FontRequest{Name: "ArialNarrow,Bold"}, &sansFamily, 0.82},
 		{FontRequest{Name: "TimesNewRomanPS-BoldItalicMT"}, &serifFamily, 0},
-		{FontRequest{Name: "CourierNewPSMT"}, &monoFamily, 0},
+		{FontRequest{Name: "CourierNewPSMT"}, &courierFamily, 0},
+		{FontRequest{Name: "Courier-BoldOblique"}, &courierFamily, 0},
+		{FontRequest{Name: "LucidaSansTypewriter"}, &monoFamily, 0},
 		{FontRequest{Name: "Consolas"}, &monoFamily, 0},
 		{FontRequest{Name: "Georgia,Italic"}, &serifFamily, 0},
 		{FontRequest{Name: "Calibri-Light"}, &sansFamily, 0.9},
@@ -130,7 +138,8 @@ func TestClassOf(t *testing.T) {
 		{FontRequest{Name: "Cambria"}, &serifFamily, 0},
 		{FontRequest{Name: "UniversCondensed"}, &sansFamily, 0.82},
 		{FontRequest{Name: "FooBar", Serif: true}, &serifFamily, 0},
-		{FontRequest{Name: "FooBar", FixedPitch: true}, &monoFamily, 0},
+		{FontRequest{Name: "FooBar", FixedPitch: true}, &courierFamily, 0},
+		{FontRequest{Name: "FooMono", FixedPitch: true}, &monoFamily, 0},
 		{FontRequest{Name: "FooBar"}, &sansFamily, 0},
 	} {
 		c := classOf(tc.req)
@@ -267,5 +276,90 @@ func TestUnknownCMap(t *testing.T) {
 	_, st := renderWith(t, data, &recorder{ttf: arimo.TTF})
 	if st.Unsupported["cmap-missing"] != 1 || st.Glyphs != 1 {
 		t.Errorf("stats %+v", st)
+	}
+}
+
+func TestEmbolden(t *testing.T) {
+	sq := func(x0, y0, x1, y1 float64, ccw bool) []opentype.Segment {
+		pts := []opentype.Point{{X: x0, Y: y0}, {X: x1, Y: y0}, {X: x1, Y: y1}, {X: x0, Y: y1}}
+		if !ccw {
+			pts[1], pts[3] = pts[3], pts[1]
+		}
+		s := []opentype.Segment{{Op: opentype.SegMoveTo, P: [2]opentype.Point{pts[0]}}}
+		for _, p := range append(pts[1:], pts[0]) {
+			s = append(s, opentype.Segment{Op: opentype.SegLineTo, P: [2]opentype.Point{p}})
+		}
+		return append(s, opentype.Segment{Op: opentype.SegClose})
+	}
+	// A ring: outer contour counterclockwise, counter clockwise the other way.
+	for _, ccw := range []bool{true, false} {
+		in := append(sq(0, 0, 100, 100, ccw), sq(30, 30, 70, 70, !ccw)...)
+		orig := slices.Clone(in)
+		out := embolden(in, 10)
+		want := append(sq(-5, -5, 105, 105, ccw), sq(35, 35, 65, 65, !ccw)...)
+		for i := range want {
+			for j := range 2 {
+				g, w := out[i].P[j], want[i].P[j]
+				if math.Abs(g.X-w.X) > 1e-9 || math.Abs(g.Y-w.Y) > 1e-9 {
+					t.Fatalf("ccw %v: segment %d point %d at %v, want %v", ccw, i, j, g, w)
+				}
+			}
+		}
+		if !slices.Equal(in, orig) {
+			t.Fatal("input changed")
+		}
+	}
+}
+
+func TestStandardStandIns(t *testing.T) {
+	d, err := Open(textPDF("", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	load := func(name string, extra reader.Dict) *Font {
+		dict := reader.Dict{"Type": reader.Name("Font"), "Subtype": reader.Name("Type1"), "BaseFont": reader.Name(name)}
+		maps.Copy(dict, extra)
+		return d.loadFont(dict)
+	}
+	for _, tc := range []struct {
+		name  string
+		fam   *family
+		style int
+		width float64 // of M, in em
+	}{
+		{"Helvetica", &sansFamily, 0, 0.833},
+		{"Helvetica-BoldOblique", &sansFamily, 3, 0.833},
+		{"Times-Roman", &serifFamily, 0, 0.889},
+		{"Times-Italic", &serifFamily, 2, 0.833},
+		{"Courier", &courierFamily, 0, 0.6},
+		{"Courier-Bold", &courierFamily, 1, 0.6},
+		{"Courier-Oblique", &courierFamily, 2, 0.6},
+		{"Courier-BoldOblique", &courierFamily, 3, 0.6},
+	} {
+		if !stdfont.Gyre {
+			tc.fam = map[*family]*family{&sansFamily: &arimoFamily, &serifFamily: &tinosFamily, &courierFamily: &monoFamily}[tc.fam]
+		}
+		f := load(tc.name, nil)
+		if f.program != tc.fam[tc.style].get() {
+			t.Errorf("%s: not drawn with its stand-in", tc.name)
+			continue
+		}
+		if a := f.advance('M'); math.Abs(a-tc.width) > 0.001 {
+			t.Errorf("%s: M advances %v em, want %v", tc.name, a, tc.width)
+		}
+		if want := tc.fam == &courierFamily && tc.style&1 == 0; (f.bolden > 0) != want {
+			t.Errorf("%s: bolden %v", tc.name, f.bolden)
+		}
+	}
+	// TeX Gyre has no Cyrillic: Arimo, Tinos and Cousine take over.
+	cyrillic := reader.Dict{"Encoding": reader.Dict{"Differences": reader.Array{reader.Integer(192),
+		reader.Name("afii10017"), reader.Name("afii10018"), reader.Name("afii10019")}}}
+	for _, tc := range []struct {
+		name string
+		fam  *family
+	}{{"Helvetica", &arimoFamily}, {"Times-Roman", &tinosFamily}, {"Courier", &monoFamily}} {
+		if f := load(tc.name, cyrillic); f.program != tc.fam[0].get() {
+			t.Errorf("Cyrillic %s: not drawn with the fallback", tc.name)
+		}
 	}
 }
