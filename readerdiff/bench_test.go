@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-pdfkit/reader"
 	"github.com/timzifer/cera/internal/corpus"
+	"github.com/timzifer/cera/internal/pdf"
 )
 
 // The benchmarks run every reader over the same files, so benchstat can
@@ -29,7 +30,60 @@ var benchReaders = []benchReader{{
 	name: "v06",
 	open: func(data []byte, pw string) (any, error) { return reader.OpenWithPassword(data, pw) },
 	walk: walkV06,
+}, {
+	name: "pdf",
+	open: func(data []byte, pw string) (any, error) { return pdf.OpenWithPassword(data, pw) },
+	walk: walkPDF,
 }}
+
+func walkPDF(doc any, decode bool) int {
+	d := doc.(*pdf.Document)
+	seen := map[pdf.Ref]bool{}
+	var queue []pdf.Ref
+	var visit func(o pdf.Object)
+	visit = func(o pdf.Object) {
+		switch o.Kind() {
+		case pdf.KindRef:
+			r, _ := o.Ref()
+			if !seen[r] {
+				seen[r] = true
+				queue = append(queue, r)
+			}
+		case pdf.KindArray:
+			a, _ := o.Array()
+			for _, e := range a {
+				visit(e)
+			}
+		case pdf.KindDict:
+			dict, _ := o.Dict()
+			for _, e := range dict.Entries() {
+				visit(e.Val)
+			}
+		case pdf.KindStream:
+			s, _ := o.Stream()
+			for _, e := range s.Dict.Entries() {
+				visit(e.Val)
+			}
+			if decode {
+				d.Decode(s)
+			}
+		}
+	}
+	visit(d.Trailer().Object())
+	for i := range d.PageCount() {
+		if r, ok := d.PageRef(i + 1); ok {
+			visit(r.Object())
+		}
+	}
+	for len(queue) > 0 {
+		r := queue[0]
+		queue = queue[1:]
+		if o, err := d.Get(r); err == nil {
+			visit(o)
+		}
+	}
+	return len(seen)
+}
 
 func walkV06(doc any, decode bool) int {
 	d := doc.(*reader.Document)

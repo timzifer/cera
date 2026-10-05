@@ -1,3 +1,11 @@
 # Differences between go-pdfkit/reader v0.6.0 and internal/pdf that ADR 0012
 # expects. One per line: <file glob> <snapshot key prefix> <reason>.
 # Reasons: see reasons in allowlist.go.
+
+# Flate data whose Adler-32 checksum is wrong or missing: same bytes, but no
+# longer reported as recovered.
+bug1050040.pdf decoded/ adler-ignored
+issue11651.pdf decoded/ adler-ignored
+issue13316_reduced.pdf decoded/ adler-ignored
+poppler-90-0-fuzzed.pdf decoded/ adler-ignored
+0054.pdf decoded/ adler-ignored

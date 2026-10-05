@@ -27,7 +27,7 @@ var reasons = map[string]string{
 //
 //	<file glob> <key prefix> <reason>
 //
-// The glob matches the slash-separated path of the file, the prefix the
+// The glob matches the file's name or its slash-separated path, the prefix the
 // snapshot key (for example "decoded/12 0" or "obj/"). Blank lines and
 // lines starting with # are ignored.
 type allowlist []allowEntry
@@ -69,7 +69,9 @@ func readAllowlist(p string) (allowlist, error) {
 func (l allowlist) reason(file, key string) string {
 	file = filepath.ToSlash(file)
 	for _, e := range l {
-		if ok, _ := path.Match(e.glob, file); ok && strings.HasPrefix(key, e.prefix) {
+		okName, _ := path.Match(e.glob, path.Base(file))
+		okPath, _ := path.Match(e.glob, file)
+		if (okName || okPath) && strings.HasPrefix(key, e.prefix) {
 			return e.reason
 		}
 	}

@@ -136,7 +136,7 @@ func runObjects(an, bn, dirs, allowPath string, max int) error {
 			return err
 		}
 		pw, _ := corpus.Password(f)
-		sa, sb := a.snapshot(data, pw), b.snapshot(data, pw)
+		sa, sb := safeSnapshot(a, data, pw), safeSnapshot(b, data, pw)
 		diffs := compare(sa, sb)
 		entries += len(sa.keys)
 		var bad []diff
@@ -166,6 +166,18 @@ func runObjects(an, bn, dirs, allowPath string, max int) error {
 		return fmt.Errorf("%d files differ", failed)
 	}
 	return nil
+}
+
+// safeSnapshot is b.snapshot that records a panic as an entry instead of
+// stopping the run.
+func safeSnapshot(b backend, data []byte, pw string) (s *snapshot) {
+	defer func() {
+		if r := recover(); r != nil {
+			s = &snapshot{}
+			s.set("panic", fmt.Sprint(r))
+		}
+	}()
+	return b.snapshot(data, pw)
 }
 
 type diff struct{ key, a, b string }
