@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// budgetTable renders the table of budgets as the README documents it.
+// budgetTable renders the table of budgets as docs/budgets.md documents it.
 func budgetTable() string {
 	var b strings.Builder
 	b.WriteString("| bound | value | key | what |\n|---|---:|---|---|\n")
@@ -31,10 +31,10 @@ func limitString(v int) string {
 	return fmt.Sprint(v)
 }
 
-// TestBudgetsDocumented checks that the README carries the table of
+// TestBudgetsDocumented checks that docs/budgets.md carries the table of
 // budgets as budget.go defines it.
 func TestBudgetsDocumented(t *testing.T) {
-	readme, err := os.ReadFile("README.md")
+	readme, err := os.ReadFile("docs/budgets.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestBudgetsDocumented(t *testing.T) {
 	text := strings.ReplaceAll(string(readme), "\r\n", "\n")
 	want := budgetTable()
 	if !strings.Contains(text, want) {
-		t.Errorf("README.md does not carry the table of budgets; it should read:\n\n%s", want)
+		t.Errorf("docs/budgets.md does not carry the table of budgets; it should read:\n\n%s", want)
 	}
 	seen := map[string]bool{}
 	for _, x := range budgets {
