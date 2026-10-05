@@ -270,7 +270,7 @@ func (c config) compareFile(f corpusFile, ref **pdfium.Engine) (ps []page, skip 
 			return nil, 0, fmt.Errorf("PDFium has %d pages", pd.Pages())
 		}
 		t0 := time.Now()
-		img, err := pd.Render(i, c.scale)
+		img, err := pd.Render(i, c.scale, true)
 		if err != nil {
 			return nil, 0, err
 		}

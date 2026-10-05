@@ -42,7 +42,9 @@ func init() {
 	}
 }
 
-func newMuPDF() (engine, error) { return &muPDF{}, nil }
+// newMuPDF ignores annots: ImageDPI runs the page content only
+// (fz_run_page_contents), never the annotations.
+func newMuPDF(bool) (engine, error) { return &muPDF{}, nil }
 
 func (*muPDF) name() string    { return "mupdf" }
 func (*muPDF) version() string { return "mupdf-" + fitz.FzVersion }

@@ -78,8 +78,9 @@ func (d *Doc) Close() {
 // Render draws page (0-based) at scale on white, into a bitmap sized as
 // cera sizes pages (rounded up), with an exact matrix: PDFium's own DPI
 // rendering stretches the page to the rounded size, which shifts content by
-// up to a pixel across a page.
-func (d *Doc) Render(page int, scale float64) (*image.RGBA, error) {
+// up to a pixel across a page. With annots, annotations with an appearance
+// are drawn too (form widgets are not: there is no form handle).
+func (d *Doc) Render(page int, scale float64, annots bool) (*image.RGBA, error) {
 	in := d.p.inst
 	pg, err := in.FPDF_LoadPage(&requests.FPDF_LoadPage{Document: d.doc, Index: page})
 	if err != nil {
@@ -107,12 +108,16 @@ func (d *Doc) Render(page int, scale float64) (*image.RGBA, error) {
 	if _, err := in.FPDFBitmap_FillRect(&requests.FPDFBitmap_FillRect{Bitmap: bm.Bitmap, Width: w, Height: h, Color: 0xffffffff}); err != nil {
 		return nil, err
 	}
+	var flags enums.FPDF_RENDER_FLAG
+	if annots {
+		flags = enums.FPDF_RENDER_FLAG_ANNOT
+	}
 	_, err = in.FPDF_RenderPageBitmapWithMatrix(&requests.FPDF_RenderPageBitmapWithMatrix{
 		Bitmap:   bm.Bitmap,
 		Page:     ref,
 		Matrix:   structs.FPDF_FS_MATRIX{A: float32(scale), D: float32(scale)},
 		Clipping: structs.FPDF_FS_RECTF{Right: float32(w), Bottom: float32(h)},
-		Flags:    enums.FPDF_RENDER_FLAG_ANNOT,
+		Flags:    flags,
 	})
 	if err != nil {
 		return nil, err

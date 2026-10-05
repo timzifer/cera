@@ -21,17 +21,20 @@ import (
 // report is what the run found, as written to summary.json and rendered
 // into report.html. Shares are of the inked area (see pageStats).
 type report struct {
-	Generated string   `json:"generated"`
-	Dirs      string   `json:"dirs"`
-	DPI       float64  `json:"dpi"`
-	Sample    int      `json:"sample,omitempty"`
-	Seed      uint64   `json:"seed,omitempty"`
-	Engines   []string `json:"engines"`
-	Missing   []string `json:"missing,omitempty"`
-	Skipped   []string `json:"skipped,omitempty"`
-	Files     int      `json:"files"`
-	Pages     int      `json:"pages"`
-	Compared  int      `json:"compared_pages"`
+	Generated string  `json:"generated"`
+	Dirs      string  `json:"dirs"`
+	DPI       float64 `json:"dpi"`
+	Sample    int     `json:"sample,omitempty"`
+	Seed      uint64  `json:"seed,omitempty"`
+	// Annotations says whether annotations were drawn; without them only
+	// the page content is compared.
+	Annotations bool     `json:"annotations"`
+	Engines     []string `json:"engines"`
+	Missing     []string `json:"missing,omitempty"`
+	Skipped     []string `json:"skipped,omitempty"`
+	Files       int      `json:"files"`
+	Pages       int      `json:"pages"`
+	Compared    int      `json:"compared_pages"`
 
 	// Fine compares pixels; Coarse boxes of Box×Box pixels, which leaves
 	// out how edges are antialiased and keeps what is drawn.

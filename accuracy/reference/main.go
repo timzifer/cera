@@ -12,7 +12,9 @@
 // whichever are available. No single reference is ground truth, so the
 // report counts, for every engine, the pixels on which all the other
 // engines agree and it does not: where the others disagree among
-// themselves, a page says nothing about who is right. The synthetic
+// themselves, a page says nothing about who is right. Only the page
+// content is compared, without annotations, since MuPDF draws none and
+// PDFium no form widgets; -annots draws them. The synthetic
 // drawings are also compared with an exact rendering (package exact).
 //
 // Renderings of the references are cached in -cache by engine version,
@@ -84,6 +86,7 @@ func run() error {
 	out := flag.String("out", "../../report-reference", "directory for report.html, pages.csv and summary.json")
 	gallery := flag.Int("gallery", 12, "pages with cera's largest outlier share shown in the report")
 	timeout := flag.Duration("timeout", time.Minute, "deadline per cera page")
+	annots := flag.Bool("annots", false, "draw annotations (MuPDF draws none and PDFium no form widgets, so cera is counted as the outlier where it draws them)")
 	flag.Parse()
 
 	files, err := listFiles(strings.Split(*dirs, ","), *match)
@@ -103,7 +106,7 @@ func run() error {
 	var engs []engine
 	var missing []string
 	for _, name := range strings.Split(*engines, ",") {
-		e, err := newEngine(strings.TrimSpace(name), *timeout)
+		e, err := newEngine(strings.TrimSpace(name), *timeout, *annots)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skipping %s: %v\n", name, err)
 			missing = append(missing, fmt.Sprintf("%s (%v)", name, err))
@@ -204,7 +207,7 @@ func run() error {
 	}
 	rep := summarize(results, engs, ex != nil)
 	rep.Dirs, rep.DPI, rep.Missing, rep.Skipped = *dirs, *dpi, missing, skipped
-	rep.Seed, rep.Sample = *seed, *sample
+	rep.Seed, rep.Sample, rep.Annotations = *seed, *sample, *annots
 	if err := writeCSV(filepath.Join(*out, "pages.csv"), results, rep.Engines); err != nil {
 		return err
 	}
