@@ -115,6 +115,12 @@ jobs:
             GOOS=${t%/*} GOARCH=${t#*/} go build ./... || exit 1
             echo "::endgroup::"
           done
+      - name: Build and test without the TeX Gyre stand-ins (cera_nogyre)
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          GOOS=js GOARCH=wasm go build -tags cera_nogyre ./... || exit 1
+          go test -tags cera_nogyre .
 
   # Every reader of untrusted structure, 60 s each (ADR 0010); the weekly
   # workflow fuzzes longer. Crashers land in testdata/fuzz and are kept as

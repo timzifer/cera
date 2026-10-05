@@ -242,7 +242,11 @@ type standIn struct {
 }
 
 func (s *standIn) get() *opentype.Font {
-	s.once.Do(func() { s.font, _ = opentype.Parse(s.ttf) })
+	s.once.Do(func() {
+		if len(s.ttf) > 0 {
+			s.font, _ = opentype.Parse(s.ttf)
+		}
+	})
 	return s.font
 }
 
@@ -429,11 +433,12 @@ func (f *Font) standIn(req FontRequest, stretch float64) {
 	}
 	s := &c.fam[i]
 	if c.fallback != nil {
-		if p := s.get(); p != nil {
-			if n := f.lacking(p); n > 0 {
-				if q := c.fallback[i].get(); q != nil && f.lacking(q) < n {
-					s = &c.fallback[i]
-				}
+		// Without TeX Gyre (cera_nogyre), the fallback draws everything.
+		if p := s.get(); p == nil {
+			s = &c.fallback[i]
+		} else if n := f.lacking(p); n > 0 {
+			if q := c.fallback[i].get(); q != nil && f.lacking(q) < n {
+				s = &c.fallback[i]
 			}
 		}
 	}

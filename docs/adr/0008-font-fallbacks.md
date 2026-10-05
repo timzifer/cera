@@ -166,7 +166,10 @@ is unaffected (positions only). `TextDevice` reports the writing mode.
   hundred KB); CJK glyphs stay out of every binary that does not ask for
   them.
 - The TeX Gyre stand-ins add 1.45 MB to every binary on top of Arimo,
-  Tinos and Cousine, which stay for Cyrillic text.
+  Tinos and Cousine, which stay for Cyrillic text. The build tag
+  `cera_nogyre` leaves them out (`stdfont.Gyre` false), for binaries where
+  size counts more than shapes (`js/wasm`): Arimo, Tinos and Cousine then
+  draw everything, as before #33. CI tests and builds both ways.
 - `OpenWithPassword` becomes a shortcut for `OpenWith`.
 
 ## Alternatives considered

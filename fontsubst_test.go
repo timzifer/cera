@@ -14,6 +14,8 @@ import (
 	"github.com/go-opentype/fonts/cousine"
 	"github.com/go-opentype/opentype"
 	"github.com/go-pdfkit/reader"
+
+	"github.com/timzifer/cera/internal/stdfont"
 )
 
 // pageText opens data with a font provider and extracts its text.
@@ -334,6 +336,9 @@ func TestStandardStandIns(t *testing.T) {
 		{"Courier-Oblique", &courierFamily, 2, 0.6},
 		{"Courier-BoldOblique", &courierFamily, 3, 0.6},
 	} {
+		if !stdfont.Gyre {
+			tc.fam = map[*family]*family{&sansFamily: &arimoFamily, &serifFamily: &tinosFamily, &courierFamily: &monoFamily}[tc.fam]
+		}
 		f := load(tc.name, nil)
 		if f.program != tc.fam[tc.style].get() {
 			t.Errorf("%s: not drawn with its stand-in", tc.name)

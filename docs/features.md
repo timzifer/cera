@@ -19,7 +19,7 @@ Fonts a file does not embed:
 
 | font asked for | drawn with |
 |---|---|
-| Helvetica, Times, Courier and frequent families (Calibri, Verdana, Cambria …) | TeX Gyre Heros, Termes, Cursor (the URW Nimbus shapes PDFium and MuPDF draw too, metric-compatible), in the weight, slope and width asked for; Arimo, Tinos, Cousine for text TeX Gyre has no glyphs for (Cyrillic) |
+| Helvetica, Times, Courier and frequent families (Calibri, Verdana, Cambria …) | TeX Gyre Heros, Termes, Cursor (the URW Nimbus shapes PDFium and MuPDF draw too, metric-compatible), in the weight, slope and width asked for; Arimo, Tinos, Cousine for text TeX Gyre has no glyphs for (Cyrillic), and for all of it when built with the tag `cera_nogyre` (1.45 MB smaller, see [usage](usage.md)) |
 | sans serif monospaces (Consolas, Menlo, Lucida Console …) | Cousine |
 | Symbol, ZapfDingbats | DejaVu Sans subsets at AFM widths |
 | Adobe CJK collections | Noto Sans through `fonts/cjk` (opt-in, see [usage](usage.md)); reads back as Unicode without ToUnicode |

@@ -34,6 +34,18 @@ doc, err := cera.OpenWith(data, cera.OpenOptions{
 })
 ```
 
+Helvetica, Times and Courier that a document does not embed are drawn with
+TeX Gyre Heros, Termes and Cursor, the shapes PDFium and MuPDF draw too.
+They add 1.45 MB to the binary; the build tag `cera_nogyre` leaves them
+out, and Arimo, Tinos and Cousine (same metrics, Arial's, Times New
+Roman's and Courier New's shapes) draw that text instead. Line lengths and
+layout are the same either way:
+
+```sh
+go build -tags cera_nogyre ./...
+GOOS=js GOARCH=wasm go build -tags cera_nogyre -o cera.wasm ./cmd/cera
+```
+
 Layers (optional content) are switched per render, not on the document, so
 several views can show different layers; switching draws the cached display
 list again without interpreting the page:

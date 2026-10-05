@@ -1,6 +1,12 @@
+//go:build !cera_nogyre
+
 package stdfont
 
 import _ "embed"
+
+// Gyre says the TeX Gyre stand-ins are built in: without the build tag
+// cera_nogyre, which leaves out their 1.45 MB.
+const Gyre = true
 
 // The stand-ins for Helvetica, Times and Courier: TeX Gyre Heros, Termes
 // and Cursor 2.004 (GUST Font License, see LICENSE-TeXGyre), which are
