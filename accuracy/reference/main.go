@@ -88,7 +88,11 @@ func run() error {
 	gallery := flag.Int("gallery", 12, "pages with cera's largest outlier share shown in the report")
 	timeout := flag.Duration("timeout", time.Minute, "deadline per cera page")
 	annots := flag.Bool("annots", false, "draw annotations (MuPDF draws none and PDFium no form widgets, so cera is counted as the outlier where it draws them)")
+	cjkOn := flag.Bool("cjk", false, "give cera the Noto Sans fonts of fonts/cjk for CJK fonts a document does not embed (font-missing-japan1 and the like)")
 	flag.Parse()
+	if *cjkOn {
+		openOptions.Fonts = cjkFonts
+	}
 
 	files, err := listFiles(strings.Split(*dirs, ","), *match)
 	if err != nil {
@@ -273,7 +277,7 @@ func (f *file) load(scale float64) error {
 	f.data = data
 	sum := sha256.Sum256(data)
 	f.key = hex.EncodeToString(sum[:12])
-	doc, err := cera.Open(data)
+	doc, err := cera.OpenWith(data, openOptions)
 	if err != nil {
 		return fmt.Errorf("cera does not open it: %w", err)
 	}

@@ -12,6 +12,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/timzifer/cera/internal/cmap"
 )
@@ -113,6 +115,15 @@ func main() {
 				m[uint32(cid)] = r
 			}
 		})
+		// No Unicode code maps to the CIDs another one already has, the
+		// half-width Latin of Japan1 (CIDs 231 to 325, what 90ms-RKSJ's
+		// single bytes select) among them; the collection's cid2code.txt
+		// gives their characters.
+		for cid, r := range cid2code(*src, coll) {
+			if _, ok := m[cid]; !ok {
+				m[cid] = r
+			}
+		}
 		entries["ucs:"+coll] = cmap.MarshalUnicode(m)
 	}
 	data, err := cmap.Bundle(entries)
@@ -123,6 +134,57 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("%s: %d entries, %d bytes\n", *out, len(entries), len(data))
+}
+
+// cid2code reads the characters of a collection's CIDs from its
+// cid2code.txt: the best of the values in all its Unicode columns (UCS2,
+// UTF32 and their variants), a vertical form ("3001v") read as its
+// horizontal character.
+func cid2code(src, coll string) map[uint32]rune {
+	dirs, _ := filepath.Glob(filepath.Join(src, "Adobe-"+coll+"-*", "cid2code.txt"))
+	if len(dirs) != 1 {
+		log.Fatalf("gen: no single cid2code.txt for %s: %v", coll, dirs)
+	}
+	data, err := os.ReadFile(dirs[0])
+	if err != nil {
+		log.Fatal(err)
+	}
+	var cols []int
+	m := map[uint32]rune{}
+	for line := range strings.Lines(string(data)) {
+		f := strings.Split(strings.TrimRight(line, "\r\n"), "\t")
+		if f[0] == "CID" {
+			for i, name := range f {
+				if strings.Contains(name, "UCS2") || strings.Contains(name, "UTF32") {
+					cols = append(cols, i)
+				}
+			}
+			continue
+		}
+		cid, err := strconv.ParseUint(f[0], 10, 32)
+		if err != nil {
+			continue
+		}
+		for _, i := range cols {
+			if i >= len(f) {
+				continue
+			}
+			for v := range strings.SplitSeq(f[i], ",") {
+				u, err := strconv.ParseUint(strings.TrimSuffix(v, "v"), 16, 32)
+				if err != nil {
+					continue // "*": none
+				}
+				r := rune(u)
+				if old, ok := m[uint32(cid)]; !ok || better(r, old) {
+					m[uint32(cid)] = r
+				}
+			}
+		}
+	}
+	if cols == nil {
+		log.Fatalf("gen: %s has no Unicode columns", dirs[0])
+	}
+	return m
 }
 
 // better reports whether r is a better reading of a CID than old: unified

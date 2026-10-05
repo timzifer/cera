@@ -90,6 +90,16 @@ func TestPredefinedUnicodeRoundTrip(t *testing.T) {
 	if r, ok := ToUnicode("Japan1", cid); !ok || r != 0x3001 {
 		t.Errorf("vertical CID %d reads %q", cid, r)
 	}
+	// The half-width Latin 90ms-RKSJ selects with single bytes: no Unicode
+	// CMap maps to it, cid2code.txt gives its characters (pdf.js
+	// issue11555.pdf).
+	h := Predefined("90ms-RKSJ-H")
+	for _, b := range []byte("Az09") {
+		cid := h.CID(uint32(b), 1)
+		if r, ok := ToUnicode("Japan1", cid); !ok || r != rune(b) {
+			t.Errorf("90ms-RKSJ-H <%02X> -> CID %d -> %q, %v", b, cid, r, ok)
+		}
+	}
 }
 
 func TestAllPredefined(t *testing.T) {

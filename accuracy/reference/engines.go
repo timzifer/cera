@@ -82,7 +82,7 @@ func (ceraEngine) close()          {}
 
 func (c ceraEngine) render(f *file, pages []int, scale float64) ([]*image.RGBA, []error) {
 	imgs, errs := make([]*image.RGBA, len(pages)), make([]error, len(pages))
-	doc, err := cera.Open(f.data)
+	doc, err := cera.OpenWith(f.data, openOptions)
 	if err != nil {
 		for i := range errs {
 			errs[i] = err
