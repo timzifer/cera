@@ -96,6 +96,7 @@ type table struct {
 
 	pagesOnce sync.Once
 	pages     []Ref
+	pageInfo  []atomic.Pointer[pageInfo]
 }
 
 // newTable lays out the entries read from the tables.
@@ -175,7 +176,7 @@ func (t *table) resetCache() {
 	}
 	t.objStms = map[int32]map[int32]*Object{}
 	t.pagesOnce = sync.Once{}
-	t.pages = nil
+	t.pages, t.pageInfo = nil, nil
 }
 
 // A loadCtx is the chain of objects one call is loading, to cut cycles.

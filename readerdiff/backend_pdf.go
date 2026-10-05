@@ -52,6 +52,9 @@ func (pdfBackend) snapshot(data []byte, password string) *snapshot {
 			continue
 		}
 		s.set(fmt.Sprintf("page/%d", i), conv(p.Object()).text())
+		if c, err := d.PageContents(i + 1); err == nil {
+			s.set(fmt.Sprintf("contents/%d", i), contentsText(c.Data, c.Undecoded, string(c.Filter), c.Recovered))
+		}
 	}
 	w.visit(tr)
 	w.run()

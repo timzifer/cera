@@ -50,6 +50,9 @@ func (v06) snapshot(data []byte, password string) *snapshot {
 		}
 		pv := conv(p)
 		s.set(fmt.Sprintf("page/%d", i), pv.text())
+		if c, err := d.PageContentDecoded(i + 1); err == nil {
+			s.set(fmt.Sprintf("contents/%d", i), contentsText(c.Data, c.Undecoded, string(c.Filter), c.Recovered))
+		}
 	}
 	w.visit(tr)
 	w.run()

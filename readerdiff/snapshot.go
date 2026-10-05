@@ -93,6 +93,12 @@ func (s *streamInfo) decodedText() string {
 		s.image, s.filter, s.recovered, s.failed)
 }
 
+// contentsText describes a page's decoded content streams.
+func contentsText(data, undecoded []byte, filter string, recovered bool) string {
+	return fmt.Sprintf("data %d %s undecoded %d %s filter=%s recovered=%t",
+		len(data), hash(data), len(undecoded), hash(undecoded), filter, recovered)
+}
+
 // sortDict orders a dictionary's keys and values by key and drops null
 // values, which the PDF format treats as absent entries.
 func sortDict(keys []string, vals []value) ([]string, []value) {

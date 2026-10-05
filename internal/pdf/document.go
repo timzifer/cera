@@ -31,21 +31,43 @@ type Document struct {
 
 	tab      atomic.Pointer[table]
 	repairMu sync.Mutex
+	cache    streamCache
 
 	resolveFn func(Object) Object
+}
+
+// Options configure [OpenWith].
+type Options struct {
+	// Password is tried as the user and as the owner password; the empty
+	// password is tried as well.
+	Password string
+	// StreamCacheBytes bounds the cache of decoded streams: 0 means
+	// DefaultStreamCacheBytes, a negative value turns the cache off.
+	StreamCacheBytes int
 }
 
 // Open parses the cross-reference information of a PDF file held in memory,
 // using the empty password. b must not change while the Document is used:
 // objects alias it. A file whose tables are damaged is rebuilt by scanning
 // it.
-func Open(b []byte) (*Document, error) { return OpenWithPassword(b, "") }
+func Open(b []byte) (*Document, error) { return OpenWith(b, Options{}) }
 
 // OpenWithPassword is Open with a password to try, both as the user and as
 // the owner password; the empty one is tried as well.
 func OpenWithPassword(b []byte, password string) (*Document, error) {
-	d := &Document{buf: b, password: password, version: version(b)}
+	return OpenWith(b, Options{Password: password})
+}
+
+// OpenWith is Open with options.
+func OpenWith(b []byte, opt Options) (*Document, error) {
+	d := &Document{buf: b, password: opt.Password, version: version(b)}
 	d.resolveFn = d.Resolve
+	switch {
+	case opt.StreamCacheBytes == 0:
+		d.cache.init(DefaultStreamCacheBytes)
+	case opt.StreamCacheBytes > 0:
+		d.cache.init(opt.StreamCacheBytes)
+	}
 	ctx := getCtx()
 	defer putCtx(ctx)
 
@@ -410,21 +432,100 @@ func (d *Document) PageRef(i int) (Ref, bool) {
 }
 
 // Page returns the i'th page's dictionary, counting from one, with the
-// attributes it inherits from its ancestors filled in.
+// attributes it inherits from its ancestors filled in. It is built once.
 func (d *Document) Page(i int) (Dict, error) {
-	ref, ok := d.PageRef(i)
-	if !ok {
-		return Dict{}, fmt.Errorf("pdf: page %d is out of range (the document has %d)", i, d.PageCount())
-	}
-	o, err := d.Get(ref)
+	info, err := d.pageInfo(i)
 	if err != nil {
 		return Dict{}, err
 	}
+	return info.dict, nil
+}
+
+// A pageInfo is what a page's dictionary says, read once.
+type pageInfo struct {
+	dict Dict
+	// key stands for the page's joined content streams in the cache.
+	key *Stream
+}
+
+func (d *Document) pageInfo(i int) (*pageInfo, error) {
+	t := d.tab.Load()
+	refs := d.pageRefs(t)
+	if i < 1 || i > len(refs) {
+		return nil, fmt.Errorf("pdf: page %d is out of range (the document has %d)", i, len(refs))
+	}
+	slot := &t.pageInfo[i-1]
+	if p := slot.Load(); p != nil {
+		return p, nil
+	}
+	o, err := d.Get(refs[i-1])
+	if err != nil {
+		return nil, err
+	}
 	page, ok := o.Dict()
 	if !ok {
-		return Dict{}, fmt.Errorf("pdf: page %d is a %s, not a dictionary", i, o.kind)
+		return nil, fmt.Errorf("pdf: page %d is a %s, not a dictionary", i, o.kind)
 	}
-	return d.withInherited(page), nil
+	p := &pageInfo{dict: d.withInherited(page), key: &Stream{Ref: refs[i-1]}}
+	if !slot.CompareAndSwap(nil, p) {
+		p = slot.Load()
+	}
+	return p, nil
+}
+
+// PageContents returns the page's content streams decoded and joined, a
+// line feed between them. Recovered reports that at least one of them could
+// not be decoded cleanly; a stream filtered as an image is not content and
+// is reported, not joined.
+func (d *Document) PageContents(i int) (Decoded, error) {
+	info, err := d.pageInfo(i)
+	if err != nil {
+		return Decoded{}, err
+	}
+	o := d.Resolve(info.dict.Get("Contents"))
+	if s, ok := o.Stream(); ok {
+		return contentPart(d.Decode(s)), nil
+	}
+	a, ok := o.Array()
+	if !ok {
+		return Decoded{}, nil
+	}
+	return d.cache.get(info.key, func() Decoded {
+		var out Decoded
+		for _, e := range a {
+			s, ok := d.Resolve(e).Stream()
+			if !ok {
+				continue
+			}
+			part := contentPart(d.DecodeUncached(s))
+			if part.Recovered && !out.Recovered {
+				out.Recovered, out.Cause, out.Filter = true, part.Cause, part.Filter
+				out.Undecoded = part.Undecoded
+			}
+			if len(part.Data) == 0 {
+				continue
+			}
+			if len(out.Data) > 0 {
+				out.Data = append(out.Data, '\n')
+			}
+			out.Data = append(out.Data, part.Data...)
+		}
+		return out
+	}), nil
+}
+
+// contentPart is one decoded content stream. An image filter has no
+// business there: the bytes it holds are salvage, not content.
+func contentPart(dec Decoded) Decoded {
+	if dec.Image != "" {
+		return Decoded{
+			Undecoded: dec.Data,
+			Recovered: true,
+			Filter:    dec.Image,
+			Cause:     fmt.Errorf("pdf: a content stream is filtered as an image (/%s)", dec.Image),
+		}
+	}
+	return dec
 }
 
 // withInherited copies the page and fills in what its ancestors provide.
@@ -480,6 +581,7 @@ func (d *Document) pageRefs(t *table) []Ref {
 			}
 		}
 		t.pages = w.pages
+		t.pageInfo = make([]atomic.Pointer[pageInfo], len(w.pages))
 	})
 	return t.pages
 }
@@ -555,8 +657,18 @@ func (d *Document) Raw(s *Stream) []byte {
 }
 
 // Decode applies a stream's filter chain, salvaging what it can from a
-// chain that cannot be run to the end and saying that it did so.
+// chain that cannot be run to the end and saying that it did so. The result
+// is cached and shared: its bytes must not be written to.
 func (d *Document) Decode(s *Stream) Decoded {
+	if s.Ref.Num <= 0 {
+		return d.DecodeUncached(s)
+	}
+	return d.cache.get(s, func() Decoded { return d.DecodeUncached(s) })
+}
+
+// DecodeUncached is Decode without the cache, for streams whose consumer
+// keeps what it makes of them: images, font programs.
+func (d *Document) DecodeUncached(s *Stream) Decoded {
 	ctx := getCtx()
 	defer putCtx(ctx)
 	return d.decode(ctx, d.tab.Load(), s)
