@@ -2,5 +2,6 @@
 
 package main
 
-// Without cgo, MuPDF runs as its command-line tool, if installed.
-func newMuPDF() (engine, error) { return newExecMuPDF() }
+// Without cgo, MuPDF runs as its command-line tool, if installed. mutool
+// draw draws annotations whatever annots says.
+func newMuPDF(annots bool) (engine, error) { return newExecMuPDF(annots) }

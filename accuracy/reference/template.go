@@ -105,7 +105,7 @@ details { margin: 8px 0; } summary { cursor: pointer; color: var(--text-secondar
 <body>
 <main>
 <h1>cera against the references</h1>
-<div class="meta">{{.R.Generated}} · {{.R.DPI}} dpi · {{.R.Files}} files · {{.R.Pages}} pages ({{.R.Compared}} compared) · engines: {{join .R.Engines ", "}}{{if .R.Sample}} · random batch of {{.R.Sample}}, seed {{.R.Seed}}{{end}} · {{.R.Dirs}}</div>
+<div class="meta">{{.R.Generated}} · {{.R.DPI}} dpi · {{.R.Files}} files · {{.R.Pages}} pages ({{.R.Compared}} compared) · {{if .R.Annotations}}with annotations (MuPDF draws none, PDFium no form widgets){{else}}page content only, no annotations{{end}} · engines: {{join .R.Engines ", "}}{{if .R.Sample}} · random batch of {{.R.Sample}}, seed {{.R.Seed}}{{end}} · {{.R.Dirs}}</div>
 {{if .R.Missing}}<p class="note">Not available: {{join .R.Missing "; "}}.</p>{{end}}
 
 <p class="lead">No renderer is ground truth. Every engine is held against the median of all
@@ -173,6 +173,7 @@ any rendering. The synthetic drawings are also compared with an exact rendering.
 <div><img src="{{.Outly}}" alt="outlier map"><div class="cap">outliers</div></div></div></div>{{end}}</div>
 {{end}}
 
+{{if .R.Excepted}}<h2>Left out</h2><p class="note">Pages the references cannot judge (exceptions.go).</p><ul>{{range .R.Excepted}}<li>{{.}}</li>{{end}}</ul>{{end}}
 {{if .R.Skipped}}<h2>Skipped</h2><ul>{{range .R.Skipped}}<li>{{.}}</li>{{end}}</ul>{{end}}
 </main>
 <div id="tip" role="tooltip"></div>
