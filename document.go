@@ -11,11 +11,11 @@ import (
 	"github.com/timzifer/cera/internal/cmyk"
 )
 
-// Document is an open PDF file. Interpreting a page reads the document, and
-// the underlying reader is not verified to be safe for concurrent use (see
-// the roadmap): render pages of one Document from one goroutine at a time.
-// Once a page has been rendered at a scale, further renders of it at that
-// scale only draw its display list and may run concurrently.
+// Document is an open PDF file. It is safe for concurrent use: pages of one
+// Document may be rendered from many goroutines at once, and what they read
+// from the file (objects, decoded streams, fonts, images, colour spaces) is
+// loaded once and shared. Once a page has been rendered at a scale, further
+// renders of it at that scale only draw its display list.
 type Document struct {
 	r *pdf.Document
 

@@ -6,7 +6,10 @@ Every push and pull request runs `CI` (`.github/workflows/ci.yml`): lint
 (golangci-lint), tests with race detector on Linux, macOS and Windows, a
 cgo-free build for 14 targets including `js/wasm` and `wasip1/wasm`, 60 s of
 fuzzing for each reader of untrusted structure, benchmarks, the pinned
-corpus, and its accuracy against PDFium. Its single
+corpus, its accuracy against PDFium, and `readerdiff`, which compares cera's
+own reader and font layer with the go-pdfkit packages they replace
+(ADR 0012) on every object, decoded stream, page and font code of the
+pinned corpus. Its single
 aggregate job `ci-ok` is the required check for `main`.
 
 ## Corpora
@@ -39,6 +42,21 @@ Customer drawings stay local: pass their directory as another `-dir`
 `-workers` sets the goroutines per page (default 1, the single-core figure
 of the spec; 0 = all cores). Every page is timed twice per run: a first
 render (interpret and draw) and a render again with its display list cached.
+`-page-workers N` (-1 = all cores) adds a throughput table: every page of a
+freshly opened document, one after another and from N goroutines at once.
+
+The reader comparison runs from its own module:
+
+```sh
+cd readerdiff
+go run . objects -a v06 -b pdf -dir ../testdata/corpus   # objects, streams, pages
+go run . fonts -dir ../testdata/corpus                   # every font code
+go test -bench . -benchmem                               # both readers, for benchstat
+go test -fuzz FuzzParseDiff                              # differential fuzzing
+```
+
+Expected differences are listed in `readerdiff/allowlist.txt`, each with a
+reason ADR 0012 names.
 
 ## Accuracy
 

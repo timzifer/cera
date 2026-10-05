@@ -20,6 +20,10 @@ text, err := page.Text(ctx) // characters with boxes, including invisible text
 fmt.Println(text.String())
 ```
 
+A Document is safe for concurrent use: render its pages from as many
+goroutines as there are cores, each with `Workers: 1`, or one page with all
+of them; objects, fonts and images are loaded once and shared.
+
 Fonts a document names but does not embed can come from a provider; the
 CJK module links Noto Sans only for the collections it is asked for:
 

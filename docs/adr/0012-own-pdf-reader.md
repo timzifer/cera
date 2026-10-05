@@ -1,6 +1,6 @@
 # 0012. Own PDF reader and font layer
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-05
 - Milestone: M8½
 
@@ -44,8 +44,10 @@ than MuPDF on all cores, ≈ 0 allocations per page, 0 panics, js/wasm):
 cera gets its own reader, `internal/pdf`, and its own font layer,
 `internal/pdffont`. The reader ports the robustness work of go-pdfkit/reader
 v0.6.0 (repair, filters, encryption; BSD-3, attributed in every ported file
-and in `internal/pdf/LICENSE-go-pdfkit`); the font layer is written anew from
-PDF 32000-2 Annex D and the Adobe Glyph List.
+and in `internal/pdf/LICENSE-go-pdfkit`). The font layer is written anew
+around compact tables, with the Mac encodings from PDF 32000-2 Annex D; the
+glyph-name tables and the ToUnicode reader are taken over from pdffont
+v0.3.1 (BSD-3, attributed likewise).
 
 **Objects.** A 24-byte value `Object` (kind, length, a 64-bit payload and one
 pointer) instead of an interface; `Array` is `[]Object`; `Dict` is a flat
@@ -58,10 +60,10 @@ clipped. `unsafe` stays in `object.go` and `dict.go`.
 **Concurrency.** The cross-reference table is immutable behind an
 `atomic.Pointer`; each entry publishes its object with a compare-and-swap.
 A goroutine that misses parses the object itself and never waits on another,
-so loads cannot deadlock. Reference cycles are cut by a small stack-allocated
-chain (`MaxRefChain`). Header offsets are validated at open, so most damaged
-files are repaired before rendering; a later repair builds a new table and
-swaps it in. Pages of one document may then be rendered from many goroutines.
+so loads cannot deadlock. Reference cycles are cut by a short pooled chain
+(`MaxRefChain`). A repair — at open, or later when an offset turns out wrong —
+builds a new table and swaps it in; readers of the old one are not
+disturbed. Pages of one document may then be rendered from many goroutines.
 
 **Streams.** A sharded, byte-bounded LRU of decoded streams with
 single-flight (`streamCacheBytes`, `MaxCachedStream`). The filter chain is
@@ -88,6 +90,16 @@ Differences are allowed only with a reason code (`hybrid-xref`,
 `adler-ignored`, `stream-cap`, `nesting-limit`, `predictor-limit`,
 `tiff-subbyte`, `macroman-encoding`, `macexpert-encoding`). Paired benchmarks
 against v0.6 show the gain.
+
+## Outcome
+
+On the pinned corpus, the pdf.js suite and borb (1649 files) the readers
+agree on every object, decoded stream, page and content stream except where
+the allowlist gives a reason; the font layers agree on every font code of the
+pinned corpus except the Mac encodings. All 105 pinned pages render
+pixel-identical. Pinned corpus, v0.6 → internal/pdf: Open 2.5 → 0.89 ms
+(4319 → 1026 allocations), resolving every object 41 → 21 ms (388k → 37k
+allocations); median allocations per rendered page 33 → 3.
 
 ## Consequences
 

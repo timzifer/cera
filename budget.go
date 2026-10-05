@@ -3,6 +3,7 @@ package cera
 import (
 	"github.com/timzifer/cera/internal/cmap"
 	"github.com/timzifer/cera/internal/content"
+	"github.com/timzifer/cera/internal/pdf"
 )
 
 // Budgets bound the work and memory one input may cost (ADR 0010). Valid
@@ -93,8 +94,18 @@ var budgets = []budget{
 	{"cmap.MaxSpans", cmap.MaxSpans, "", "code ranges of one CMap; further ones are ignored"},
 	{"cmap.MaxSpaces", cmap.MaxSpaces, "", "codespace ranges of one CMap"},
 	{"cmap.MaxDepth", cmap.MaxDepth, "", "usecmap nesting"},
+	{"pdf.MaxStreamBytes", pdf.MaxStreamBytes, "", "bytes one filter may decode a stream to; the stream is cut there (Stats.Errors)"},
+	{"pdf.MaxFilters", pdf.MaxFilters, "", "filters of one stream's chain; a longer chain does not decode"},
+	{"pdf.MaxPredictorRow", pdf.MaxPredictorRow, "", "bytes of one PNG or TIFF predictor row; a longer row does not decode"},
+	{"pdf.MaxNesting", pdf.MaxNesting, "", "arrays and dictionaries nested in one object of the file; a deeper object is null"},
+	{"pdf.MaxRefChain", pdf.MaxRefChain, "", "objects whose loading needs another (references to references, indirect stream lengths); deeper ones are null"},
+	{"pdf.MaxXrefSections", pdf.MaxXrefSections, "", "cross-reference sections of one /Prev chain; older ones are not read"},
+	{"pdf.MaxObjects", pdf.MaxObjects, "", "cross-reference entries of one file; past it the file is rebuilt by scanning"},
+	{"pdf.MaxPageTreeDepth", pdf.MaxPageTreeDepth, "", "page tree nodes nested in each other; deeper pages are not found"},
 
 	{"imageCacheBytes", imageCacheBytes, "", "decoded images a document keeps"},
+	{"pdf.DefaultStreamCacheBytes", pdf.DefaultStreamCacheBytes, "", "decoded streams (content, forms, Type 3 glyphs, functions) a document keeps"},
+	{"pdf.MaxCachedStream", pdf.MaxCachedStream, "", "largest decoded stream kept; larger ones are decoded on every use"},
 	{"maxFreeLayerBytes", maxFreeLayerBytes, "", "transparency layer buffers a device keeps"},
 	{"maxIdleGlyphCaches", maxIdleGlyphCaches, "", "glyph mask caches kept between renders"},
 	{"maxMeshShaders", maxMeshShaders, "", "mesh shaders kept per mesh"},

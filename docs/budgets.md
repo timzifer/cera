@@ -37,7 +37,17 @@ A test keeps this table in step with the code.
 | `cmap.MaxSpans` | 128 Ki | – | code ranges of one CMap; further ones are ignored |
 | `cmap.MaxSpaces` | 64 | – | codespace ranges of one CMap |
 | `cmap.MaxDepth` | 4 | – | usecmap nesting |
+| `pdf.MaxStreamBytes` | 256 Mi | – | bytes one filter may decode a stream to; the stream is cut there (Stats.Errors) |
+| `pdf.MaxFilters` | 8 | – | filters of one stream's chain; a longer chain does not decode |
+| `pdf.MaxPredictorRow` | 16 Mi | – | bytes of one PNG or TIFF predictor row; a longer row does not decode |
+| `pdf.MaxNesting` | 128 | – | arrays and dictionaries nested in one object of the file; a deeper object is null |
+| `pdf.MaxRefChain` | 64 | – | objects whose loading needs another (references to references, indirect stream lengths); deeper ones are null |
+| `pdf.MaxXrefSections` | 1 Ki | – | cross-reference sections of one /Prev chain; older ones are not read |
+| `pdf.MaxObjects` | 8 Mi | – | cross-reference entries of one file; past it the file is rebuilt by scanning |
+| `pdf.MaxPageTreeDepth` | 64 | – | page tree nodes nested in each other; deeper pages are not found |
 | `imageCacheBytes` | 256 Mi | – | decoded images a document keeps |
+| `pdf.DefaultStreamCacheBytes` | 64 Mi | – | decoded streams (content, forms, Type 3 glyphs, functions) a document keeps |
+| `pdf.MaxCachedStream` | 8 Mi | – | largest decoded stream kept; larger ones are decoded on every use |
 | `maxFreeLayerBytes` | 64 Mi | – | transparency layer buffers a device keeps |
 | `maxIdleGlyphCaches` | 64 | – | glyph mask caches kept between renders |
 | `maxMeshShaders` | 8 | – | mesh shaders kept per mesh |
