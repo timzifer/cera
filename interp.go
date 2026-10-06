@@ -23,9 +23,12 @@ type gstate struct {
 	fill, stroke         [maxComps]float64
 	fillPat, strokePat   patternPaint // in a Pattern colour space
 	fillAlpha, strokeAlp float64
-	// blend and smask composite what is painted (see group.go).
+	// blend and smask composite what is painted (see group.go); ais says
+	// alpha and soft mask are shape rather than opacity (AIS), which only
+	// a knockout group tells apart.
 	blend BlendMode
 	smask *softMask
+	ais   bool
 	// Overprint of fills and strokes, OPM 1, and the transfer function
 	// (nil: identity); see extgstate.go.
 	opFill, opStroke, opm1 bool
@@ -61,6 +64,9 @@ type interp struct {
 	cur, start stilus.Point
 	hasCur     bool
 	clip       int8 // pending W/W*: -1 none, else the fill rule
+
+	// knockouts counts the knockout groups being drawn.
+	knockouts int
 
 	text textObject
 	td   TextDevice // dev, if it wants the text
@@ -725,8 +731,9 @@ func (in *interp) extGState(d pdf.Dict, ref pdf.Ref, res pdf.Dict) {
 	if o, ok := d.Lookup("SMask"); ok {
 		in.gs.smask = in.softMask(o, res)
 	}
-	if doc.boolean(d.Get("AIS")) {
-		in.st.unsupported("alpha-is-shape")
+	if o, ok := d.Lookup("AIS"); ok {
+		in.gs.ais = doc.boolean(o)
+		in.shapeAlpha()
 	}
 	in.extGStateMore(d, ref)
 }
@@ -851,6 +858,11 @@ func (in *interp) form(s *pdf.Stream, parent pdf.Dict, depth int) {
 			isGroup = true
 			g.Isolated, g.Knockout = doc.boolean(gd.Get("I")), doc.boolean(gd.Get("K"))
 		}
+	}
+	if g.Knockout {
+		in.knockouts++
+		defer func() { in.knockouts-- }()
+		in.shapeAlpha()
 	}
 	grouped := isGroup || in.transparent()
 

@@ -299,6 +299,9 @@ func (in *interp) flushText() {
 	knockout := in.textKnockout(mode)
 	if mode != TextInvisible && mode != TextClip {
 		if bm, grouped := in.objectBlend(cs, op); grouped || knockout {
+			if knockout && in.gs.ais {
+				in.st.unsupported("alpha-is-shape")
+			}
 			in.beginObject(in.runBox(), identity, bm, knockout)
 			defer in.dev.EndGroup()
 		}
