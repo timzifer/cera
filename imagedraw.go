@@ -1,6 +1,8 @@
 package cera
 
 import (
+	"image"
+	"image/color"
 	"math"
 
 	"github.com/timzifer/stilus"
@@ -50,6 +52,7 @@ func (f ImageFilter) smooth(img *Image, m Matrix) bool {
 // imageDraw is the per-device state of DrawImage, reused between images.
 type imageDraw struct {
 	shader stilus.ImageShader
+	bits   bitShader
 	paint  Paint
 	path   Path
 }
@@ -79,30 +82,32 @@ func (d *RasterDevice) DrawImage(img *Image, m Matrix, paint *Paint) {
 }
 
 func (d *RasterDevice) drawImage(img *Image, m Matrix, paint *Paint) {
-	if d.C.Clip().Empty() {
+	if d.C.Clip().Empty() || paint.Color.A == 0 {
 		return
 	}
 	id := &d.img
-	s := &id.shader
-	s.Reset()
-	defer s.Reset() // keep no image alive
 	// The image and its mask take the same filter, so that their edges
 	// line up.
 	smooth := d.ImageFilter.smooth(img, m)
-	if img.Stencil || img.color == nil {
-		if paint.Color.A == 0 {
-			return
-		}
-		s.SetColor(stilus.PackRGBA(paint.Color))
+	var sh stilus.Shader
+	if id.setupBits(img, m, smooth, paint.Color, d.C.Clip()) {
+		sh = &id.bits
+		defer id.bits.release() // keep no image alive
 	} else {
-		if paint.Color.A == 0 || !s.SetImage(img.color, toUnit(img.W, img.H).Mul(m), smooth, paint.Color.A) {
+		s := &id.shader
+		s.Reset()
+		defer s.Reset() // keep no image alive
+		if img.Stencil || img.color == nil {
+			s.SetColor(stilus.PackRGBA(paint.Color))
+		} else if !s.SetImage(img.color, toUnit(img.W, img.H).Mul(m), smooth, paint.Color.A) {
 			return
 		}
-	}
-	if t := img.mask; t != nil {
-		if !s.SetMask(t, toUnit(t.Base().W, t.Base().H).Mul(m), smooth) {
-			return
+		if t := img.mask; t != nil {
+			if !s.SetMask(t, toUnit(t.Base().W, t.Base().H).Mul(m), smooth) {
+				return
+			}
 		}
+		sh = s
 	}
 	if id.path.Empty() {
 		id.path.MoveTo(0, 0)
@@ -111,6 +116,42 @@ func (d *RasterDevice) drawImage(img *Image, m Matrix, paint *Paint) {
 		id.path.LineTo(0, 1)
 		id.path.Close()
 	}
-	id.paint.Shader = s
+	id.paint.Shader = sh
 	d.C.Fill(&id.path, m, NonZero, &id.paint)
+	id.paint.Shader = nil
+}
+
+// setupBits sets up the bitShader for img, if it is a one-bit image
+// without a mask or a stencil of one bit, drawn as bitShader draws: in its
+// colours times the constant alpha c.A, or the colour c through the
+// stencil, as stilus.ImageShader would.
+func (id *imageDraw) setupBits(img *Image, m Matrix, smooth bool, c color.RGBA, clip image.Rectangle) bool {
+	var p *plane
+	var pal [2]uint32
+	switch {
+	case img.color != nil && img.mask == nil && !img.Stencil:
+		p = img.color.Base()
+		if p.Kind != stilus.PlaneBits {
+			return false
+		}
+		for i := range pal {
+			pal[i] = p.Pal[i]
+			if c.A != 255 {
+				pal[i] = scale255(pal[i], uint32(c.A))
+			}
+		}
+	case img.color == nil && img.mask != nil:
+		p = img.mask.Base()
+		if p.Kind != stilus.PlaneBits {
+			return false
+		}
+		// Mask colours are levels of alpha: all four channels are equal.
+		col := stilus.PackRGBA(c)
+		for i := range pal {
+			pal[i] = scale255(col, uint32(uint8(p.Pal[i])))
+		}
+	default:
+		return false
+	}
+	return id.bits.setup(p, toUnit(p.W, p.H).Mul(m), smooth, pal, clip)
 }
