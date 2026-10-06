@@ -3,7 +3,7 @@ package cera
 import (
 	"image"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 )
 
 // Type 3 glyphs shown in a clipping render mode (4–7) add their shapes to
@@ -153,7 +153,7 @@ func (c *t3Clip) EndMask()                          { c.masks-- }
 // only: the text device, optional content and the display list's tags are
 // left out of it (a hidden glyph clips like a visible one), and what it
 // paints is not counted in the stats.
-func (in *interp) type3Clip(f *Font, code int, mu Matrix, res reader.Dict, depth int) {
+func (in *interp) type3Clip(f *Font, code int, mu Matrix, res pdf.Dict, depth int) {
 	c := &in.t3c
 	c.in, c.dst, c.n, c.masks = in, &in.text.clip, 0, 0
 	dev, out, mute, td, rec, oc := in.dev, in.out, in.mute.d, in.td, in.rec, in.ocCur

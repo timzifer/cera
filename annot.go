@@ -3,7 +3,7 @@ package cera
 import (
 	"math"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 )
 
 // Annotations (PDF 2.0, 12.5) are drawn after the page content from their
@@ -43,9 +43,9 @@ type Annotation struct {
 	// for links that go nowhere cera can name.
 	Link *LinkTarget
 
-	dict  reader.Dict
-	state reader.Name // /AS
-	ref   reader.Ref
+	dict  pdf.Dict
+	state pdf.Name // /AS
+	ref   pdf.Ref
 }
 
 // LinkTarget is where a link goes: a URI, or a place in the document.
@@ -111,31 +111,31 @@ func (p *Page) Annotations() []Annotation {
 				p.annots, p.annBad = nil, 0
 			}
 		}()
-		p.annots, p.annBad = p.doc.readAnnots(p.dict["Annots"])
+		p.annots, p.annBad = p.doc.readAnnots(p.dict.Get("Annots"))
 	})
 	return p.annots
 }
 
-func (d *Document) readAnnots(o reader.Object) (annots []Annotation, bad int) {
-	arr, _ := reader.ToArray(d.resolve(o))
+func (d *Document) readAnnots(o pdf.Object) (annots []Annotation, bad int) {
+	arr, _ := d.resolve(o).Array()
 	for i, e := range arr {
 		ad := d.dict(e)
-		r, ok := d.rect(ad["Rect"])
-		if ad == nil || !ok {
+		r, ok := d.rect(ad.Get("Rect"))
+		if ad.IsZero() || !ok {
 			if !emptyRect(d, ad) {
 				bad++
 			}
 			continue
 		}
-		sub, _ := d.name(ad["Subtype"])
+		sub, _ := d.name(ad.Get("Subtype"))
 		a := Annotation{Index: i, Subtype: string(sub), Rect: r, dict: ad}
-		a.ref, _ = e.(reader.Ref)
-		if f, ok := d.integer(ad["F"]); ok {
+		a.ref, _ = e.Ref()
+		if f, ok := d.integer(ad.Get("F")); ok {
 			a.Flags = AnnotFlags(uint32(f))
 		}
-		a.Contents = textString(d.resolve(ad["Contents"]))
-		a.Name = textString(d.resolve(ad["NM"]))
-		a.state, _ = d.name(ad["AS"])
+		a.Contents = textString(d.resolve(ad.Get("Contents")))
+		a.Name = textString(d.resolve(ad.Get("NM")))
+		a.state, _ = d.name(ad.Get("AS"))
 		if sub == "Link" {
 			a.Link = d.linkTarget(ad)
 		}
@@ -147,41 +147,43 @@ func (d *Document) readAnnots(o reader.Object) (annots []Annotation, bad int) {
 // emptyRect reports an annotation with an empty rectangle, which many
 // writers use for annotations that are not meant to be seen (a popup
 // never opened, a signature without appearance): not an error.
-func emptyRect(d *Document, ad reader.Dict) bool {
-	a, ok := reader.ToArray(d.resolve(ad["Rect"]))
-	return ad != nil && ok && len(a) == 4
+func emptyRect(d *Document, ad pdf.Dict) bool {
+	a, ok := d.resolve(ad.Get("Rect")).Array()
+	return !ad.IsZero() && ok && len(a) == 4
 }
 
 // linkTarget reads the destination or action of a link.
-func (d *Document) linkTarget(ad reader.Dict) *LinkTarget {
-	if dest, ok := ad["Dest"]; ok {
+func (d *Document) linkTarget(ad pdf.Dict) *LinkTarget {
+	if dest, ok := ad.Lookup("Dest"); ok {
 		return d.destination(dest)
 	}
-	act := d.dict(ad["A"])
-	switch s, _ := d.name(act["S"]); s {
+	act := d.dict(ad.Get("A"))
+	switch s, _ := d.name(act.Get("S")); s {
 	case "URI":
-		b, ok := reader.ToString(d.resolve(act["URI"]))
+		b, ok := d.resolve(act.Get("URI")).Str()
 		if !ok {
 			return nil
 		}
 		return &LinkTarget{URI: string(b), Page: -1}
 	case "GoTo":
-		return d.destination(act["D"])
+		return d.destination(act.Get("D"))
 	}
 	return nil
 }
 
 // destination reads an explicit or named destination.
-func (d *Document) destination(o reader.Object) *LinkTarget {
+func (d *Document) destination(o pdf.Object) *LinkTarget {
 	o = d.resolve(o)
 	t := &LinkTarget{Page: -1}
-	switch v := o.(type) {
-	case reader.Name:
-		t.Named = string(v)
-	case reader.String:
-		t.Named = textString(v)
-	case reader.Array:
-		d.explicitDest(t, v)
+	switch o.Kind() {
+	case pdf.KindName:
+		n, _ := o.Name()
+		t.Named = string(n)
+	case pdf.KindString:
+		t.Named = textString(o)
+	case pdf.KindArray:
+		a, _ := o.Array()
+		d.explicitDest(t, a)
 		return t
 	default:
 		return nil
@@ -193,17 +195,14 @@ func (d *Document) destination(o reader.Object) *LinkTarget {
 }
 
 // explicitDest fills t from [page /Fit params...].
-func (d *Document) explicitDest(t *LinkTarget, a reader.Array) {
+func (d *Document) explicitDest(t *LinkTarget, a pdf.Array) {
 	if len(a) == 0 {
 		return
 	}
-	switch p := a[0].(type) {
-	case reader.Ref:
+	if p, ok := a[0].Ref(); ok {
 		t.Page = d.pageIndex(p)
-	default:
-		if n, ok := d.integer(p); ok && n >= 0 && n < d.NumPages() {
-			t.Page = n // remote-style destinations number pages
-		}
+	} else if n, ok := d.integer(a[0]); ok && n >= 0 && n < d.NumPages() {
+		t.Page = n // remote-style destinations number pages
 	}
 	if len(a) > 1 {
 		f, _ := d.name(a[1])
@@ -219,9 +218,9 @@ func (d *Document) explicitDest(t *LinkTarget, a reader.Array) {
 }
 
 // pageIndex returns the 0-based index of the page ref, -1 if none.
-func (d *Document) pageIndex(ref reader.Ref) int {
+func (d *Document) pageIndex(ref pdf.Ref) int {
 	d.pageIdxOnce.Do(func() {
-		d.pageIdx = make(map[reader.Ref]int, d.NumPages())
+		d.pageIdx = make(map[pdf.Ref]int, d.NumPages())
 		for i := range d.NumPages() {
 			if r, ok := d.r.PageRef(i + 1); ok {
 				d.pageIdx[r] = i
@@ -236,44 +235,44 @@ func (d *Document) pageIndex(ref reader.Ref) int {
 
 // namedDest looks a named destination up in /Dests of the catalog and in
 // the /Dests name tree.
-func (d *Document) namedDest(name string) reader.Array {
+func (d *Document) namedDest(name string) pdf.Array {
 	cat, err := d.r.Catalog()
 	if err != nil {
 		return nil
 	}
-	o := d.dict(cat["Dests"])[reader.Name(name)]
-	if o == nil {
-		o = d.nameTree(d.dict(cat["Names"])["Dests"], name)
+	o := d.dict(cat.Get("Dests")).Get(pdf.Name(name))
+	if o.IsNull() {
+		o = d.nameTree(d.dict(cat.Get("Names")).Get("Dests"), name)
 	}
 	o = d.resolve(o)
-	if dd, ok := reader.ToDict(o); ok {
-		o = d.resolve(dd["D"])
+	if dd, ok := o.Dict(); ok {
+		o = d.resolve(dd.Get("D"))
 	}
-	a, _ := reader.ToArray(o)
+	a, _ := o.Array()
 	return a
 }
 
 // nameTree finds key in the name tree rooted at o.
-func (d *Document) nameTree(o reader.Object, key string) reader.Object {
+func (d *Document) nameTree(o pdf.Object, key string) pdf.Object {
 	node := d.dict(o)
-	for depth := 0; node != nil && depth < 32; depth++ {
-		if names, ok := reader.ToArray(d.resolve(node["Names"])); ok {
+	for depth := 0; !node.IsZero() && depth < 32; depth++ {
+		if names, ok := d.resolve(node.Get("Names")).Array(); ok {
 			for i := 0; i+1 < len(names); i += 2 {
-				if k, ok := reader.ToString(d.resolve(names[i])); ok && textString(reader.String(k)) == key {
+				if k, ok := d.resolve(names[i]).Str(); ok && textString(pdf.String(k)) == key {
 					return names[i+1]
 				}
 			}
-			return nil
+			return pdf.Null
 		}
-		kids, _ := reader.ToArray(d.resolve(node["Kids"]))
-		var next reader.Dict
+		kids, _ := d.resolve(node.Get("Kids")).Array()
+		var next pdf.Dict
 		for _, k := range kids {
 			kd := d.dict(k)
-			lim, _ := reader.ToArray(d.resolve(kd["Limits"]))
+			lim, _ := d.resolve(kd.Get("Limits")).Array()
 			if len(lim) == 2 {
-				lo, _ := reader.ToString(d.resolve(lim[0]))
-				hi, _ := reader.ToString(d.resolve(lim[1]))
-				if key < textString(reader.String(lo)) || key > textString(reader.String(hi)) {
+				lo, _ := d.resolve(lim[0]).Str()
+				hi, _ := d.resolve(lim[1]).Str()
+				if key < textString(pdf.String(lo)) || key > textString(pdf.String(hi)) {
 					continue
 				}
 			}
@@ -282,23 +281,23 @@ func (d *Document) nameTree(o reader.Object, key string) reader.Object {
 		}
 		node = next
 	}
-	return nil
+	return pdf.Null
 }
 
 // appearance returns the normal appearance stream of a in state (its
 // /AS, unless a widget's value says otherwise), nil if it has none (or
 // none for the state).
-func (d *Document) appearance(a *Annotation, state reader.Name) *reader.Stream {
-	ap := d.dict(a.dict["AP"])
-	if ap == nil {
+func (d *Document) appearance(a *Annotation, state pdf.Name) *pdf.Stream {
+	ap := d.dict(a.dict.Get("AP"))
+	if ap.IsZero() {
 		return nil
 	}
-	n := d.resolve(ap["N"])
-	if s, ok := reader.ToStream(n); ok {
+	n := d.resolve(ap.Get("N"))
+	if s, ok := n.Stream(); ok {
 		return s
 	}
-	if nd, ok := reader.ToDict(n); ok && state != "" {
-		return d.stream(nd[state])
+	if nd, ok := n.Dict(); ok && state != "" {
+		return d.stream(nd.Get(state))
 	}
 	return nil
 }
@@ -345,7 +344,7 @@ func (in *interp) drawAnnots(p *Page, base Matrix, scale float64, af *annotFilte
 func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64) {
 	doc := in.doc
 	var (
-		ap  *reader.Stream
+		ap  *pdf.Stream
 		gen bool
 		w   *Widget // a widget of the form, drawn with its value wv
 		wv  Value
@@ -364,12 +363,12 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 		gen = ap == nil && generated[a.Subtype]
 	}
 	if ap == nil && !gen {
-		if _, hasAP := a.dict["AP"]; !hasAP && a.Subtype != "Link" && a.Subtype != "Widget" {
+		if _, hasAP := a.dict.Lookup("AP"); !hasAP && a.Subtype != "Link" && a.Subtype != "Widget" {
 			in.st.unsupported("annot-no-ap")
 		}
 		return
 	}
-	oc, hasOC := a.dict["OC"]
+	oc, hasOC := a.dict.Lookup("OC")
 	var expr *ocExpr
 	if hasOC {
 		var bad bool
@@ -405,7 +404,7 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 	in.initState(ctm)
 	in.base = ctm
 	alpha := 1.0
-	if v, ok := doc.num(a.dict["CA"]); ok {
+	if v, ok := doc.num(a.dict.Get("CA")); ok {
 		alpha = clamp01(v)
 	}
 	g := Group{Isolated: true, Blend: BlendNormal, Alpha: unit8(alpha)}
@@ -427,15 +426,15 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 	}
 	switch {
 	case gen && w != nil:
-		var res reader.Dict
+		var res pdf.Dict
 		in.annotBuf, res = in.generateWidget(in.annotBuf[:0], w, wv)
 		in.exec(in.annotBuf, res, 1)
 	case gen:
 		in.annotBuf = in.generate(in.annotBuf[:0], a)
-		in.exec(in.annotBuf, nil, 1)
+		in.exec(in.annotBuf, pdf.Dict{}, 1)
 	default:
 		in.gs.ctm = appearanceMatrix(doc, ap, a.Rect).Mul(ctm)
-		in.form(ap, nil, 0)
+		in.form(ap, pdf.Dict{}, 0)
 	}
 	in.unwind(0)
 	in.popClips(in.gs.clips)
@@ -447,13 +446,13 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 
 // appearanceMatrix returns the matrix A of PDF 2.0, 12.5.5, which maps
 // the appearance's BBox, transformed by its Matrix, onto rect.
-func appearanceMatrix(d *Document, s *reader.Stream, rect Rect) Matrix {
-	bbox, ok := d.rect(s.Dict["BBox"])
+func appearanceMatrix(d *Document, s *pdf.Stream, rect Rect) Matrix {
+	bbox, ok := d.rect(s.Dict.Get("BBox"))
 	if !ok {
 		return Matrix{1, 0, 0, 1, rect.X0, rect.Y0}
 	}
 	fm := identity
-	if a, ok := reader.ToArray(d.resolve(s.Dict["Matrix"])); ok && len(a) == 6 {
+	if a, ok := d.resolve(s.Dict.Get("Matrix")).Array(); ok && len(a) == 6 {
 		var m Matrix
 		valid := true
 		for i, o := range a {

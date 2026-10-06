@@ -9,6 +9,7 @@ require (
 
 require (
 	github.com/ajroetker/go-highway v0.0.12 // indirect
+	github.com/andybalholm/brotli v1.2.6 // indirect
 	github.com/anthonynsimon/bild v0.14.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -19,8 +20,6 @@ require (
 	github.com/go-images/jpeg2000 v0.13.2 // indirect
 	github.com/go-opentype/fonts v0.10.0 // indirect
 	github.com/go-opentype/opentype v0.13.0 // indirect
-	github.com/go-pdfkit/pdffont v0.3.1 // indirect
-	github.com/go-pdfkit/reader v0.6.0 // indirect
 	github.com/go-text/render v0.2.1 // indirect
 	github.com/go-text/typesetting v0.3.4 // indirect
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect

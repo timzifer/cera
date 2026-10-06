@@ -6,7 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
+	"github.com/timzifer/cera/internal/pdfsyntax"
 )
 
 // render prints the operations of a stream in a canonical form.
@@ -182,18 +183,39 @@ func TestNumberPrecision(t *testing.T) {
 	}
 }
 
-// TestAgreesWithReader compares operators and numeric operands with
-// go-pdfkit/reader on well-formed content.
+// referenceOps splits well-formed content into operations with the file
+// reader's object parser: every run of regular characters that is not an
+// object is an operator.
+func referenceOps(t *testing.T, data []byte) (ops []string, operands [][]pdf.Object) {
+	var cur []pdf.Object
+	for p := pdfsyntax.SkipSpace(data, 0); p < len(data); p = pdfsyntax.SkipSpace(data, p) {
+		if o, n, err := pdf.ParseObject(data[p:]); err == nil {
+			cur = append(cur, o)
+			p += n
+			continue
+		}
+		q := p
+		for q < len(data) && pdfsyntax.IsRegular(data[q]) {
+			q++
+		}
+		if q == p {
+			t.Fatalf("no object or operator at %d", p)
+		}
+		ops, operands = append(ops, string(data[p:q])), append(operands, cur)
+		cur, p = nil, q
+	}
+	return ops, operands
+}
+
+// TestAgreesWithReader compares operators and numeric operands with the
+// object parser of internal/pdf on well-formed content.
 func TestAgreesWithReader(t *testing.T) {
 	data := "q 0.5 0 0 -0.5 10.25 800 cm 0 0 1 RG 1.5 w [2 1] 0 d 10 10 m 20.5 30 l 1 2 3 4 5 6 c h S Q " +
 		"BT /F1 12 Tf 1 0 0 1 72 700 Tm [(Hello) -250 (World)] TJ ET /GS0 gs /Im1 Do " +
 		"/P <</MCID 0>> BDC 0 0 100 100 re W* n EMC 0.1 0.2 0.3 0.4 k"
 	var s Scanner
 	s.Reset([]byte(data))
-	ops, err := reader.Operations([]byte(data))
-	if err != nil {
-		t.Fatal(err)
-	}
+	ops, operands := referenceOps(t, []byte(data))
 	for i := 0; ; i++ {
 		op, ok := s.Next()
 		if !ok {
@@ -202,11 +224,11 @@ func TestAgreesWithReader(t *testing.T) {
 			}
 			return
 		}
-		if i >= len(ops) || string(op) != ops[i].Operator || s.Len() != len(ops[i].Operands) {
+		if i >= len(ops) || string(op) != ops[i] || s.Len() != len(operands[i]) {
 			t.Fatalf("operation %d: %q with %d operands", i, op, s.Len())
 		}
-		for j, o := range ops[i].Operands {
-			if f, ok := reader.ToFloat(o); ok && s.Arg(j).Num != f {
+		for j, o := range operands[i] {
+			if f, ok := o.Float(); ok && s.Arg(j).Num != f {
 				t.Errorf("operation %d operand %d: %v, reader %v", i, j, s.Arg(j).Num, f)
 			}
 		}
@@ -280,24 +302,6 @@ func BenchmarkScan(b *testing.B) {
 	var s Scanner
 	for b.Loop() {
 		s.Reset(data)
-		for {
-			if _, ok := s.Next(); !ok {
-				break
-			}
-		}
-	}
-}
-
-func BenchmarkReaderScan(b *testing.B) {
-	var c strings.Builder
-	for i := range 20000 {
-		fmt.Fprintf(&c, "%.2f %.2f m %.2f %.2f l S\n", float64(i%1000)*1.19, float64(i%800)*1.05, float64(i%900)*1.3, float64(i%700)*0.9)
-	}
-	data := []byte(c.String())
-	b.SetBytes(int64(len(data)))
-	b.ReportAllocs()
-	for b.Loop() {
-		s := reader.NewContentScanner(data)
 		for {
 			if _, ok := s.Next(); !ok {
 				break

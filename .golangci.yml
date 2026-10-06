@@ -17,6 +17,8 @@ linters:
         - os.Remove
         - (*compress/zlib.Writer).Write
         - (*compress/zlib.Writer).Close
+        - (*github.com/andybalholm/brotli.Writer).Write
+        - (*github.com/andybalholm/brotli.Writer).Close
         - (*encoding/csv.Writer).Write
         - (*flag.FlagSet).Parse # ExitOnError
     misspell:

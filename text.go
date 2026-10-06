@@ -1,7 +1,7 @@
 package cera
 
 import (
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 	"github.com/timzifer/stilus"
 
 	"github.com/timzifer/cera/internal/content"
@@ -61,7 +61,7 @@ func (t textObject) keep() textObject {
 var identity = stilus.Identity
 
 // textOp runs the text operators.
-func (in *interp) textOp(sc *content.Scanner, op []byte, res reader.Dict, depth int) {
+func (in *interp) textOp(sc *content.Scanner, op []byte, res pdf.Dict, depth int) {
 	var v [6]float64
 	ts := &in.gs.text
 	tx := &in.text
@@ -115,7 +115,7 @@ func (in *interp) textOp(sc *content.Scanner, op []byte, res reader.Dict, depth 
 		}
 		ts.size = v[0]
 		ts.font = nil
-		if o := in.doc.dict(res["Font"])[reader.Name(sc.Text(name))]; o != nil {
+		if o := in.doc.dict(res.Get("Font")).Get(pdf.Name(sc.Text(name))); !o.IsNull() {
 			ts.font = in.doc.font(o)
 		}
 		if ts.font == nil {
@@ -191,7 +191,7 @@ func (in *interp) nextLine(x, y float64) {
 	in.text.tm = in.text.tlm
 }
 
-func (in *interp) showOperand(sc *content.Scanner, o *content.Operand, res reader.Dict, depth int) {
+func (in *interp) showOperand(sc *content.Scanner, o *content.Operand, res pdf.Dict, depth int) {
 	if o == nil || (o.Kind != content.String && o.Kind != content.HexString) {
 		in.st.Errors++
 		return
@@ -201,7 +201,7 @@ func (in *interp) showOperand(sc *content.Scanner, o *content.Operand, res reade
 
 // show adds the glyphs of one string to the run and moves the pen past
 // them. Type 3 glyphs run at once.
-func (in *interp) show(s []byte, res reader.Dict, depth int) {
+func (in *interp) show(s []byte, res pdf.Dict, depth int) {
 	ts := &in.gs.text
 	tx := &in.text
 	f := ts.font
@@ -422,7 +422,7 @@ func appendTransformed(dst, p *Path, m Matrix) {
 }
 
 // showType3 runs the glyph procedures of a Type 3 font for s.
-func (in *interp) showType3(f *Font, s []byte, res reader.Dict, depth int) {
+func (in *interp) showType3(f *Font, s []byte, res pdf.Dict, depth int) {
 	ts := &in.gs.text
 	tx := &in.text
 	fm := Matrix(f.pdf.FontMatrix())
@@ -466,7 +466,7 @@ func (in *interp) showType3(f *Font, s []byte, res reader.Dict, depth int) {
 // type3Glyph runs the glyph procedure of code with glyph space mapped to
 // user space by mu, like a form XObject. For a clip (see type3Clip) the
 // text it shows is filled, whatever the mode that showed the glyph.
-func (in *interp) type3Glyph(f *Font, code int, mu Matrix, parent reader.Dict, depth int, clip bool) {
+func (in *interp) type3Glyph(f *Font, code int, mu Matrix, parent pdf.Dict, depth int, clip bool) {
 	tx := &in.text
 	if depth >= maxFormDepth || len(in.stack) >= maxStateDepth {
 		in.st.unsupported("nesting-budget")
@@ -483,7 +483,7 @@ func (in *interp) type3Glyph(f *Font, code int, mu Matrix, parent reader.Dict, d
 		return
 	}
 	res := f.pdf.Type3Resources()
-	if res == nil {
+	if res.IsZero() {
 		res = parent
 	}
 	in.st.Glyphs++
@@ -521,8 +521,8 @@ func (in *interp) charProc(f *Font, code int) []byte {
 		return data
 	}
 	var data []byte
-	if s, ok := reader.ToStream(in.doc.resolve(f.pdf.CharProcs()[reader.Name(name)])); ok {
-		dec := in.doc.r.DecodeStreamRecovering(s)
+	if s, ok := (in.doc.resolve(f.pdf.CharProcs().Get(pdf.Name(name)))).Stream(); ok {
+		dec := in.doc.r.Decode(s)
 		if dec.Recovered {
 			in.st.Errors++
 		}

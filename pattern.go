@@ -6,7 +6,7 @@ import (
 	"image/color"
 	"math"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 	"github.com/timzifer/stilus"
 
 	"github.com/timzifer/cera/internal/content"
@@ -36,7 +36,7 @@ type tilingPattern struct {
 	bbox         Rect
 	xstep, ystep float64
 	content      []byte
-	res          reader.Dict
+	res          pdf.Dict
 }
 
 // Tile is one step of a tiling pattern, XStep × YStep in pattern space,
@@ -57,8 +57,8 @@ type patternPaint struct {
 	m Matrix
 }
 
-func (d *Document) pattern(o reader.Object, res reader.Dict) *patternEntry {
-	ref, isRef := o.(reader.Ref)
+func (d *Document) pattern(o pdf.Object, res pdf.Dict) *patternEntry {
+	ref, isRef := o.Ref()
 	if isRef {
 		d.shMu.Lock()
 		e := d.patterns[ref]
@@ -71,7 +71,7 @@ func (d *Document) pattern(o reader.Object, res reader.Dict) *patternEntry {
 	if e != nil && isRef {
 		d.shMu.Lock()
 		if d.patterns == nil {
-			d.patterns = map[reader.Ref]*patternEntry{}
+			d.patterns = map[pdf.Ref]*patternEntry{}
 		}
 		d.patterns[ref] = e
 		d.shMu.Unlock()
@@ -79,45 +79,45 @@ func (d *Document) pattern(o reader.Object, res reader.Dict) *patternEntry {
 	return e
 }
 
-func (d *Document) readPattern(o reader.Object, res reader.Dict) *patternEntry {
-	dict, ok := reader.ToDict(o)
-	if s, isStream := reader.ToStream(o); isStream {
+func (d *Document) readPattern(o pdf.Object, res pdf.Dict) *patternEntry {
+	dict, ok := o.Dict()
+	if s, isStream := o.Stream(); isStream {
 		dict, ok = s.Dict, true
 	}
 	if !ok {
 		return nil
 	}
 	e := &patternEntry{matrix: identity}
-	if m := d.floats(dict["Matrix"]); len(m) == 6 {
+	if m := d.floats(dict.Get("Matrix")); len(m) == 6 {
 		e.matrix = Matrix(m)
 	}
-	switch t, _ := d.integer(dict["PatternType"]); t {
+	switch t, _ := d.integer(dict.Get("PatternType")); t {
 	case 1:
-		st, isStream := reader.ToStream(o)
+		st, isStream := o.Stream()
 		if !isStream {
 			return nil
 		}
 		tp := &tilingPattern{}
-		pt, _ := d.integer(dict["PaintType"])
+		pt, _ := d.integer(dict.Get("PaintType"))
 		tp.colored = pt != 2
 		var ok1, ok2, ok3 bool
-		tp.bbox, ok1 = d.rect(dict["BBox"])
-		tp.xstep, ok2 = d.num(dict["XStep"])
-		tp.ystep, ok3 = d.num(dict["YStep"])
+		tp.bbox, ok1 = d.rect(dict.Get("BBox"))
+		tp.xstep, ok2 = d.num(dict.Get("XStep"))
+		tp.ystep, ok3 = d.num(dict.Get("YStep"))
 		if !ok1 || !ok2 || !ok3 || tp.xstep == 0 || tp.ystep == 0 {
 			return nil
 		}
-		if tp.res = d.dict(dict["Resources"]); tp.res == nil {
+		if tp.res = d.dict(dict.Get("Resources")); tp.res.IsZero() {
 			tp.res = res
 		}
-		tp.content = d.r.DecodeStreamRecovering(st).Data
+		tp.content = d.r.Decode(st).Data
 		e.tiling = tp
 	case 2:
-		sub := d.dict(dict["Resources"])
-		if sub == nil {
+		sub := d.dict(dict.Get("Resources"))
+		if sub.IsZero() {
 			sub = res
 		}
-		sh, ok := dict["Shading"]
+		sh, ok := dict.Lookup("Shading")
 		if !ok {
 			return nil
 		}
@@ -130,10 +130,10 @@ func (d *Document) readPattern(o reader.Object, res reader.Dict) *patternEntry {
 
 // setPattern sets the pattern named by the last operand as the colour of
 // dst, in the space of the content stream running.
-func (in *interp) setPattern(sc *content.Scanner, res reader.Dict, dst *patternPaint) {
+func (in *interp) setPattern(sc *content.Scanner, res pdf.Dict, dst *patternPaint) {
 	*dst = patternPaint{}
 	o := in.lookupRef(res, "Pattern", sc, sc.Last())
-	if o == nil {
+	if o.IsNull() {
 		in.st.Errors++
 		return
 	}
@@ -198,9 +198,9 @@ func (in *interp) paintPattern(stroke bool, box image.Rectangle) {
 }
 
 // shadingOp runs sh: the named shading painted over the clip.
-func (in *interp) shadingOp(sc *content.Scanner, res reader.Dict) {
+func (in *interp) shadingOp(sc *content.Scanner, res pdf.Dict) {
 	o := in.lookupRef(res, "Shading", sc, sc.Last())
-	if o == nil {
+	if o.IsNull() {
 		in.st.Errors++
 		return
 	}

@@ -13,6 +13,7 @@ faster than MuPDF on all cores), ≈ 0 allocations per page in steady state,
 - Text, images, transparency, shadings, patterns, colour management
 - Optional content (layers), annotations, interactive forms
 - Display list per page: parse once, draw only the visible region, on all cores
+- Own lock-free PDF reader: pages of one document render concurrently
 - Every bound on work and memory budgeted; damaged input draws less, never fails
 
 ## Install
@@ -56,4 +57,6 @@ go run ./cmd/cera -dpi 150 -o 'page-%d.png' input.pdf
 
 ## License
 
-MIT
+MIT. `internal/pdf` and `internal/pdffont` contain code ported from
+[go-pdfkit](https://github.com/go-pdfkit) under the BSD 3-Clause License;
+see their `LICENSE-go-pdfkit` files.

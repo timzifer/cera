@@ -5,14 +5,14 @@ import (
 	"sync/atomic"
 
 	"github.com/go-opentype/opentype"
-	"github.com/go-pdfkit/pdffont"
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
+	"github.com/timzifer/cera/internal/pdffont"
 
 	"github.com/timzifer/cera/internal/cmap"
 	"github.com/timzifer/cera/internal/stdfont"
 )
 
-// Fonts split the work as the spec's layers do: go-pdfkit/pdffont reads what
+// Fonts split the work as the spec's layers do: internal/pdffont reads what
 // the document says about a font (codes, widths, encodings, ToUnicode), and
 // go-opentype/opentype reads the embedded program (TrueType, CFF, Type 1)
 // that the outlines come from. cera keeps each outline once per font, as a
@@ -86,6 +86,11 @@ type Font struct {
 	// Paths are never modified once stored, so devices may read them from
 	// any goroutine.
 	outlines map[opentype.GlyphIndex]*Path
+	// builtinBase says the codes of a simple font are the program's own:
+	// a symbolic Type 1 or CFF program and no /Encoding at all, so the
+	// built-in encoding comes before StandardEncoding (PDF 2.0 9.6.5.2,
+	// as PDFium and pdf.js read it).
+	builtinBase bool
 	// hasToUnicode says the font dictionary has a ToUnicode map.
 	hasToUnicode bool
 	// gids caches the glyph index of each code of a simple font (-1 = not
@@ -141,11 +146,11 @@ func (f *Font) composite() bool { return f.pdf.Kind() == pdffont.Composite }
 
 // font returns the font a font resource stands for. Fonts reached through
 // an indirect reference are loaded once per document.
-func (d *Document) font(o reader.Object) *Font {
-	if fr, ok := o.(*fontRes); ok {
-		return fr.f
+func (d *Document) font(o pdf.Object) *Font {
+	ref, isRef := o.Ref()
+	if isRef && ref == helvRef {
+		return d.helvetica()
 	}
-	ref, isRef := o.(reader.Ref)
 	if isRef {
 		d.fontMu.Lock()
 		f, ok := d.fonts[ref]
@@ -156,13 +161,13 @@ func (d *Document) font(o reader.Object) *Font {
 	}
 	dict := d.dict(o)
 	var f *Font
-	if dict != nil {
+	if !dict.IsZero() {
 		f = d.loadFont(dict)
 	}
 	if isRef {
 		d.fontMu.Lock()
 		if d.fonts == nil {
-			d.fonts = map[reader.Ref]*Font{}
+			d.fonts = map[pdf.Ref]*Font{}
 		}
 		if g, ok := d.fonts[ref]; ok {
 			f = g // loaded concurrently
@@ -174,19 +179,19 @@ func (d *Document) font(o reader.Object) *Font {
 	return f
 }
 
-func (d *Document) loadFont(dict reader.Dict) *Font {
+func (d *Document) loadFont(dict pdf.Dict) *Font {
 	pf := pdffont.Read(d.r, dict)
 	f := &Font{id: fontIDs.Add(1), pdf: pf, ascent: 0.8, descent: -0.2}
 	for i := range f.gids {
 		f.gids[i] = -1
 	}
-	if n, ok := d.name(dict["BaseFont"]); ok {
+	if n, ok := d.name(dict.Get("BaseFont")); ok {
 		f.name = string(n)
 		if len(f.name) > 7 && f.name[6] == '+' {
 			f.name = f.name[7:]
 		}
 	}
-	f.hasToUnicode = d.resolve(dict["ToUnicode"]) != nil
+	f.hasToUnicode = !d.resolve(dict.Get("ToUnicode")).IsNull()
 	if f.composite() {
 		f.readCMap(d, dict)
 	}
@@ -211,6 +216,10 @@ func (d *Document) loadFont(dict reader.Dict) *Font {
 	}
 	if f.program == nil {
 		f.substitute(d)
+	}
+	if f.program != nil && !f.substituted && !f.composite() && f.pdf.Symbolic() && !isTrueType(f.program) &&
+		d.resolve(dict.Get("Encoding")).IsNull() {
+		f.builtinBase = true
 	}
 	if f.vertical && f.program != nil {
 		f.gsub = f.program.GSUB()
@@ -256,7 +265,7 @@ func (f *Font) lineMetrics(p *opentype.Font) {
 // readProgram decodes an embedded font program. FontFile2 is TrueType,
 // FontFile a Type 1 program, FontFile3 a bare CFF program or a whole
 // OpenType font.
-func readProgram(key reader.Name, data []byte) (*opentype.Font, error) {
+func readProgram(key pdf.Name, data []byte) (*opentype.Font, error) {
 	switch key {
 	case "FontFile":
 		return opentype.ParseType1(data)
@@ -413,6 +422,11 @@ func (f *Font) simpleGlyphIndex(code int) opentype.GlyphIndex {
 			return opentype.GlyphIndex(g.GID)
 		}
 		return 0
+	}
+	if f.builtinBase {
+		if gid, ok := p.GlyphIndexByCode(byte(code)); ok && gid != 0 {
+			return gid
+		}
 	}
 	if f.pdf.Symbolic() {
 		if gid, ok := f.byChar(code); ok {

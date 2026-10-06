@@ -3,14 +3,14 @@ module github.com/timzifer/cera
 go 1.26.4
 
 require (
+	github.com/andybalholm/brotli v1.2.6
 	github.com/go-images/jpeg v0.2.0
 	github.com/go-images/jpeg2000 v0.13.2
 	github.com/go-opentype/fonts v0.10.0
 	github.com/go-opentype/opentype v0.13.0
-	github.com/go-pdfkit/pdffont v0.3.1
-	github.com/go-pdfkit/reader v0.6.0
 	github.com/tannevaled/gobig2 v0.2.0
 	github.com/timzifer/stilus v0.7.1-0.20261004051204-eaa0881d5596
+	golang.org/x/text v0.34.0
 )
 
 require (

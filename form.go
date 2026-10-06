@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 )
 
 // Interactive forms (PDF 2.0, 12.7): the fields of the catalog's
@@ -82,7 +82,7 @@ type Form struct {
 	byName map[string]*Field
 	pages  map[int][]*Widget // widgets by page, in /Annots order
 	byAnn  map[annotPlace]*Widget
-	dr     reader.Dict // default resources
+	dr     pdf.Dict // default resources
 }
 
 // Option is an entry of a choice field: the value exported and the text
@@ -142,9 +142,9 @@ type Widget struct {
 	OnState    string
 	Appearance Appearance
 
-	dict    reader.Dict
-	fontRes reader.Name // the /DA font's resource name
-	oc      *ocExpr     // the /OC membership, nil if always visible
+	dict    pdf.Dict
+	fontRes pdf.Name // the /DA font's resource name
+	oc      *ocExpr  // the /OC membership, nil if always visible
 }
 
 // BorderStyle is the style of a widget's border (/BS /S).
@@ -234,13 +234,13 @@ func (f *Form) widget(page, index int) *Widget {
 // inherited holds the inheritable entries of the field tree (PDF 2.0,
 // table 226 and 12.7.4).
 type inherited struct {
-	ft     reader.Name
+	ft     pdf.Name
 	ff     FieldFlags
-	v, dv  reader.Object
+	v, dv  pdf.Object
 	da     string
 	q      int
 	maxLen int
-	opt    reader.Object
+	opt    pdf.Object
 	ti     int
 	aa     bool
 }
@@ -249,8 +249,8 @@ type inherited struct {
 type formReader struct {
 	d     *Document
 	f     *Form
-	seen  map[reader.Ref]bool
-	place map[reader.Ref]annotPlace
+	seen  map[pdf.Ref]bool
+	place map[pdf.Ref]annotPlace
 }
 
 func (d *Document) readForm() *Form {
@@ -258,26 +258,23 @@ func (d *Document) readForm() *Form {
 	if err != nil {
 		return nil
 	}
-	af := d.dict(cat["AcroForm"])
-	if af == nil {
+	af := d.dict(cat.Get("AcroForm"))
+	if af.IsZero() {
 		return nil
 	}
-	fields, _ := reader.ToArray(d.resolve(af["Fields"]))
+	fields, _ := d.resolve(af.Get("Fields")).Array()
 	f := &Form{
-		NeedAppearances: d.boolean(af["NeedAppearances"]),
-		XFA:             d.resolve(af["XFA"]) != nil,
+		NeedAppearances: d.boolean(af.Get("NeedAppearances")),
+		XFA:             !d.resolve(af.Get("XFA")).IsNull(),
 		byName:          map[string]*Field{},
 		pages:           map[int][]*Widget{},
 		byAnn:           map[annotPlace]*Widget{},
-		dr:              d.dict(af["DR"]),
-	}
-	if _, isNull := d.resolve(af["XFA"]).(reader.Null); isNull {
-		f.XFA = false
+		dr:              d.dict(af.Get("DR")),
 	}
 	d.xfa = f.XFA
-	fr := &formReader{d: d, f: f, seen: map[reader.Ref]bool{}, place: d.annotPlaces()}
-	inh := inherited{da: string(stringOf(d, af["DA"]))}
-	if q, ok := d.integer(af["Q"]); ok {
+	fr := &formReader{d: d, f: f, seen: map[pdf.Ref]bool{}, place: d.annotPlaces()}
+	inh := inherited{da: string(stringOf(d, af.Get("DA")))}
+	if q, ok := d.integer(af.Get("Q")); ok {
 		inh.q = q
 	}
 	for _, o := range fields {
@@ -294,16 +291,16 @@ func (d *Document) readForm() *Form {
 
 // annotPlaces finds every annotation of the document that is an indirect
 // object: the widgets of fields are found there, whatever their /P says.
-func (d *Document) annotPlaces() map[reader.Ref]annotPlace {
-	m := map[reader.Ref]annotPlace{}
+func (d *Document) annotPlaces() map[pdf.Ref]annotPlace {
+	m := map[pdf.Ref]annotPlace{}
 	for i := range d.NumPages() {
 		pd, err := d.r.Page(i + 1)
 		if err != nil {
 			continue
 		}
-		arr, _ := reader.ToArray(d.resolve(pd["Annots"]))
+		arr, _ := d.resolve(pd.Get("Annots")).Array()
 		for j, o := range arr {
-			if ref, ok := o.(reader.Ref); ok {
+			if ref, ok := o.Ref(); ok {
 				if _, dup := m[ref]; !dup {
 					m[ref] = annotPlace{i, j}
 				}
@@ -313,74 +310,74 @@ func (d *Document) annotPlaces() map[reader.Ref]annotPlace {
 	return m
 }
 
-func stringOf(d *Document, o reader.Object) []byte {
-	b, _ := reader.ToString(d.resolve(o))
+func stringOf(d *Document, o pdf.Object) []byte {
+	b, _ := d.resolve(o).Str()
 	return b
 }
 
 // walk reads the field node o, whose parent is called parent.
-func (fr *formReader) walk(o reader.Object, parent string, inh inherited, depth int) {
+func (fr *formReader) walk(o pdf.Object, parent string, inh inherited, depth int) {
 	d := fr.d
 	if depth > maxFieldDepth {
 		return
 	}
-	if ref, ok := o.(reader.Ref); ok {
+	if ref, ok := o.Ref(); ok {
 		if fr.seen[ref] {
 			return
 		}
 		fr.seen[ref] = true
 	}
 	node := d.dict(o)
-	if node == nil {
+	if node.IsZero() {
 		return
 	}
-	if n, ok := d.name(node["FT"]); ok {
+	if n, ok := d.name(node.Get("FT")); ok {
 		inh.ft = n
 	}
-	if v, ok := d.integer(node["Ff"]); ok {
+	if v, ok := d.integer(node.Get("Ff")); ok {
 		inh.ff = FieldFlags(uint32(v))
 	}
-	if v, ok := node["V"]; ok {
+	if v, ok := node.Lookup("V"); ok {
 		inh.v = v
 	}
-	if v, ok := node["DV"]; ok {
+	if v, ok := node.Lookup("DV"); ok {
 		inh.dv = v
 	}
-	if s, ok := reader.ToString(d.resolve(node["DA"])); ok {
+	if s, ok := d.resolve(node.Get("DA")).Str(); ok {
 		inh.da = string(s)
 	}
-	if v, ok := d.integer(node["Q"]); ok {
+	if v, ok := d.integer(node.Get("Q")); ok {
 		inh.q = v
 	}
-	if v, ok := d.integer(node["MaxLen"]); ok {
+	if v, ok := d.integer(node.Get("MaxLen")); ok {
 		inh.maxLen = v
 	}
-	if v, ok := node["Opt"]; ok {
+	if v, ok := node.Lookup("Opt"); ok {
 		inh.opt = v
 	}
-	if v, ok := d.integer(node["TI"]); ok {
+	if v, ok := d.integer(node.Get("TI")); ok {
 		inh.ti = v
 	}
-	if d.dict(node["AA"]) != nil {
+	if !d.dict(node.Get("AA")).IsZero() {
 		inh.aa = true
 	}
 	name := parent
-	if t := textString(d.resolve(node["T"])); t != "" {
+	if t := textString(d.resolve(node.Get("T"))); t != "" {
 		if name != "" {
 			name += "."
 		}
 		name += t
 	}
 
-	kids, _ := reader.ToArray(d.resolve(node["Kids"]))
-	var widgets []reader.Object
+	kids, _ := d.resolve(node.Get("Kids")).Array()
+	var widgets []pdf.Object
 	fieldKids := false
 	for _, k := range kids {
 		kd := d.dict(k)
-		if kd == nil {
+		if kd.IsZero() {
 			continue
 		}
-		if _, hasT := kd["T"]; hasT || kd["Kids"] != nil {
+		if _, hasT := kd.Lookup("T"); hasT || !kd.Get("Kids").IsNull() {
 			fieldKids = true
 			continue
 		}
@@ -393,17 +390,17 @@ func (fr *formReader) walk(o reader.Object, parent string, inh inherited, depth 
 		return
 	}
 	if len(kids) == 0 {
-		widgets = []reader.Object{o} // the field is its own widget
+		widgets = []pdf.Object{o} // the field is its own widget
 	}
 	fr.field(node, name, inh, widgets)
 }
 
 // field adds the terminal field node with its widgets.
-func (fr *formReader) field(node reader.Dict, name string, inh inherited, widgets []reader.Object) {
+func (fr *formReader) field(node pdf.Dict, name string, inh inherited, widgets []pdf.Object) {
 	d := fr.d
 	f := &Field{
 		Name:       name,
-		Alt:        textString(d.resolve(node["TU"])),
+		Alt:        textString(d.resolve(node.Get("TU"))),
 		Flags:      inh.ff,
 		MaxLen:     max(inh.maxLen, 0),
 		TopIndex:   max(inh.ti, 0),
@@ -437,7 +434,7 @@ func (fr *formReader) field(node reader.Dict, name string, inh inherited, widget
 	f.Options = fr.options(inh.opt)
 
 	for _, o := range widgets {
-		ref, ok := o.(reader.Ref)
+		ref, ok := o.Ref()
 		if !ok {
 			continue
 		}
@@ -449,7 +446,7 @@ func (fr *formReader) field(node reader.Dict, name string, inh inherited, widget
 		if w == nil {
 			continue
 		}
-		if d.dict(w.dict["AA"]) != nil {
+		if !d.dict(w.dict.Get("AA")).IsZero() {
 			f.HasActions = true
 		}
 		f.Widgets = append(f.Widgets, w)
@@ -473,13 +470,13 @@ func (fr *formReader) field(node reader.Dict, name string, inh inherited, widget
 }
 
 // options reads /Opt: strings, or [export text] pairs.
-func (fr *formReader) options(o reader.Object) []Option {
+func (fr *formReader) options(o pdf.Object) []Option {
 	d := fr.d
-	arr, _ := reader.ToArray(d.resolve(o))
+	arr, _ := d.resolve(o).Array()
 	var opts []Option
 	for _, e := range arr {
 		e = d.resolve(e)
-		if pair, ok := reader.ToArray(e); ok {
+		if pair, ok := e.Array(); ok {
 			if len(pair) < 2 {
 				continue
 			}
@@ -493,36 +490,36 @@ func (fr *formReader) options(o reader.Object) []Option {
 }
 
 // widget reads the widget annotation wd of f at pl.
-func (fr *formReader) widget(f *Field, wd reader.Dict, pl annotPlace) *Widget {
+func (fr *formReader) widget(f *Field, wd pdf.Dict, pl annotPlace) *Widget {
 	d := fr.d
-	r, ok := d.rect(wd["Rect"])
+	r, ok := d.rect(wd.Get("Rect"))
 	if !ok {
 		return nil
 	}
 	w := &Widget{Field: f, Page: pl.page, Annotation: pl.index, Rect: r, dict: wd}
-	if v, ok := d.integer(wd["F"]); ok {
+	if v, ok := d.integer(wd.Get("F")); ok {
 		w.Flags = AnnotFlags(uint32(v))
 	}
-	mk := d.dict(wd["MK"])
-	if v, ok := d.integer(mk["R"]); ok {
+	mk := d.dict(wd.Get("MK"))
+	if v, ok := d.integer(mk.Get("R")); ok {
 		w.Rotation = ((v/90)%4 + 4) % 4 * 90
 	}
 	if f.Type == FieldCheckBox || f.Type == FieldRadio {
 		w.OnState = onState(d, wd)
 	}
-	if oc, ok := wd["OC"]; ok {
+	if oc, ok := wd.Lookup("OC"); ok {
 		w.oc, _ = d.membership(oc)
 	}
 
 	a := &w.Appearance
 	da := f.da
-	if s, ok := reader.ToString(d.resolve(wd["DA"])); ok {
+	if s, ok := d.resolve(wd.Get("DA")).Str(); ok {
 		da = string(s)
 	}
 	pda := parseDA(da)
 	w.fontRes, a.FontSize, a.TextColor = pda.font, pda.size, pda.color
-	if fd := d.dict(d.dict(fr.f.dr["Font"])[pda.font]); fd != nil {
-		if n, ok := d.name(fd["BaseFont"]); ok {
+	if fd := d.dict(d.dict(fr.f.dr.Get("Font")).Get(pda.font)); !fd.IsZero() {
+		if n, ok := d.name(fd.Get("BaseFont")); ok {
 			a.FontName = string(n)
 			if len(a.FontName) > 7 && a.FontName[6] == '+' {
 				a.FontName = a.FontName[7:]
@@ -530,21 +527,21 @@ func (fr *formReader) widget(f *Field, wd reader.Dict, pl annotPlace) *Widget {
 		}
 	}
 	q := f.q
-	if v, ok := d.integer(wd["Q"]); ok {
+	if v, ok := d.integer(wd.Get("Q")); ok {
 		q = v
 	}
 	if q >= 0 && q <= 2 {
 		a.Align = Align(q)
 	}
-	if c, ok := d.annotColor(mk["BG"]); ok && len(c) > 0 {
+	if c, ok := d.annotColor(mk.Get("BG")); ok && len(c) > 0 {
 		a.Background = rgbaOf(c)
 	}
-	if c, ok := d.annotColor(mk["BC"]); ok && len(c) > 0 {
+	if c, ok := d.annotColor(mk.Get("BC")); ok && len(c) > 0 {
 		a.Border = rgbaOf(c)
 	}
 	a.BorderWidth, _ = d.border(wd)
-	if bs := d.dict(wd["BS"]); bs != nil {
-		switch s, _ := d.name(bs["S"]); s {
+	if bs := d.dict(wd.Get("BS")); !bs.IsZero() {
+		switch s, _ := d.name(bs.Get("S")); s {
 		case "D":
 			a.BorderStyle = BorderDashed
 		case "B":
@@ -555,17 +552,17 @@ func (fr *formReader) widget(f *Field, wd reader.Dict, pl annotPlace) *Widget {
 			a.BorderStyle = BorderUnderline
 		}
 	}
-	a.Caption = textString(d.resolve(mk["CA"]))
+	a.Caption = textString(d.resolve(mk.Get("CA")))
 	return w
 }
 
 // onState returns the name of the appearance of a button that is not Off.
-func onState(d *Document, wd reader.Dict) string {
-	ap := d.dict(wd["AP"])
-	for _, key := range [2]reader.Name{"N", "D"} {
-		states := d.dict(ap[key])
-		names := make([]string, 0, len(states))
-		for k := range states {
+func onState(d *Document, wd pdf.Dict) string {
+	ap := d.dict(wd.Get("AP"))
+	for _, key := range [2]pdf.Name{"N", "D"} {
+		states := d.dict(ap.Get(key))
+		names := make([]string, 0, states.Len())
+		for k := range states.All() {
 			if k != "Off" {
 				names = append(names, string(k))
 			}
@@ -575,41 +572,38 @@ func onState(d *Document, wd reader.Dict) string {
 			return names[0]
 		}
 	}
-	if as, ok := d.name(wd["AS"]); ok && as != "Off" {
+	if as, ok := d.name(wd.Get("AS")); ok && as != "Off" {
 		return string(as)
 	}
 	return "Yes"
 }
 
 // value reads a /V or /DV entry of f.
-func (fr *formReader) value(f *Field, o reader.Object) Value {
+func (fr *formReader) value(f *Field, o pdf.Object) Value {
 	d := fr.d
 	o = d.resolve(o)
-	if o == nil {
-		return Value{}
-	}
-	if _, isNull := o.(reader.Null); isNull {
+	if o.IsNull() {
 		return Value{}
 	}
 	switch f.Type {
 	case FieldText:
-		if s, ok := o.(*reader.Stream); ok {
-			if b, _, err := d.r.DecodeStream(s); err == nil {
-				return TextValue(textString(reader.String(b)))
+		if s, ok := o.Stream(); ok {
+			if b, _, err := d.r.DecodeStrict(s); err == nil {
+				return TextValue(textString(pdf.String(b)))
 			}
 			return Value{}
 		}
 		return TextValue(textString(o))
 	case FieldCheckBox, FieldRadio:
-		if n, ok := reader.ToName(o); ok {
+		if n, ok := o.Name(); ok {
 			return StateValue(string(n))
 		}
-		if s, ok := reader.ToString(o); ok {
-			return StateValue(textString(reader.String(s)))
+		if s, ok := o.Str(); ok {
+			return StateValue(textString(pdf.String(s)))
 		}
 	case FieldComboBox, FieldListBox:
 		var texts []string
-		if arr, ok := reader.ToArray(o); ok {
+		if arr, ok := o.Array(); ok {
 			for _, e := range arr {
 				texts = append(texts, textString(d.resolve(e)))
 			}
@@ -666,7 +660,7 @@ func (f *Field) empty() Value {
 
 // da is a parsed default appearance string.
 type da struct {
-	font  reader.Name
+	font  pdf.Name
 	size  float64
 	color color.RGBA
 	comps []float64 // the colour as /DA gives it
@@ -676,11 +670,11 @@ type da struct {
 func parseDA(s string) da {
 	out := da{color: color.RGBA{0, 0, 0, 255}, comps: []float64{0}}
 	var nums []float64
-	var lastName reader.Name
+	var lastName pdf.Name
 	for _, tok := range strings.Fields(s) {
 		switch {
 		case strings.HasPrefix(tok, "/"):
-			lastName = reader.Name(tok[1:])
+			lastName = pdf.Name(tok[1:])
 			nums = nums[:0]
 		case tok == "Tf":
 			if len(nums) >= 1 {

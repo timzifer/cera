@@ -10,8 +10,8 @@ import (
 	"github.com/go-opentype/fonts/cousine"
 	"github.com/go-opentype/fonts/tinos"
 	"github.com/go-opentype/opentype"
-	"github.com/go-pdfkit/pdffont"
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
+	"github.com/timzifer/cera/internal/pdffont"
 
 	"github.com/timzifer/cera/internal/stdfont"
 )
@@ -96,23 +96,23 @@ func (f *Font) request(d *Document) FontRequest {
 		Supplement: f.supplement, Vertical: f.vertical,
 	}
 	desc := f.pdf.Descriptor()
-	flags, _ := d.num(desc["Flags"])
+	flags, _ := d.num(desc.Get("Flags"))
 	fl := int(flags)
 	lower := strings.ToLower(f.name)
 	req.Serif = fl&flagSerif != 0
 	req.FixedPitch = fl&flagFixedPitch != 0
 	req.Symbolic = fl&flagSymbolic != 0
-	if w, ok := d.num(desc["FontWeight"]); ok && w >= 100 && w <= 1000 {
+	if w, ok := d.num(desc.Get("FontWeight")); ok && w >= 100 && w <= 1000 {
 		req.Weight = int(w)
 	}
 	req.Bold = fl&flagForceBold != 0 || req.Weight >= 600 || hasAny(lower, boldWords)
 	if !req.Bold && req.Weight == 0 && !hasAny(lower, lightWords) {
-		if w, ok := d.num(desc["StemV"]); ok && w >= 120 {
+		if w, ok := d.num(desc.Get("StemV")); ok && w >= 120 {
 			req.Bold = true
 		}
 	}
 	req.Italic = fl&flagItalic != 0 || hasAny(lower, italicWords)
-	if a, ok := d.num(desc["ItalicAngle"]); ok && math.Abs(a) >= 4 && math.Abs(a) < 45 {
+	if a, ok := d.num(desc.Get("ItalicAngle")); ok && math.Abs(a) >= 4 && math.Abs(a) < 45 {
 		req.Italic = true
 	}
 	return req
@@ -404,8 +404,8 @@ func knownClass(k string) fontClass {
 }
 
 // stretchOf reads /FontStretch.
-func stretchOf(d *Document, desc reader.Dict) float64 {
-	n, _ := d.name(desc["FontStretch"])
+func stretchOf(d *Document, desc pdf.Dict) float64 {
+	n, _ := d.name(desc.Get("FontStretch"))
 	switch n {
 	case "UltraCondensed":
 		return 0.6

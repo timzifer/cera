@@ -3,7 +3,7 @@ package cera
 import (
 	"sync"
 
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 
 	"github.com/timzifer/cera/internal/cmyk"
 )
@@ -159,11 +159,11 @@ type csEntry struct {
 // reference are made once per document. A device space named at depth 0
 // (an operand, an image's or a shading's /ColorSpace) is remapped by the
 // Default space of res; the device spaces inside other spaces are not.
-func (d *Document) colorSpace(o reader.Object, res reader.Dict, depth int) (cs *colorSpace, approx string) {
+func (d *Document) colorSpace(o pdf.Object, res pdf.Dict, depth int) (cs *colorSpace, approx string) {
 	if depth > 4 {
 		return nil, ""
 	}
-	if n, ok := o.(reader.Name); ok {
+	if n, ok := o.Name(); ok {
 		if dev := deviceComps(n); dev > 0 && depth == 0 {
 			return d.defaultSpace(res, dev)
 		}
@@ -177,12 +177,12 @@ func (d *Document) colorSpace(o reader.Object, res reader.Dict, depth int) (cs *
 		case "Pattern":
 			return spacePattern, ""
 		}
-		if o, ok := d.dict(res["ColorSpace"])[n]; ok {
+		if o, ok := d.dict(res.Get("ColorSpace")).Lookup(n); ok {
 			return d.colorSpace(o, res, depth+1)
 		}
 		return nil, ""
 	}
-	ref, isRef := o.(reader.Ref)
+	ref, isRef := o.Ref()
 	if isRef {
 		d.csMu.Lock()
 		e, ok := d.spaces[ref]
@@ -195,7 +195,7 @@ func (d *Document) colorSpace(o reader.Object, res reader.Dict, depth int) (cs *
 	if isRef {
 		d.csMu.Lock()
 		if d.spaces == nil {
-			d.spaces = map[reader.Ref]csEntry{}
+			d.spaces = map[pdf.Ref]csEntry{}
 		}
 		d.spaces[ref] = csEntry{cs, approx}
 		d.csMu.Unlock()
@@ -205,7 +205,7 @@ func (d *Document) colorSpace(o reader.Object, res reader.Dict, depth int) (cs *
 
 // deviceComps returns the components of the device space a name (or its
 // inline image abbreviation) names, 0 for any other name.
-func deviceComps(n reader.Name) int {
+func deviceComps(n pdf.Name) int {
 	switch n {
 	case "DeviceGray", "G":
 		return 1
@@ -219,42 +219,42 @@ func deviceComps(n reader.Name) int {
 
 // defaultNames are the Default spaces by the components of their device
 // space.
-var defaultNames = [5]reader.Name{1: "DefaultGray", 3: "DefaultRGB", 4: "DefaultCMYK"}
+var defaultNames = [5]pdf.Name{1: "DefaultGray", 3: "DefaultRGB", 4: "DefaultCMYK"}
 
 // defaultSpace is the device space of n components as the resources res
 // remap it (PDF 2.0, 8.6.5.6): through their DefaultGray, DefaultRGB or
 // DefaultCMYK, if it is a space of as many components (not a pattern or
 // Indexed space), else the device space itself. NaiveCMYK keeps
 // DeviceCMYK naive.
-func (d *Document) defaultSpace(res reader.Dict, n int) (*colorSpace, string) {
+func (d *Document) defaultSpace(res pdf.Dict, n int) (*colorSpace, string) {
 	dev := d.deviceSpace(n)
 	if n == 4 && d.naiveCMYK {
 		return dev, ""
 	}
-	o, ok := d.dict(res["ColorSpace"])[defaultNames[n]]
+	o, ok := d.dict(res.Get("ColorSpace")).Lookup(defaultNames[n])
 	if !ok {
 		return dev, ""
 	}
 	// Depth 1: the Default space is not remapped in turn.
-	cs, approx := d.colorSpace(o, nil, 1)
+	cs, approx := d.colorSpace(o, pdf.Dict{}, 1)
 	if cs == nil || cs.n != n || cs.kind == csPattern || cs.kind == csIndexed {
 		return dev, ""
 	}
 	return cs, approx
 }
 
-func (d *Document) makeColorSpace(o reader.Object, res reader.Dict, depth int) (cs *colorSpace, approx string) {
-	if n, ok := reader.ToName(o); ok {
-		return d.colorSpace(n, res, depth+1)
+func (d *Document) makeColorSpace(o pdf.Object, res pdf.Dict, depth int) (cs *colorSpace, approx string) {
+	if n, ok := o.Name(); ok {
+		return d.colorSpace(n.Object(), res, depth+1)
 	}
-	a, ok := reader.ToArray(o)
+	a, ok := o.Array()
 	if !ok || len(a) == 0 {
 		return nil, ""
 	}
 	fam, _ := d.name(a[0])
-	param := func() reader.Dict {
+	param := func() pdf.Dict {
 		if len(a) < 2 {
-			return nil
+			return pdf.Dict{}
 		}
 		return d.dict(a[1])
 	}
@@ -272,29 +272,29 @@ func (d *Document) makeColorSpace(o reader.Object, res reader.Dict, depth int) (
 			n, dev = 3, spaceRGB
 		}
 		p := param()
-		s := calSpace(n, d.floats(p["WhitePoint"]), d.gammas(p["Gamma"], n), d.floats(p["Matrix"]))
+		s := calSpace(n, d.floats(p.Get("WhitePoint")), d.gammas(p.Get("Gamma"), n), d.floats(p.Get("Matrix")))
 		if s == nil {
 			return dev, ""
 		}
 		return &colorSpace{kind: csCIE, n: n, cie: s}, ""
 	case "Lab":
 		p := param()
-		s := labSpace(d.floats(p["WhitePoint"]), d.floats(p["Range"]))
+		s := labSpace(d.floats(p.Get("WhitePoint")), d.floats(p.Get("Range")))
 		return &colorSpace{kind: csCIE, n: 3, cie: s}, ""
 	case "ICCBased":
 		if len(a) < 2 {
 			return nil, ""
 		}
-		s, ok := reader.ToStream(d.resolve(a[1]))
+		s, ok := d.resolve(a[1]).Stream()
 		if !ok {
 			return nil, ""
 		}
-		n, _ := d.integer(s.Dict["N"])
+		n, _ := d.integer(s.Dict.Get("N"))
 		if n == 4 {
-			ref, _ := a[1].(reader.Ref)
+			ref, _ := a[1].Ref()
 			return d.iccCMYK(ref, s)
 		}
-		if prof, srgb := iccProfile(d.r.DecodeStreamRecovering(s).Data, n); prof != nil {
+		if prof, srgb := iccProfile(d.r.Decode(s).Data, n); prof != nil {
 			if srgb {
 				return d.deviceSpace(prof.n), ""
 			}
@@ -306,7 +306,7 @@ func (d *Document) makeColorSpace(o reader.Object, res reader.Dict, depth int) (
 		case 3:
 			return spaceRGB, ""
 		}
-		if alt, ok := s.Dict["Alternate"]; ok {
+		if alt, ok := s.Dict.Lookup("Alternate"); ok {
 			return d.colorSpace(alt, res, depth+1)
 		}
 		return nil, ""
@@ -320,11 +320,10 @@ func (d *Document) makeColorSpace(o reader.Object, res reader.Dict, depth int) (
 			return nil, ""
 		}
 		var lookup []byte
-		switch v := d.resolve(a[3]).(type) {
-		case reader.String:
-			lookup = v
-		case *reader.Stream:
-			lookup = d.r.DecodeStreamRecovering(v).Data
+		if v := d.resolve(a[3]); v.Kind() == pdf.KindString {
+			lookup, _ = v.Str()
+		} else if s, ok := v.Stream(); ok {
+			lookup = d.r.Decode(s).Data
 		}
 		return &colorSpace{kind: csIndexed, n: 1, base: base, hival: min(max(int(hival), 0), 255), lookup: lookup}, approx
 	case "Separation", "DeviceN":
@@ -346,11 +345,11 @@ func (d *Document) makeColorSpace(o reader.Object, res reader.Dict, depth int) (
 // convert it, or where cera cannot read it through DeviceCMYK's, counted
 // as "icc-lut". NaiveCMYK takes precedence. Spaces of one profile object
 // are made once.
-func (d *Document) iccCMYK(ref reader.Ref, s *reader.Stream) (*colorSpace, string) {
+func (d *Document) iccCMYK(ref pdf.Ref, s *pdf.Stream) (*colorSpace, string) {
 	if d.naiveCMYK {
 		return spaceCMYKNaive, ""
 	}
-	if ref != (reader.Ref{}) {
+	if ref != (pdf.Ref{}) {
 		d.csMu.Lock()
 		e, ok := d.iccSpaces[ref]
 		d.csMu.Unlock()
@@ -359,7 +358,7 @@ func (d *Document) iccCMYK(ref reader.Ref, s *reader.Stream) (*colorSpace, strin
 		}
 	}
 	e := csEntry{d.cmykSpace(), "icc-lut"}
-	if t, err := cmyk.Load(d.r.DecodeStreamRecovering(s).Data); err == nil {
+	if t, err := cmyk.Load(d.r.Decode(s).Data); err == nil {
 		e = csEntry{&colorSpace{kind: csCMYK, n: 4, cmyk: t}, ""}
 	}
 	d.csMu.Lock()
@@ -374,9 +373,9 @@ func (d *Document) iccCMYK(ref reader.Ref, s *reader.Stream) (*colorSpace, strin
 			d.cmykTables[t] = true
 		}
 	}
-	if ref != (reader.Ref{}) {
+	if ref != (pdf.Ref{}) {
 		if d.iccSpaces == nil {
-			d.iccSpaces = map[reader.Ref]csEntry{}
+			d.iccSpaces = map[pdf.Ref]csEntry{}
 		}
 		d.iccSpaces[ref] = e
 	}
@@ -384,7 +383,7 @@ func (d *Document) iccCMYK(ref reader.Ref, s *reader.Stream) (*colorSpace, strin
 }
 
 // gammas reads /Gamma: a number for CalGray, three for CalRGB.
-func (d *Document) gammas(o reader.Object, n int) []float64 {
+func (d *Document) gammas(o pdf.Object, n int) []float64 {
 	if n == 1 {
 		if g, ok := d.num(o); ok {
 			return []float64{g}
@@ -396,13 +395,13 @@ func (d *Document) gammas(o reader.Object, n int) []float64 {
 
 // tintSpace reads a Separation or DeviceN space: its tints go through the
 // tint transform into the alternate space.
-func (d *Document) tintSpace(fam reader.Name, a reader.Array, res reader.Dict, depth int) (*colorSpace, string) {
+func (d *Document) tintSpace(fam pdf.Name, a pdf.Array, res pdf.Dict, depth int) (*colorSpace, string) {
 	if len(a) < 2 {
 		return nil, ""
 	}
 	cs := &colorSpace{kind: csTint, n: 1}
 	if fam == "DeviceN" {
-		names, _ := reader.ToArray(d.resolve(a[1]))
+		names, _ := d.resolve(a[1]).Array()
 		cs.n = min(max(len(names), 1), maxComps)
 		none := len(names) > 0
 		for _, o := range names {

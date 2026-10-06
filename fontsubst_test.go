@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"image"
-	"maps"
 	"math"
 	"slices"
 	"sync"
@@ -13,7 +12,7 @@ import (
 	"github.com/go-opentype/fonts/arimo"
 	"github.com/go-opentype/fonts/cousine"
 	"github.com/go-opentype/opentype"
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 
 	"github.com/timzifer/cera/internal/stdfont"
 )
@@ -316,9 +315,12 @@ func TestStandardStandIns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	load := func(name string, extra reader.Dict) *Font {
-		dict := reader.Dict{"Type": reader.Name("Font"), "Subtype": reader.Name("Type1"), "BaseFont": reader.Name(name)}
-		maps.Copy(dict, extra)
+	load := func(name string, extra ...pdf.Entry) *Font {
+		dict := pdf.NewDict(append([]pdf.Entry{
+			{Key: "Type", Val: pdf.Name("Font").Object()},
+			{Key: "Subtype", Val: pdf.Name("Type1").Object()},
+			{Key: "BaseFont", Val: pdf.Name(name).Object()},
+		}, extra...)...)
 		return d.loadFont(dict)
 	}
 	for _, tc := range []struct {
@@ -339,7 +341,7 @@ func TestStandardStandIns(t *testing.T) {
 		if !stdfont.Gyre {
 			tc.fam = map[*family]*family{&sansFamily: &arimoFamily, &serifFamily: &tinosFamily, &courierFamily: &monoFamily}[tc.fam]
 		}
-		f := load(tc.name, nil)
+		f := load(tc.name)
 		if f.program != tc.fam[tc.style].get() {
 			t.Errorf("%s: not drawn with its stand-in", tc.name)
 			continue
@@ -352,8 +354,9 @@ func TestStandardStandIns(t *testing.T) {
 		}
 	}
 	// TeX Gyre has no Cyrillic: Arimo, Tinos and Cousine take over.
-	cyrillic := reader.Dict{"Encoding": reader.Dict{"Differences": reader.Array{reader.Integer(192),
-		reader.Name("afii10017"), reader.Name("afii10018"), reader.Name("afii10019")}}}
+	differences := pdf.Array{pdf.Integer(192),
+		pdf.Name("afii10017").Object(), pdf.Name("afii10018").Object(), pdf.Name("afii10019").Object()}
+	cyrillic := pdf.Entry{Key: "Encoding", Val: pdf.NewDict(pdf.Entry{Key: "Differences", Val: differences.Object()}).Object()}
 	for _, tc := range []struct {
 		name string
 		fam  *family

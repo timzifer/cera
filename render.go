@@ -423,8 +423,8 @@ func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, overprin
 	if vis != nil {
 		in.ocVis, in.ocZoom = vis, scale
 	}
-	res := p.doc.dict(p.dict["Resources"])
-	dec, derr := p.doc.r.PageContentDecoded(p.index + 1)
+	res := p.doc.dict(p.dict.Get("Resources"))
+	dec, derr := p.doc.r.PageContents(p.index + 1)
 	switch {
 	case derr != nil:
 		st.Errors++

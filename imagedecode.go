@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-images/jpeg"
 	"github.com/go-images/jpeg2000"
-	"github.com/go-pdfkit/reader"
 	"github.com/tannevaled/gobig2"
+	"github.com/timzifer/cera/internal/pdf"
 	"github.com/timzifer/stilus"
 )
 
@@ -49,14 +49,14 @@ const (
 // imageDecoder decodes one image and the masks it names.
 type imageDecoder struct {
 	d   *Document
-	res reader.Dict
+	res pdf.Dict
 	out imageResult
 }
 
 // image returns the decoded image XObject s, from the document's cache
 // when ref (its object) has been decoded before.
-func (d *Document) image(ref reader.Ref, s *reader.Stream, res reader.Dict) imageResult {
-	cache := ref != (reader.Ref{})
+func (d *Document) image(ref pdf.Ref, s *pdf.Stream, res pdf.Dict) imageResult {
+	cache := ref != (pdf.Ref{})
 	if cache {
 		d.imgMu.Lock()
 		if e, ok := d.imgs[ref]; ok {
@@ -67,7 +67,7 @@ func (d *Document) image(ref reader.Ref, s *reader.Stream, res reader.Dict) imag
 		}
 		d.imgMu.Unlock()
 	}
-	r := d.decodeImage(s.Dict, s.Raw, res)
+	r := d.decodeImage(s.Dict, d.r.Raw(s), res)
 	if cache {
 		d.cacheImage(ref, r)
 	}
@@ -75,12 +75,12 @@ func (d *Document) image(ref reader.Ref, s *reader.Stream, res reader.Dict) imag
 }
 
 type imageEntry struct {
-	ref  reader.Ref
+	ref  pdf.Ref
 	res  imageResult
 	size int
 }
 
-func (d *Document) cacheImage(ref reader.Ref, r imageResult) {
+func (d *Document) cacheImage(ref pdf.Ref, r imageResult) {
 	size := 64
 	if r.img != nil {
 		size += r.img.size
@@ -91,7 +91,7 @@ func (d *Document) cacheImage(ref reader.Ref, r imageResult) {
 	d.imgMu.Lock()
 	defer d.imgMu.Unlock()
 	if d.imgs == nil {
-		d.imgs = map[reader.Ref]*list.Element{}
+		d.imgs = map[pdf.Ref]*list.Element{}
 	}
 	if _, ok := d.imgs[ref]; ok {
 		return
@@ -109,17 +109,17 @@ func (d *Document) cacheImage(ref reader.Ref, r imageResult) {
 
 // decodeImage decodes an image from its (expanded) dictionary and its
 // still encoded data. res resolves named colour spaces.
-func (d *Document) decodeImage(dict reader.Dict, raw []byte, res reader.Dict) imageResult {
+func (d *Document) decodeImage(dict pdf.Dict, raw []byte, res pdf.Dict) imageResult {
 	dec := imageDecoder{d: d, res: res}
 	dec.decode(dict, raw)
 	return dec.out
 }
 
-func (dc *imageDecoder) decode(dict reader.Dict, raw []byte) {
+func (dc *imageDecoder) decode(dict pdf.Dict, raw []byte) {
 	d := dc.d
 	img := &Image{}
-	img.Stencil = d.boolean(dict["ImageMask"])
-	img.Interpolate = d.boolean(dict["Interpolate"])
+	img.Stencil = d.boolean(dict.Get("ImageMask"))
+	img.Interpolate = d.boolean(dict.Get("Interpolate"))
 	use := useColor
 	if img.Stencil {
 		use = useStencil
@@ -133,21 +133,21 @@ func (dc *imageDecoder) decode(dict reader.Dict, raw []byte) {
 		img.mask = stilus.NewTexture(p)
 	} else {
 		switch {
-		case d.stream(dict["SMask"]) != nil:
-			s := d.stream(dict["SMask"])
-			m, _, ok := dc.plane(s.Dict, s.Raw, useAlpha)
+		case d.stream(dict.Get("SMask")) != nil:
+			s := d.stream(dict.Get("SMask"))
+			m, _, ok := dc.plane(s.Dict, d.r.Raw(s), useAlpha)
 			if !ok {
 				return
 			}
-			if matte, ok := s.Dict["Matte"]; ok {
+			if matte, ok := s.Dict.Lookup("Matte"); ok {
 				if p, ok = dc.unmatte(dict, matte, p, &m); !ok {
 					return
 				}
 			}
 			img.mask, img.softMask = stilus.NewTexture(m), true
-		case d.stream(dict["Mask"]) != nil:
-			s := d.stream(dict["Mask"])
-			m, _, ok := dc.plane(s.Dict, s.Raw, useStencil)
+		case d.stream(dict.Get("Mask")) != nil:
+			s := d.stream(dict.Get("Mask"))
+			m, _, ok := dc.plane(s.Dict, d.r.Raw(s), useStencil)
 			if !ok {
 				return
 			}
@@ -174,9 +174,9 @@ func (dc *imageDecoder) decode(dict reader.Dict, raw []byte) {
 // approximated and counted as smask-matte. A mask of
 // another size than the image is sampled at the image's pixels. Done once
 // per decoded image, so drawing is unaffected.
-func (dc *imageDecoder) unmatte(dict reader.Dict, o reader.Object, p plane, m *plane) (plane, bool) {
+func (dc *imageDecoder) unmatte(dict pdf.Dict, o pdf.Object, p plane, m *plane) (plane, bool) {
 	d := dc.d
-	a, ok := reader.ToArray(d.resolve(o))
+	a, ok := d.resolve(o).Array()
 	if !ok || len(a) == 0 || len(a) > maxComps {
 		dc.out.approx = "smask-matte"
 		return p, true
@@ -188,7 +188,7 @@ func (dc *imageDecoder) unmatte(dict reader.Dict, o reader.Object, p plane, m *p
 			return p, true
 		}
 	}
-	cs, _ := d.colorSpace(dict["ColorSpace"], dc.res, 0)
+	cs, _ := d.colorSpace(dict.Get("ColorSpace"), dc.res, 0)
 	if cs == nil || cs.n != len(a) || cs.kind == csPattern {
 		cs = d.deviceSpace(len(a))
 	}
@@ -305,14 +305,14 @@ func (dc *imageDecoder) fail(feature string) (plane, *plane, bool) {
 // plane decodes the samples of an image stream. For a colour image with a
 // colour key whose samples are not palette indexes, key is the mask it
 // makes.
-func (dc *imageDecoder) plane(dict reader.Dict, raw []byte, use planeUse) (p plane, key *plane, ok bool) {
+func (dc *imageDecoder) plane(dict pdf.Dict, raw []byte, use planeUse) (p plane, key *plane, ok bool) {
 	d := dc.d
-	w, _ := d.integer(dict["Width"])
-	h, _ := d.integer(dict["Height"])
+	w, _ := d.integer(dict.Get("Width"))
+	h, _ := d.integer(dict.Get("Height"))
 	if w <= 0 || h <= 0 || w > 1<<24 || h > 1<<24 {
 		return dc.fail("")
 	}
-	dec := reader.DecodeRecovering(dict, raw, d.r.Resolver())
+	dec := d.r.DecodeBytes(dict, raw)
 	if dec.Recovered {
 		dc.out.recovered = true
 	}
@@ -325,7 +325,7 @@ func (dc *imageDecoder) plane(dict reader.Dict, raw []byte, use planeUse) (p pla
 		return dc.fail("")
 	}
 	sp := sampleSpec{w: w, h: h, use: use}
-	bpc, _ := d.integer(dict["BitsPerComponent"])
+	bpc, _ := d.integer(dict.Get("BitsPerComponent"))
 	sp.bpc = bpc
 	if use == useStencil {
 		sp.bpc = 1
@@ -382,7 +382,7 @@ func (dc *imageDecoder) plane(dict reader.Dict, raw []byte, use planeUse) (p pla
 
 // knownFilter reports whether the reader implements filter f (or f is
 // empty): a filter it does not know leaves the data undecoded.
-func knownFilter(f reader.Name) bool {
+func knownFilter(f pdf.Name) bool {
 	switch f {
 	case "", "FlateDecode", "Fl", "LZWDecode", "LZW", "ASCIIHexDecode", "AHx", "ASCII85Decode", "A85",
 		"RunLengthDecode", "RL", "CCITTFaxDecode", "CCF", "Crypt":
@@ -392,11 +392,11 @@ func knownFilter(f reader.Name) bool {
 }
 
 // colorSpace returns the colour space of an image's samples.
-func (dc *imageDecoder) colorSpace(dict reader.Dict, use planeUse) (*colorSpace, bool) {
+func (dc *imageDecoder) colorSpace(dict pdf.Dict, use planeUse) (*colorSpace, bool) {
 	if use == useAlpha {
 		return spaceGray, true
 	}
-	cs, approx := dc.d.colorSpace(dict["ColorSpace"], dc.res, 0)
+	cs, approx := dc.d.colorSpace(dict.Get("ColorSpace"), dc.res, 0)
 	if cs == nil || cs.kind == csPattern {
 		return nil, false
 	}
@@ -407,8 +407,8 @@ func (dc *imageDecoder) colorSpace(dict reader.Dict, use planeUse) (*colorSpace,
 }
 
 // decodeArray returns /Decode if it has 2n numbers.
-func (dc *imageDecoder) decodeArray(dict reader.Dict, n int) []float64 {
-	a, ok := reader.ToArray(dc.d.resolve(dict["Decode"]))
+func (dc *imageDecoder) decodeArray(dict pdf.Dict, n int) []float64 {
+	a, ok := dc.d.resolve(dict.Get("Decode")).Array()
 	if !ok || len(a) < 2*n {
 		return nil
 	}
@@ -422,8 +422,8 @@ func (dc *imageDecoder) decodeArray(dict reader.Dict, n int) []float64 {
 }
 
 // colorKey returns a /Mask colour key: 2n sample ranges.
-func (dc *imageDecoder) colorKey(dict reader.Dict, n int) []int {
-	a, ok := reader.ToArray(dc.d.resolve(dict["Mask"]))
+func (dc *imageDecoder) colorKey(dict pdf.Dict, n int) []int {
+	a, ok := dc.d.resolve(dict.Get("Mask")).Array()
 	if !ok || len(a) < 2*n {
 		return nil
 	}
@@ -722,7 +722,7 @@ func stencilPal() *palette {
 
 // jbig2 decodes a JBIG2 stream to packed rows of PDF samples: JBIG2 sets a
 // bit for ink, a one-bit grey image and an image mask mean ink by 0.
-func (dc *imageDecoder) jbig2(dict reader.Dict, data []byte) (gobig2.PackedPage, error) {
+func (dc *imageDecoder) jbig2(dict pdf.Dict, data []byte) (gobig2.PackedPage, error) {
 	dec, err := gobig2.NewDecoderEmbedded(bytes.NewReader(data), dc.jbig2Globals(dict))
 	if err != nil {
 		return gobig2.PackedPage{}, err
@@ -741,18 +741,18 @@ func (dc *imageDecoder) jbig2(dict reader.Dict, data []byte) (gobig2.PackedPage,
 
 // jbig2Globals returns the shared segments named by /DecodeParms, which
 // runs parallel to /Filter.
-func (dc *imageDecoder) jbig2Globals(dict reader.Dict) []byte {
+func (dc *imageDecoder) jbig2Globals(dict pdf.Dict) []byte {
 	d := dc.d
-	parms := d.resolve(dict["DecodeParms"])
-	var list []reader.Object
-	if a, ok := reader.ToArray(parms); ok {
+	parms := d.resolve(dict.Get("DecodeParms"))
+	var list []pdf.Object
+	if a, ok := parms.Array(); ok {
 		list = a
 	} else {
-		list = []reader.Object{parms}
+		list = []pdf.Object{parms}
 	}
 	for _, o := range list {
-		if s := d.stream(d.dict(o)["JBIG2Globals"]); s != nil {
-			if dec := d.r.DecodeStreamRecovering(s); !dec.Recovered {
+		if s := d.stream(d.dict(o).Get("JBIG2Globals")); s != nil {
+			if dec := d.r.Decode(s); !dec.Recovered {
 				return dec.Data
 			}
 		}
@@ -763,7 +763,7 @@ func (dc *imageDecoder) jbig2Globals(dict reader.Dict) []byte {
 // jpeg decodes a DCTDecode image. Its samples go through the colour space
 // and /Decode like any others, except that a three-component picture in
 // DeviceRGB is converted straight to pixels.
-func (dc *imageDecoder) jpeg(dict reader.Dict, data []byte, sp *sampleSpec) (plane, *plane, bool) {
+func (dc *imageDecoder) jpeg(dict pdf.Dict, data []byte, sp *sampleSpec) (plane, *plane, bool) {
 	cfg, err := jpeg.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return dc.fail("")
@@ -826,7 +826,7 @@ func (dc *imageDecoder) jpeg(dict reader.Dict, data []byte, sp *sampleSpec) (pla
 // jpx decodes a JPXDecode image. Its /Decode is ignored and its colour
 // space comes from the codestream unless the dictionary names one of as
 // many components.
-func (dc *imageDecoder) jpx(dict reader.Dict, data []byte, sp *sampleSpec) (plane, *plane, bool) {
+func (dc *imageDecoder) jpx(dict pdf.Dict, data []byte, sp *sampleSpec) (plane, *plane, bool) {
 	cfg, err := jpeg2000.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return dc.fail("")
@@ -932,12 +932,12 @@ func clearRowsFrom(img image.Image, rows int) {
 	}
 }
 
-func (d *Document) boolean(o reader.Object) bool {
-	b, _ := reader.ToBool(d.resolve(o))
+func (d *Document) boolean(o pdf.Object) bool {
+	b, _ := d.resolve(o).Bool()
 	return b
 }
 
-func (d *Document) integer(o reader.Object) (int, bool) {
+func (d *Document) integer(o pdf.Object) (int, bool) {
 	f, ok := d.num(o)
 	if !ok || math.Abs(f) > 1<<30 {
 		return 0, false
@@ -945,7 +945,7 @@ func (d *Document) integer(o reader.Object) (int, bool) {
 	return int(f), true
 }
 
-func (d *Document) stream(o reader.Object) *reader.Stream {
-	s, _ := reader.ToStream(d.resolve(o))
+func (d *Document) stream(o pdf.Object) *pdf.Stream {
+	s, _ := d.resolve(o).Stream()
 	return s
 }

@@ -6,11 +6,11 @@ cores are used. The rest comes from libraries:
 
 | layer | source |
 |---|---|
-| file reader: xref, objects, filters, encryption, repair | [go-pdfkit/reader](https://github.com/go-pdfkit/reader) (BSD-3) |
+| file reader: xref, objects, filters, encryption, repair, decoded-stream cache | cera (`internal/pdf`), ported from [go-pdfkit/reader](https://github.com/go-pdfkit/reader) (BSD-3) onto its own object model ([ADR 0012](adr/0012-own-pdf-reader.md)); Brotli through [andybalholm/brotli](https://github.com/andybalholm/brotli) (MIT) |
 | content scanner, interpreter, graphics state | cera |
 | display list, bands, workers | cera |
 | rasterizer, stroker, clip, compositing; shaders for images, glyph masks, layers, blend modes, gradients, meshes | [timzifer/stilus](https://github.com/timzifer/stilus) (MIT) |
-| fonts: PDF side (encodings, widths, ToUnicode) | [go-pdfkit/pdffont](https://github.com/go-pdfkit/pdffont) (BSD-3) |
+| fonts: PDF side (encodings, widths, ToUnicode) | cera (`internal/pdffont`); glyph-name tables and ToUnicode reader from [go-pdfkit/pdffont](https://github.com/go-pdfkit/pdffont) (BSD-3) |
 | fonts: programs (TrueType, CFF, Type 1) | [go-opentype/opentype](https://github.com/go-opentype/opentype); FDArray matrices of CID-keyed CFF in cera (`cffcid.go`) |
 | fonts: stand-ins | [go-opentype/fonts](https://github.com/go-opentype/fonts): TeX Gyre Heros, Termes, Cursor (GUST Font License, `internal/stdfont`); Arimo, Tinos, Cousine, DejaVu Sans subsets, Noto Sans JP/SC/KR (`fonts/cjk`) |
 | fonts: CMaps, vertical writing, font providers | cera; predefined CMaps from [Adobe's CMap resources](https://github.com/adobe-type-tools/cmap-resources) (BSD-3) |
@@ -18,6 +18,28 @@ cores are used. The rest comes from libraries:
 | images: samples, masks, mip levels, image cache | cera; codecs [go-images/jpeg](https://github.com/go-images/jpeg) (BSD-3), [go-images/jpeg2000](https://github.com/go-images/jpeg2000), [gobig2](https://github.com/tannevaled/gobig2) (Apache-2.0) |
 | transparency: groups, knockout, blend modes, soft masks | cera |
 | shadings, colour spaces, PDF functions | cera, drawn by stilus; parts ported from [timzifer/render](https://github.com/timzifer/render) (BSD-3) |
+
+## File reader
+
+`internal/pdf` reads the file (ADR 0012). An object is a 24-byte value, not
+an interface: numbers, booleans and references inline, strings, names,
+arrays and dictionaries pointing at their data. An indirect object is laid
+out in one slab per kind, names that files use often are shared strings,
+other names and plain strings point into the file. Dictionaries are entry
+lists, searched in order up to 12 keys and by halving above.
+
+Each object is parsed once per cross-reference table and published with a
+compare-and-swap: concurrent readers never wait on each other, and a
+repair builds a new table instead of resetting the one others read. Decoded
+streams (content, forms, Type 3 glyphs, functions) are kept in a bounded
+cache that decodes each stream once however many pages ask for it; images
+and font programs bypass it, their consumers keep what they make of them.
+So pages of one document render concurrently, and looking up an object
+already loaded allocates nothing.
+
+`internal/pdffont` reads the PDF side of fonts on top of it. `readerdiff/`,
+a module of its own, compares both with the go-pdfkit packages they
+replace, object by object, stream by stream and font code by font code.
 
 ## Display list and bands
 

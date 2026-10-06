@@ -9,6 +9,8 @@ require (
 	github.com/timzifer/figure v0.14.1-0.20260929122627-5c067d67d2c9
 )
 
+require github.com/andybalholm/brotli v1.2.6 // indirect
+
 require (
 	github.com/ajroetker/go-highway v0.0.12 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
@@ -16,8 +18,6 @@ require (
 	github.com/go-images/jpeg2000 v0.13.2 // indirect
 	github.com/go-opentype/fonts v0.10.0 // indirect
 	github.com/go-opentype/opentype v0.13.0 // indirect
-	github.com/go-pdfkit/pdffont v0.3.1 // indirect
-	github.com/go-pdfkit/reader v0.6.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jolestar/go-commons-pool/v2 v2.1.2 // indirect
 	github.com/klippa-app/go-pdfium v1.21.1 // indirect

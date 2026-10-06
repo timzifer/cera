@@ -2,7 +2,7 @@ package cera
 
 import (
 	"github.com/go-opentype/opentype"
-	"github.com/go-pdfkit/reader"
+	"github.com/timzifer/cera/internal/pdf"
 
 	"github.com/timzifer/cera/internal/cmap"
 )
@@ -15,30 +15,29 @@ import (
 
 // readCMap sets up the codes, writing mode and character collection of a
 // composite font.
-func (f *Font) readCMap(d *Document, dict reader.Dict) {
-	enc := d.resolve(dict["Encoding"])
-	switch e := enc.(type) {
-	case reader.Name:
+func (f *Font) readCMap(d *Document, dict pdf.Dict) {
+	enc := d.resolve(dict.Get("Encoding"))
+	if e, ok := enc.Name(); ok {
 		f.cmap = cmap.Predefined(string(e))
-	case *reader.Stream:
+	} else if e, ok := enc.Stream(); ok {
 		f.cmap = d.embeddedCMap(e, 0)
 	}
 	if f.cmap == nil {
 		// Unknown or unreadable: two-byte codes that are their own CIDs,
 		// which is what nearly every composite font uses anyway.
 		f.cmap = cmap.Identity(false)
-		f.cmapMissing = enc != nil
+		f.cmapMissing = !enc.IsNull()
 	}
 	f.vertical = f.cmap.WMode == 1
 	kid := d.descendant(dict)
-	if info := d.dict(kid["CIDSystemInfo"]); info != nil {
-		if s, ok := reader.ToString(d.resolve(info["Ordering"])); ok {
+	if info := d.dict(kid.Get("CIDSystemInfo")); !info.IsZero() {
+		if s, ok := d.resolve(info.Get("Ordering")).Str(); ok {
 			f.ordering = string(s)
 		}
-		if s, ok := reader.ToString(d.resolve(info["Registry"])); ok {
+		if s, ok := d.resolve(info.Get("Registry")).Str(); ok {
 			f.registry = string(s)
 		}
-		if v, ok := d.num(info["Supplement"]); ok {
+		if v, ok := d.num(info.Get("Supplement")); ok {
 			f.supplement = int(v)
 		}
 	}
@@ -60,22 +59,20 @@ func (f *Font) readCMap(d *Document, dict reader.Dict) {
 
 // embeddedCMap reads a CMap stream; /UseCMap names its parent, a
 // predefined CMap or another stream.
-func (d *Document) embeddedCMap(s *reader.Stream, depth int) *cmap.CMap {
+func (d *Document) embeddedCMap(s *pdf.Stream, depth int) *cmap.CMap {
 	if depth > 4 {
 		return nil
 	}
-	data, _, err := d.r.DecodeStream(s)
+	data, _, err := d.r.DecodeStrict(s)
 	if err != nil {
 		return nil
 	}
 	var parent *cmap.CMap
-	switch u := d.resolve(s.Dict["UseCMap"]).(type) {
-	case reader.Name:
+	use := d.resolve(s.Dict.Get("UseCMap"))
+	if u, ok := use.Name(); ok {
 		parent = cmap.Predefined(string(u))
-	case *reader.Stream:
-		if u != s {
-			parent = d.embeddedCMap(u, depth+1)
-		}
+	} else if u, ok := use.Stream(); ok && u != s {
+		parent = d.embeddedCMap(u, depth+1)
 	}
 	c, err := cmap.Parse(data, func(name string) *cmap.CMap {
 		if parent != nil && (name == parent.Name || parent.Name == "") {
@@ -89,18 +86,18 @@ func (d *Document) embeddedCMap(s *reader.Stream, depth int) *cmap.CMap {
 	if parent != nil && c.Parent() == nil {
 		c = c.WithParent(parent)
 	}
-	if v, ok := d.num(s.Dict["WMode"]); ok {
+	if v, ok := d.num(s.Dict.Get("WMode")); ok {
 		c.WMode = int(v) & 1
 	}
 	return c
 }
 
 // descendant returns the CIDFont of a composite font.
-func (d *Document) descendant(dict reader.Dict) reader.Dict {
-	if a, ok := d.resolve(dict["DescendantFonts"]).(reader.Array); ok && len(a) > 0 {
+func (d *Document) descendant(dict pdf.Dict) pdf.Dict {
+	if a, ok := d.resolve(dict.Get("DescendantFonts")).Array(); ok && len(a) > 0 {
 		return d.dict(a[0])
 	}
-	return nil
+	return pdf.Dict{}
 }
 
 // vmetric is a CID's vertical metrics in thousandths of an em: the
@@ -110,16 +107,16 @@ func (d *Document) descendant(dict reader.Dict) reader.Dict {
 type vmetric struct{ w1, vx, vy float32 }
 
 // readVerticalMetrics reads /DW2 and /W2.
-func (f *Font) readVerticalMetrics(d *Document, kid reader.Dict) {
+func (f *Font) readVerticalMetrics(d *Document, kid pdf.Dict) {
 	f.dw2 = vmetric{w1: -1000, vx: -1, vy: 880}
-	if a, ok := d.resolve(kid["DW2"]).(reader.Array); ok && len(a) == 2 {
+	if a, ok := d.resolve(kid.Get("DW2")).Array(); ok && len(a) == 2 {
 		vy, ok1 := d.num(a[0])
 		w1, ok2 := d.num(a[1])
 		if ok1 && ok2 {
 			f.dw2 = vmetric{w1: float32(w1), vx: -1, vy: float32(vy)}
 		}
 	}
-	a, ok := d.resolve(kid["W2"]).(reader.Array)
+	a, ok := d.resolve(kid.Get("W2")).Array()
 	if !ok {
 		return
 	}
@@ -129,7 +126,7 @@ func (f *Font) readVerticalMetrics(d *Document, kid reader.Dict) {
 		if !ok || i+1 >= len(a) {
 			return
 		}
-		if list, ok := d.resolve(a[i+1]).(reader.Array); ok {
+		if list, ok := d.resolve(a[i+1]).Array(); ok {
 			for k := 0; k+2 < len(list) && len(f.w2) < budget; k += 3 {
 				w1, ok1 := d.num(list[k])
 				vx, ok2 := d.num(list[k+1])

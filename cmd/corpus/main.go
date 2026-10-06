@@ -41,6 +41,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/timzifer/cera"
@@ -144,6 +145,7 @@ func run(args []string) error {
 	sample := fl.Int("sample", 0, "render a random batch of this many files (0 = all)")
 	seed := fl.Uint64("seed", uint64(time.Now().YearDay()), "seed for -sample (default: day of year)")
 	top := fl.Int("top", 20, "slowest pages and pages with the most allocations listed")
+	pageWorkers := fl.Int("page-workers", 0, "also time each file's pages rendered by this many goroutines at once (0 = off, -1 = all cores)")
 	fl.Parse(args)
 
 	cats := corpus.Categories()
@@ -226,6 +228,16 @@ func run(args []string) error {
 		}
 	}
 	writeReport(w, results, *dpi, *runs, *workers, *top)
+	if n := *pageWorkers; n != 0 {
+		if n < 0 {
+			n = runtime.NumCPU()
+		}
+		var paths []string
+		for _, f := range files {
+			paths = append(paths, f.path)
+		}
+		writeThroughput(w, cfg.throughput(paths, n), n)
+	}
 
 	var fatal, unopened int
 	for i := range results {
@@ -252,6 +264,82 @@ type runConfig struct {
 	timeout time.Duration
 	images  string
 	workers int
+}
+
+// throughputResult is how long rendering whole documents took, every page
+// once from a freshly opened document, one page after another and with
+// pages rendered by several goroutines at once.
+type throughputResult struct {
+	files, pages int
+	seq, par     time.Duration
+}
+
+// throughput opens every file twice and renders its pages, first one after
+// another, then from n goroutines, each page drawing with one worker. Both
+// include opening the file and interpreting every page.
+func (c runConfig) throughput(paths []string, n int) throughputResult {
+	var tr throughputResult
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		pw, _ := corpus.Password(path)
+		pass := func(workers int) (time.Duration, int) {
+			start := time.Now()
+			doc, err := cera.OpenWithPassword(data, pw)
+			if err != nil {
+				return 0, 0
+			}
+			pages := doc.NumPages()
+			if c.pages > 0 {
+				pages = min(pages, c.pages)
+			}
+			next := make(chan int)
+			var wg sync.WaitGroup
+			for range workers {
+				wg.Go(func() {
+					for i := range next {
+						p, err := doc.Page(i)
+						if err != nil {
+							continue
+						}
+						ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+						dst := image.NewRGBA(p.Bounds(c.scale))
+						_ = p.Render(ctx, dst, cera.RenderOptions{Scale: c.scale, Workers: 1})
+						cancel()
+					}
+				})
+			}
+			for i := range pages {
+				next <- i
+			}
+			close(next)
+			wg.Wait()
+			return time.Since(start), pages
+		}
+		seq, pages := pass(1)
+		if pages == 0 {
+			continue
+		}
+		par, _ := pass(n)
+		tr.files++
+		tr.pages += pages
+		tr.seq += seq
+		tr.par += par
+	}
+	return tr
+}
+
+func writeThroughput(w io.Writer, tr throughputResult, n int) {
+	fmt.Fprintf(w, "\n## Throughput\n\nEvery page of a freshly opened document, opening included, one page after another and from %d goroutines at once (one drawing worker each).\n\n", n)
+	fmt.Fprintf(w, "| files | pages | sequential ms | %d page workers ms | speed-up | pages/s |\n|---:|---:|---:|---:|---:|---:|\n", n)
+	speed, rate := 0.0, 0.0
+	if tr.par > 0 {
+		speed = float64(tr.seq) / float64(tr.par)
+		rate = float64(tr.pages) / tr.par.Seconds()
+	}
+	fmt.Fprintf(w, "| %d | %d | %.0f | %.0f | %.1f× | %.0f |\n", tr.files, tr.pages, ms(tr.seq), ms(tr.par), speed, rate)
 }
 
 // file renders one document. A watchdog bounds the whole file (opening
