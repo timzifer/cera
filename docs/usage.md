@@ -51,7 +51,7 @@ layout are the same either way:
 
 ```sh
 go build -tags cera_nogyre ./...
-GOOS=js GOARCH=wasm go build -tags cera_nogyre -o cera.wasm ./cmd/cera
+GOOS=js GOARCH=wasm go build -C cmd/cera -tags cera_nogyre -o "$PWD/cera.wasm" .
 ```
 
 CMYK (DeviceCMYK, and ICCBased spaces of four components whose profile
@@ -131,6 +131,12 @@ render mode. `Page.Text` is built on it.
 ## Command line
 
 ```sh
-go run ./cmd/cera -dpi 150 -v -o 'page-%d.png' input.pdf
-go run ./cmd/cera -cmyk-profile USWebCoatedSWOP.icc -page 1 print.pdf   # or -naive-cmyk
+go build -C cmd/cera -o "$PWD/cera" .
+./cera -dpi 150 -v -o 'page-%d.png' input.pdf
+./cera -cmyk-profile USWebCoatedSWOP.icc -page 1 print.pdf   # or -naive-cmyk
 ```
+
+`cmd/cera` is a module of its own, so that cera itself depends on nothing
+it does not draw with: it writes the PNGs with
+[calamus](https://github.com/timzifer/calamus), which encodes them in bands
+on all cores (encoding was most of the command's time with `image/png`).

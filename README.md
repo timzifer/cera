@@ -70,7 +70,8 @@ fmt.Println(text.String())
 Command line:
 
 ```sh
-go run ./cmd/cera -dpi 150 -o 'page-%d.png' input.pdf
+go build -C cmd/cera -o "$PWD/cera" .   # a module of its own: it writes PNGs with calamus
+./cera -dpi 150 -o 'page-%d.png' input.pdf
 ```
 
 ## Documentation

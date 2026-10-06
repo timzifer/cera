@@ -325,6 +325,33 @@ jobs:
           go vet ./...
           go test -race ./...
 
+  # The command line is a module of its own, so that cera depends on no PNG
+  # encoder: it writes PNGs with calamus.
+  cli:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cmd/cera
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: cmd/cera/go.mod
+          cache-dependency-path: cmd/cera/go.sum
+      - name: go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Vet, and build without cgo for every target
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go vet ./...
+          for t in linux/amd64 linux/386 darwin/arm64 windows/amd64 js/wasm wasip1/wasm; do
+            GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null . || exit 1
+          done
+          GOOS=js GOARCH=wasm go build -tags cera_nogyre -o /dev/null .
+
   # The CJK fonts are a module of their own (ADR 0008), so that no binary
   # links tens of megabytes of glyphs without asking for them.
   cjk:
@@ -350,7 +377,7 @@ jobs:
   # The single required status check for main (see .github/rulesets).
   ci-ok:
     if: always()
-    needs: [lint, test, coverage, cross, fuzz, readerdiff, corpus, accuracy, bench, fyneform, cjk]
+    needs: [lint, test, coverage, cross, fuzz, readerdiff, corpus, accuracy, bench, fyneform, cjk, cli]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed
