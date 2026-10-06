@@ -1,8 +1,11 @@
 package cera
 
 import (
+	"encoding/binary"
 	"strings"
 	"sync"
+
+	"github.com/go-opentype/opentype"
 )
 
 // macGlyphNames is the standard Macintosh glyph order of TrueType 'post'
@@ -45,3 +48,53 @@ var macGlyphIndex = sync.OnceValue(func() map[string]int {
 	}
 	return m
 })
+
+// postGlyphNames reads the glyph names of a TrueType program's 'post'
+// table in format 2 (names by index into the Macintosh order or the
+// table's own Pascal strings) or 2.5 (offsets into the Macintosh order),
+// which the opentype package does not read. A program without a cmap is
+// addressed by these names, as PDFium, MuPDF and pdf.js do. It returns an
+// empty map for other formats and for a malformed table.
+func postGlyphNames(p *opentype.Font) map[string]opentype.GlyphIndex {
+	names := map[string]opentype.GlyphIndex{}
+	t, ok := p.Table("post")
+	if !ok || len(t) < 34 {
+		return names
+	}
+	n := int(binary.BigEndian.Uint16(t[32:]))
+	n = min(n, p.NumGlyphs())
+	add := func(name string, gid int) {
+		if _, seen := names[name]; !seen && name != "" {
+			names[name] = opentype.GlyphIndex(gid)
+		}
+	}
+	switch binary.BigEndian.Uint32(t) {
+	case 0x00020000:
+		if len(t) < 34+2*n {
+			return names
+		}
+		var own []string
+		for s := t[34+2*int(binary.BigEndian.Uint16(t[32:])):]; len(s) > 0 && len(s) > int(s[0]); s = s[1+int(s[0]):] {
+			own = append(own, string(s[1:1+int(s[0])]))
+		}
+		for gid := range n {
+			i := int(binary.BigEndian.Uint16(t[34+2*gid:]))
+			switch {
+			case i < len(macGlyphNames):
+				add(macGlyphNames[i], gid)
+			case i-len(macGlyphNames) < len(own):
+				add(own[i-len(macGlyphNames)], gid)
+			}
+		}
+	case 0x00025000:
+		if len(t) < 34+n {
+			return names
+		}
+		for gid := range n {
+			if i := gid + int(int8(t[34+gid])); i >= 0 && i < len(macGlyphNames) {
+				add(macGlyphNames[i], gid)
+			}
+		}
+	}
+	return names
+}
