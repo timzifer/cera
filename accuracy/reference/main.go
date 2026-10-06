@@ -90,8 +90,17 @@ func run() error {
 	annots := flag.Bool("annots", false, "draw annotations (MuPDF draws none and PDFium no form widgets, so cera is counted as the outlier where it draws them)")
 	cjkOn := flag.Bool("cjk", false, "give cera the Noto Sans fonts of fonts/cjk for CJK fonts a document does not embed (font-missing-japan1 and the like)")
 	flag.BoolVar(&simulateOverprint, "overprint", false, "render cera with overprint simulated (RenderOptions.SimulateOverprint); PDFium and MuPDF do not simulate it by default")
+	filter := flag.String("image-filter", "smooth", "how cera samples magnified images without /Interpolate: smooth (bilinearly below 2× magnification, as PDFium, MuPDF and Poppler) or nearest (cera's default, as Ghostscript)")
 	cmykProfile := flag.String("cmyk-profile", "", "ICC profile `file` cera converts DeviceCMYK through instead of the bundled SWOP profile")
 	flag.Parse()
+	switch *filter {
+	case "smooth":
+		imageFilter = cera.ImageSmooth
+	case "nearest":
+		imageFilter = cera.ImageNearest
+	default:
+		return fmt.Errorf("-image-filter %q: want smooth or nearest", *filter)
+	}
 	if *cmykProfile != "" {
 		b, err := os.ReadFile(*cmykProfile)
 		if err != nil {
@@ -223,7 +232,7 @@ func run() error {
 	rep := summarize(results, engs, ex != nil)
 	rep.Dirs, rep.DPI, rep.Missing, rep.Skipped = *dirs, *dpi, missing, skipped
 	rep.Seed, rep.Sample, rep.Annotations = *seed, *sample, *annots
-	rep.Overprint = simulateOverprint
+	rep.Overprint, rep.ImageFilter = simulateOverprint, *filter
 	if *cmykProfile != "" {
 		rep.CMYKProfile = filepath.Base(*cmykProfile)
 	}

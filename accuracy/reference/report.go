@@ -31,6 +31,8 @@ type report struct {
 	Annotations bool `json:"annotations"`
 	// Overprint says cera simulated overprint (-overprint).
 	Overprint bool `json:"overprint,omitempty"`
+	// ImageFilter is how cera sampled magnified images (-image-filter).
+	ImageFilter string `json:"image_filter"`
 	// CMYKProfile names the profile cera converted DeviceCMYK through
 	// (-cmyk-profile); empty for the bundled one.
 	CMYKProfile string   `json:"cmyk_profile,omitempty"`

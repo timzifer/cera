@@ -15,6 +15,12 @@ var openOptions cera.OpenOptions
 // simulateOverprint renders cera with RenderOptions.SimulateOverprint (-overprint).
 var simulateOverprint bool
 
+// imageFilter samples cera's magnified images (-image-filter). Smooth by
+// default: PDFium, MuPDF and Poppler interpolate images magnified less
+// than 2×, so with cera's own default (nearest pixel, as Ghostscript)
+// every page with such an image counts cera as the outlier.
+var imageFilter = cera.ImageSmooth
+
 // cjkFonts are the fonts -cjk gives cera for CJK text a document does not
 // embed. They are off by default: of the references, only Ghostscript
 // draws such text (with the system's fonts); PDFium, MuPDF and Poppler
