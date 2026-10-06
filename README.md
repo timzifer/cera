@@ -33,7 +33,8 @@ the pinned corpus of 113 pages:
   bands), 0.86× on documents of several pages.
 - Command line, PDF to PNG: `cmd/cera` 0.63× `mutool draw`, Poppler 2.65×,
   Ghostscript 3.88×.
-- WebAssembly: 5.05× native MuPDF; PDFium in WebAssembly 2.10×.
+- WebAssembly on wazero: 5.05× native MuPDF, PDFium 2.10×; under V8 (Chrome,
+  Node) cera's WebAssembly ran about 2.7× faster than on wazero (7 pages).
 - One allocation per page (median), 41 MB peak memory per file (median).
 
 cera's own synthetic drawings, on which MuPDF is unusually slow (cera

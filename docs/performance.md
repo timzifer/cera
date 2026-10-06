@@ -107,6 +107,15 @@ cera compiled to WebAssembly takes 7.4× its native time; PDFium's
 WebAssembly build loses less against the native one measured here (1.9×;
 not the same build). This is the weakest spot of the comparison for cera.
 
+Much of it is the runtime. Both WebAssembly engines run on wazero, whose
+compiler does not optimize. On seven pages (papers, a drawing, text, a
+shading) the same `ceraworker.wasm` took 3.5× its native time under Node's
+V8, the engine of Chrome, and 9.4× under wazero. In a browser, expect the
+former. Within cera, builtin `min` and `max` on floats compile to runtime
+calls in WebAssembly and cost about 30 % under V8; see
+[#65](https://github.com/timzifer/cera/issues/65). PDFium was not measured
+under V8.
+
 ## Memory
 
 Peak resident memory of an engine's process per file (median over files,
