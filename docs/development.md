@@ -128,12 +128,15 @@ at 1500 dpi all five agree to 0.07 px). Where text is most of the ink,
 the three outvote cera and PDFium on the glyph edges: that is a
 convention, not an error, and stays counted.
 
-Images are placed exactly as well; all four references round an image's
-rectangle outward to whole device pixels and stretch the image over it.
-A small image comes out larger by up to a pixel on each side: the
-19.0 × 25.5 px bullets of `pdfjs/smaskdim.pdf` cover 20 × 27 px in all
-four, 11 % more ink than the exact rendering, which cera matches. That
-too stays counted.
+Images are placed exactly as well; PDFium, MuPDF and Poppler round an
+image's rectangle outward to whole device pixels and stretch the image
+over it, Ghostscript snaps it to the pixel grid by a rule of its own. A
+small image comes out larger by up to a pixel on each side: the
+19.0 × 25.5 px bullets of `pdfjs/smaskdim.pdf` cover 20 × 27 px, 11 %
+more ink than the exact rendering, which cera matches. A magnified one
+moves every sample edge: the 81 × 26 CCITT images of
+`pdfjs/ccitt_EndOfBlock_false.pdf`, 675 × 216.7 px exactly, cover
+676 × 218 px. Both stay counted.
 
 The charts are drawn with [figure](https://github.com/timzifer/figure)
 (SVG, once with light and once with dark tokens, the page showing the one
