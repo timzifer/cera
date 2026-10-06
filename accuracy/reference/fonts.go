@@ -12,6 +12,9 @@ import (
 // openOptions opens every document cera renders or measures.
 var openOptions cera.OpenOptions
 
+// simulateOverprint renders cera with RenderOptions.SimulateOverprint (-overprint).
+var simulateOverprint bool
+
 // cjkFonts are the fonts -cjk gives cera for CJK text a document does not
 // embed. They are off by default: of the references, only Ghostscript
 // draws such text (with the system's fonts); PDFium, MuPDF and Poppler

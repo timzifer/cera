@@ -89,7 +89,16 @@ func run() error {
 	timeout := flag.Duration("timeout", time.Minute, "deadline per cera page")
 	annots := flag.Bool("annots", false, "draw annotations (MuPDF draws none and PDFium no form widgets, so cera is counted as the outlier where it draws them)")
 	cjkOn := flag.Bool("cjk", false, "give cera the Noto Sans fonts of fonts/cjk for CJK fonts a document does not embed (font-missing-japan1 and the like)")
+	flag.BoolVar(&simulateOverprint, "overprint", false, "render cera with overprint simulated (RenderOptions.SimulateOverprint); PDFium and MuPDF do not simulate it by default")
+	cmykProfile := flag.String("cmyk-profile", "", "ICC profile `file` cera converts DeviceCMYK through instead of the bundled SWOP profile")
 	flag.Parse()
+	if *cmykProfile != "" {
+		b, err := os.ReadFile(*cmykProfile)
+		if err != nil {
+			return err
+		}
+		openOptions.CMYKProfile = b
+	}
 	if *cjkOn {
 		openOptions.Fonts = cjkFonts
 	}
@@ -214,6 +223,10 @@ func run() error {
 	rep := summarize(results, engs, ex != nil)
 	rep.Dirs, rep.DPI, rep.Missing, rep.Skipped = *dirs, *dpi, missing, skipped
 	rep.Seed, rep.Sample, rep.Annotations = *seed, *sample, *annots
+	rep.Overprint = simulateOverprint
+	if *cmykProfile != "" {
+		rep.CMYKProfile = filepath.Base(*cmykProfile)
+	}
 	if err := writeCSV(filepath.Join(*out, "pages.csv"), results, rep.Engines); err != nil {
 		return err
 	}
