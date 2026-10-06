@@ -96,6 +96,9 @@ type Font struct {
 	// gids caches the glyph index of each code of a simple font (-1 = not
 	// yet looked up).
 	gids [256]int32
+	// postNames are the glyph names of a TrueType program's 'post' table,
+	// read on first use when it has no cmap (nil until then).
+	postNames map[string]opentype.GlyphIndex
 	// procs are the decoded glyph procedures of a Type 3 font, by name.
 	procs map[string][]byte
 
@@ -470,6 +473,12 @@ func (f *Font) simpleGlyphIndex(code int) opentype.GlyphIndex {
 			}
 		}
 		if !p.HasCharacterMap() && isTrueType(p) {
+			if f.postNames == nil {
+				f.postNames = postGlyphNames(p)
+			}
+			if gid, ok := f.postNames[name]; ok && gid != 0 {
+				return gid
+			}
 			if i, ok := macGlyphIndex()[name]; ok && i < p.NumGlyphs() {
 				return opentype.GlyphIndex(i)
 			}
