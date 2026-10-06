@@ -121,6 +121,13 @@ cera smooths magnified images here (`-image-filter smooth`, its
 do; with its default, the nearest pixel, every page with a magnified image
 would count cera as the outlier.
 
+Text is placed exactly, as PDFium places it; MuPDF, Poppler and
+Ghostscript round the baseline of horizontal text to whole device pixels
+(at 150 dpi `pdfjs/cid_cff.pdf` lies 0.23 px higher in all three, while
+at 1500 dpi all five agree to 0.07 px). Where text is most of the ink,
+the three outvote cera and PDFium on the glyph edges: that is a
+convention, not an error, and stays counted.
+
 The charts are drawn with [figure](https://github.com/timzifer/figure)
 (SVG, once with light and once with dark tokens, the page showing the one
 its colour scheme asks for); the tables below them hold every value.
