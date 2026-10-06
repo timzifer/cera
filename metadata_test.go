@@ -120,8 +120,8 @@ func TestTextString(t *testing.T) {
 		{"a\x7fb\xadc\x9fd", "a�b�c�d"},
 		{"\xe9t\xe9", "été"},
 		{"\xfe\xff\x00H\x00i", "Hi"},
-		{"\xfe\xff\x00\x1b\x00e\x00n\x00\x1b\x00H\x00i", "Hi"},                     // a language escape
-		{"\xfe\xff\x00\x1b\x00d\x00e\x00D\x00E\x00\x1b\x00H\x00i\x00\x1b", "Hi"},   // with a country, and an unpaired ESC
+		{"\xfe\xff\x00\x1b\x00e\x00n\x00\x1b\x00H\x00i", "Hi"},                   // a language escape
+		{"\xfe\xff\x00\x1b\x00d\x00e\x00D\x00E\x00\x1b\x00H\x00i\x00\x1b", "Hi"}, // with a country, and an unpaired ESC
 		{"\xef\xbb\xbf\x1ben\x1bHi", "Hi"},
 	} {
 		if got := textString(pdf.String([]byte(c.in))); got != c.want {

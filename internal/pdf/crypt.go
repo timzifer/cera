@@ -75,7 +75,7 @@ type decryptor struct {
 	// plainMetadata: /EncryptMetadata false, so metadata streams are
 	// stored as they are.
 	plainMetadata bool
-	v3        cipher.Block // AESV3: the file key's cipher, shared
+	v3            cipher.Block // AESV3: the file key's cipher, shared
 }
 
 // A Protection is what a file's security handler says about it.

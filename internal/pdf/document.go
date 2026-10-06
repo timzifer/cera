@@ -292,7 +292,7 @@ func (d *Document) parseIndirect(ctx *loadCtx, t *table, p *parser) (Ref, *Objec
 	}
 	if st, ok := obj.Stream(); ok && dec != nil && dec.streams != cryptNone &&
 		!dec.skips(ref.Num) && !isXRef(st.Dict.e) && !streamIsPlain(st.Dict) &&
-		!(dec.plainMetadata && hasType(st.Dict.e, "Metadata")) {
+		(!dec.plainMetadata || !hasType(st.Dict.e, "Metadata")) {
 		st.dec = dec
 	}
 	return ref, obj, nil
