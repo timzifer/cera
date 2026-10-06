@@ -9,8 +9,9 @@ import (
 
 // plainCFF builds a bare CFF program (not CID-keyed, ISOAdobe charset,
 // standard encoding) whose glyph 1, "space", is a square of 500 units,
-// with FontMatrix m written as reals.
-func plainCFF(m [6]float64) []byte {
+// with FontMatrix m written as reals, and the given Private DICT (by
+// default only nominalWidthX 0).
+func plainCFF(m [6]float64, private ...byte) []byte {
 	num := func(v int) []byte { return []byte{28, byte(v >> 8), byte(v)} }
 	off := func(v int) []byte { return []byte{29, byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)} }
 	real := func(v float64) []byte {
@@ -65,7 +66,9 @@ func plainCFF(m [6]float64) []byte {
 	}
 	square = append(square, 5, 14) // rlineto endchar
 	charStrings := index([]byte{14}, square)
-	private := []byte{139, 21} // nominalWidthX 0
+	if private == nil {
+		private = []byte{139, 21} // nominalWidthX 0
+	}
 	top := func(csAt, privAt int) []byte {
 		var t []byte
 		for _, v := range m {

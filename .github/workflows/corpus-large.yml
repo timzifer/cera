@@ -111,6 +111,7 @@ jobs:
           - { name: FuzzICC, pkg: . }
           - { name: FuzzLayers, pkg: . }
           - { name: FuzzForm, pkg: . }
+          - { name: FuzzRepair, pkg: . }
           - { name: FuzzScan, pkg: ./internal/content }
           - { name: FuzzParse, pkg: ./internal/cmap }
     runs-on: ubuntu-latest

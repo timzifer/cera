@@ -262,32 +262,59 @@ func (f *Font) lineMetrics(p *opentype.Font) {
 	}
 }
 
-// readProgram decodes an embedded font program. FontFile2 is TrueType,
-// FontFile a Type 1 program, FontFile3 a bare CFF program or a whole
-// OpenType font.
+// readProgram decodes an embedded font program. FontFile is a Type 1
+// program (or, from some writers, a bare CFF one), FontFile2 TrueType,
+// FontFile3 a bare CFF program or a whole OpenType font. Programs the
+// parsers reject are read again repaired where a repair is known
+// (fontrepair.go).
 func readProgram(key pdf.Name, data []byte) (*opentype.Font, error) {
 	switch key {
 	case "FontFile":
-		return opentype.ParseType1(data)
+		if isCFF(data) {
+			return parseCFF(data)
+		}
+		f, err := opentype.ParseType1(data)
+		if err != nil {
+			if fixed, ok := repairPFB(data); ok {
+				if g, err2 := opentype.ParseType1(fixed); err2 == nil {
+					return g, nil
+				}
+			}
+		}
+		return f, err
 	case "FontFile3":
 		if f, err := parseSFNT(data); err == nil {
 			return f, nil
 		}
-		return opentype.ParseCFF(data)
+		return parseCFF(data)
 	}
 	return parseSFNT(data)
 }
 
+// parseCFF parses a bare CFF program, again with its DICTs repaired
+// (repairCFF) when opentype.ParseCFF rejects it.
+func parseCFF(data []byte) (*opentype.Font, error) {
+	f, err := opentype.ParseCFF(data)
+	if err != nil {
+		if fixed, ok := repairCFF(data); ok {
+			if g, err2 := opentype.ParseCFF(fixed); err2 == nil {
+				return g, nil
+			}
+		}
+	}
+	return f, err
+}
+
 // parseSFNT parses a TrueType or OpenType program, the first font of a
-// collection (firstOfCollection), again with its hmtx table completed when
-// that is all it lacks (padHmtx).
+// collection (firstOfCollection), and again repaired (repairSFNT) when
+// opentype.Parse rejects it.
 func parseSFNT(data []byte) (*opentype.Font, error) {
 	if first, ok := firstOfCollection(data); ok {
 		data = first
 	}
 	f, err := opentype.Parse(data)
 	if err != nil {
-		if fixed, ok := padHmtx(data); ok {
+		if fixed, ok := repairSFNT(data); ok {
 			if g, err2 := opentype.Parse(fixed); err2 == nil {
 				return g, nil
 			}
