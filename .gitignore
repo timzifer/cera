@@ -41,3 +41,4 @@ go.work.sum
 /*.png
 /report-accuracy/
 /report-reference/
+/report-bench/

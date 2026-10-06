@@ -1,0 +1,357 @@
+{
+ "meta": {
+  "generated": "2026-10-06",
+  "cpu": "AMD Ryzen 7 5800H with Radeon Graphics",
+  "os": "windows/amd64",
+  "cores": 16,
+  "go": "go1.27.1",
+  "dpi": 150,
+  "runs": 5,
+  "multi_runs": 3,
+  "ref": "mupdf",
+  "corpus": "359fe26ef817",
+  "files": 41,
+  "versions": {
+   "cera": "cera v0.4.0-dirty",
+   "ghostscript": "ghostscript 10.08.0",
+   "mupdf": "mutool version 1.28.0",
+   "poppler": "pdftoppm version 26.09.0\r"
+  }
+ },
+ "ratios": {
+  "1": {
+   "all": {
+    "cera": {
+     "ratio": 0.6287126172338645,
+     "n": 41
+    },
+    "ghostscript": {
+     "ratio": 3.882078874082118,
+     "n": 41
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 41
+    },
+    "poppler": {
+     "ratio": 2.6473783208641684,
+     "n": 41
+    }
+   },
+   "drawing": {
+    "cera": {
+     "ratio": 0.26927366743279657,
+     "n": 8
+    },
+    "ghostscript": {
+     "ratio": 1.3215781782251568,
+     "n": 8
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 8
+    },
+    "poppler": {
+     "ratio": 1.0558724653533482,
+     "n": 8
+    }
+   },
+   "image": {
+    "cera": {
+     "ratio": 0.7222394647111443,
+     "n": 4
+    },
+    "ghostscript": {
+     "ratio": 4.93568277504438,
+     "n": 4
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 4
+    },
+    "poppler": {
+     "ratio": 2.2562133943351426,
+     "n": 4
+    }
+   },
+   "paper": {
+    "cera": {
+     "ratio": 0.8254777585762155,
+     "n": 4
+    },
+    "ghostscript": {
+     "ratio": 2.540817347374983,
+     "n": 4
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 4
+    },
+    "poppler": {
+     "ratio": 5.941335589431487,
+     "n": 4
+    }
+   },
+   "scan": {
+    "cera": {
+     "ratio": 0.697894525606452,
+     "n": 3
+    },
+    "ghostscript": {
+     "ratio": 4.489414458535183,
+     "n": 3
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 3
+    },
+    "poppler": {
+     "ratio": 2.5983702560867465,
+     "n": 3
+    }
+   },
+   "shading": {
+    "cera": {
+     "ratio": 0.6030708396592198,
+     "n": 6
+    },
+    "ghostscript": {
+     "ratio": 7.352117876617273,
+     "n": 6
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 6
+    },
+    "poppler": {
+     "ratio": 4.3166195749475165,
+     "n": 6
+    }
+   },
+   "text": {
+    "cera": {
+     "ratio": 0.814293114756355,
+     "n": 7
+    },
+    "ghostscript": {
+     "ratio": 4.975451224299386,
+     "n": 7
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 7
+    },
+    "poppler": {
+     "ratio": 3.1717163658115273,
+     "n": 7
+    }
+   },
+   "transparency": {
+    "cera": {
+     "ratio": 0.9133201773064151,
+     "n": 7
+    },
+    "ghostscript": {
+     "ratio": 5.574670778476473,
+     "n": 7
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 7
+    },
+    "poppler": {
+     "ratio": 2.941697657451223,
+     "n": 7
+    }
+   },
+   "vector": {
+    "cera": {
+     "ratio": 0.8709993985532796,
+     "n": 2
+    },
+    "ghostscript": {
+     "ratio": 5.842565534645329,
+     "n": 2
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 2
+    },
+    "poppler": {
+     "ratio": 2.4925713025901035,
+     "n": 2
+    }
+   }
+  },
+  "all": {
+   "all": {
+    "cera": {
+     "ratio": 0.7571652611830956,
+     "n": 41
+    },
+    "ghostscript": {
+     "ratio": 4.879834100764428,
+     "n": 41
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 41
+    },
+    "poppler": {
+     "ratio": 3.3606597896988895,
+     "n": 41
+    }
+   },
+   "drawing": {
+    "cera": {
+     "ratio": 0.6691626242019026,
+     "n": 8
+    },
+    "ghostscript": {
+     "ratio": 3.6729942957449855,
+     "n": 8
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 8
+    },
+    "poppler": {
+     "ratio": 3.025191997609097,
+     "n": 8
+    }
+   },
+   "image": {
+    "cera": {
+     "ratio": 0.8156972257176198,
+     "n": 4
+    },
+    "ghostscript": {
+     "ratio": 5.418425832266219,
+     "n": 4
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 4
+    },
+    "poppler": {
+     "ratio": 2.517932964594582,
+     "n": 4
+    }
+   },
+   "paper": {
+    "cera": {
+     "ratio": 0.818687686009787,
+     "n": 4
+    },
+    "ghostscript": {
+     "ratio": 2.658867017616736,
+     "n": 4
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 4
+    },
+    "poppler": {
+     "ratio": 6.429993851711125,
+     "n": 4
+    }
+   },
+   "scan": {
+    "cera": {
+     "ratio": 0.726607451474331,
+     "n": 3
+    },
+    "ghostscript": {
+     "ratio": 4.598184401332994,
+     "n": 3
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 3
+    },
+    "poppler": {
+     "ratio": 2.6695149364274604,
+     "n": 3
+    }
+   },
+   "shading": {
+    "cera": {
+     "ratio": 0.5585964958660616,
+     "n": 6
+    },
+    "ghostscript": {
+     "ratio": 7.352589823204045,
+     "n": 6
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 6
+    },
+    "poppler": {
+     "ratio": 4.361609708847448,
+     "n": 6
+    }
+   },
+   "text": {
+    "cera": {
+     "ratio": 0.8355172346466584,
+     "n": 7
+    },
+    "ghostscript": {
+     "ratio": 5.064590412964963,
+     "n": 7
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 7
+    },
+    "poppler": {
+     "ratio": 3.168052157216774,
+     "n": 7
+    }
+   },
+   "transparency": {
+    "cera": {
+     "ratio": 0.9228372732827698,
+     "n": 7
+    },
+    "ghostscript": {
+     "ratio": 5.949391586462049,
+     "n": 7
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 7
+    },
+    "poppler": {
+     "ratio": 3.181801684274468,
+     "n": 7
+    }
+   },
+   "vector": {
+    "cera": {
+     "ratio": 0.8589373228029553,
+     "n": 2
+    },
+    "ghostscript": {
+     "ratio": 5.825369544355621,
+     "n": 2
+    },
+    "mupdf": {
+     "ratio": 1,
+     "n": 2
+    },
+    "poppler": {
+     "ratio": 2.3958747610321076,
+     "n": 2
+    }
+   }
+  }
+ },
+ "threads": {
+  "cera": true,
+  "ghostscript": true,
+  "mupdf": true,
+  "poppler": false
+ }
+}

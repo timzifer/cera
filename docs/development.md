@@ -137,6 +137,30 @@ engine version, file content, resolution and page; cera is always rendered.
 MuPDF is AGPL and Ghostscript AGPL as well: they are linked into or run by
 this tool only, never by cera.
 
+## Speed against other engines
+
+`bench/` (a module of its own) measures cera against MuPDF, PDFium,
+hayro, pdf.js and, compiled to WebAssembly, against PDFium again, and
+reports only ratios ([Performance](performance.md)). Each engine runs in a
+worker process speaking a line protocol (`bench/protocol.md`); the
+engines take turns page by page, so a change of load on the machine falls
+on all of them alike.
+
+```sh
+pip install -r bench/workers/requirements.txt  # MuPDF and PDFium, with their native libraries
+(cd bench/workers/pdfjs && npm ci)            # pdf.js on @napi-rs/canvas
+cd bench
+go run .                                      # → ../report-bench: summary.md, summary.json, pages.csv, files.csv, charts
+go run . -engines cera,mupdf -match synthetic/
+go run . -cli -mutool path/to/mutool          # command-line tools, PDF to PNG, end to end
+go run . -dir ../testdata/borb -runs 0        # robustness only: which engine fails where
+go run . -charts                              # redraw charts and summary.md from summary.json
+```
+
+hayro's worker is built with `cargo` when it is installed; engines that
+are missing are skipped and named in the report. Do not run anything heavy
+alongside: taking turns evens out load, it does not remove it.
+
 ## Repository setup
 
 `main` is protected by the ruleset in `.github/rulesets/main.json`: no direct

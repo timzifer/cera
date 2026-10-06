@@ -16,6 +16,34 @@ faster than MuPDF on all cores), ≈ 0 allocations per page in steady state,
 - Own lock-free PDF reader: pages of one document render concurrently
 - Every bound on work and memory budgeted; damaged input draws less, never fails
 
+## Performance
+
+Time per page relative to MuPDF (lower is faster), one core, 150 dpi,
+the pinned corpus of 113 pages:
+
+| | all pages | papers | text, fonts | shadings | transparency | scans |
+|---|---|---|---|---|---|---|
+| MuPDF | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× |
+| **cera** | **0.68×** | **0.82×** | **0.89×** | **0.48×** | **0.72×** | **1.43×** |
+| PDFium | 1.13× | 1.25× | 1.29× | 1.71× | 0.67× | 1.62× |
+| hayro | 1.32× | 1.95× | 1.59× | 1.61× | 0.49× | 1.19× |
+| pdf.js | 3.72× | 6.07× | 5.85× | 0.95× | 2.06× | 3.76× |
+
+- All 16 cores: 0.23× MuPDF on one-page files (cera splits a page into
+  bands), 0.86× on documents of several pages.
+- Command line, PDF to PNG: `cmd/cera` 0.63× `mutool draw`, Poppler 2.65×,
+  Ghostscript 3.88×.
+- WebAssembly: 5.05× native MuPDF; PDFium in WebAssembly 2.10×.
+- One allocation per page (median), 41 MB peak memory per file (median).
+
+cera's own synthetic drawings, on which MuPDF is unusually slow (cera
+0.11×), are left out of this table. Ratios only, never times: engines take
+turns page by page, so the load of the machine falls on all alike; ratios
+can still shift between processors, and cera's by up to 10 % with the
+machine's load. Method, every category, where cera
+loses and how to reproduce:
+[Performance](docs/performance.md). AMD Ryzen 7 5800H, Windows, 2026-10-06.
+
 ## Install
 
 ```sh
@@ -52,6 +80,7 @@ go run ./cmd/cera -dpi 150 -o 'page-%d.png' input.pdf
 | [Features](docs/features.md) | what is drawn today, and what is counted as unsupported |
 | [Architecture](docs/architecture.md) | building blocks, display list, glyph and image caches, transparency, shadings, colour |
 | [Budgets](docs/budgets.md) | every bound on work and memory per input |
+| [Performance](docs/performance.md) | speed against MuPDF, PDFium, hayro, pdf.js, Poppler and Ghostscript, as ratios |
 | [Development](docs/development.md) | CI, corpora, accuracy against PDFium and other engines |
 | [ADRs](docs/adr/README.md) | architecture decisions; next up: GPU backend ([ADR 0011](docs/adr/0011-gpu-backend.md)) |
 

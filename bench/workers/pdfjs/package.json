@@ -1,0 +1,10 @@
+{
+  "name": "cera-bench-pdfjs",
+  "private": true,
+  "type": "module",
+  "description": "Bench worker for pdf.js (see bench/protocol.md)",
+  "dependencies": {
+    "@napi-rs/canvas": "1.0.10",
+    "pdfjs-dist": "6.4.299"
+  }
+}

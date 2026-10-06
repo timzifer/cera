@@ -1,0 +1,14 @@
+[package]
+name = "hayro-worker"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# A bench worker for hayro (see bench/protocol.md).
+
+[dependencies]
+hayro = "=0.8.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
