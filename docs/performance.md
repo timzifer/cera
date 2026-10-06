@@ -149,24 +149,28 @@ tool's wall clock from start to exit, PNG encoding included, against
 |---|---|---|---|---|---|
 | **one core** | | | | | |
 | MuPDF (`mutool draw`) | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× |
-| **cera** (`cmd/cera`) | **0.63×** | **0.27×** | **0.83×** | **0.81×** | **0.70×** |
-| Poppler (`pdftoppm`) | 2.65× | 1.06× | 5.94× | 3.17× | 2.60× |
-| Ghostscript | 3.88× | 1.32× | 2.54× | 4.98× | 4.49× |
+| **cera** (`cmd/cera`) | **0.58×** | **0.26×** | **0.70×** | **0.74×** | **0.64×** |
+| Poppler (`pdftoppm`) | 2.63× | 1.06× | 5.90× | 3.08× | 2.62× |
+| Ghostscript | 3.83× | 1.33× | 2.55× | 4.87× | 4.46× |
 | **16 cores** | | | | | |
 | MuPDF (`mutool draw -T 16 -B 256`) | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× |
-| **cera** | **0.76×** | **0.67×** | **0.82×** | **0.84×** | **0.73×** |
-| Poppler (no threads) | 3.36× | 3.03× | 6.43× | 3.17× | 2.67× |
-| Ghostscript (`-dNumRenderingThreads=16`) | 4.88× | 3.67× | 2.66× | 5.06× | 4.60× |
+| **cera** | **0.50×** | **0.29×** | **0.34×** | **0.64×** | **0.59×** |
+| Poppler (no threads) | 3.38× | 2.99× | 6.47× | 3.11× | 2.51× |
+| Ghostscript (`-dNumRenderingThreads=16`) | 4.82× | 3.56× | 2.71× | 4.96× | 4.34× |
 
 On the command line, starting the process and writing PNGs take a large
 share, which narrows the differences. On the three scan pages cera's
 library is slower than MuPDF's but `cmd/cera` is faster than `mutool`;
 presumably start-up and encoding outweigh drawing there, which is not
-yet examined. `mutool` gains much from
-threads on the drawings; `cmd/cera` hardly does. It spends 61–88 % of its
-time in Go's PNG encoder (about 90 % when rendering on 16 cores), which
-runs on one core and tries every filter on every row; so this row measures
-the encoder more than cera. Writing PNGs in parallel bands is
+yet examined.
+
+`cmd/cera` writes its PNGs with [calamus](https://github.com/timzifer/calamus),
+which encodes them in bands on all cores. With `image/png`, encoding was
+61–88 % of the command's time and the command gained little from cores
+(0.76× `mutool` on 16 cores, 0.63× on one); with calamus it is 0.50× on 16
+cores and 0.58× on one, while Poppler and Ghostscript, unchanged, measured
+the same as before within 2 %. The pages are still written one after
+another; overlapping drawing and encoding is the rest of
 [#67](https://github.com/timzifer/cera/issues/67).
 
 ## Accuracy alongside
