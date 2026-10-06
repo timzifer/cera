@@ -1,0 +1,3 @@
+# The Python bindings the bench workers drive (MuPDF, PDFium), as measured.
+pymupdf==1.28.2
+pypdfium2==5.14.0
