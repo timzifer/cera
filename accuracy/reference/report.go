@@ -28,7 +28,12 @@ type report struct {
 	Seed      uint64  `json:"seed,omitempty"`
 	// Annotations says whether annotations were drawn; without them only
 	// the page content is compared.
-	Annotations bool     `json:"annotations"`
+	Annotations bool `json:"annotations"`
+	// Overprint says cera simulated overprint (-overprint).
+	Overprint bool `json:"overprint,omitempty"`
+	// CMYKProfile names the profile cera converted DeviceCMYK through
+	// (-cmyk-profile); empty for the bundled one.
+	CMYKProfile string   `json:"cmyk_profile,omitempty"`
 	Engines     []string `json:"engines"`
 	Missing     []string `json:"missing,omitempty"`
 	Skipped     []string `json:"skipped,omitempty"`

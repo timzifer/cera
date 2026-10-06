@@ -61,7 +61,7 @@ var engineOrder = []string{"cera", "pdfium", "mupdf", "poppler", "ghostscript"}
 func newEngine(name string, timeout time.Duration, annots bool) (engine, error) {
 	switch name {
 	case "cera":
-		return ceraEngine{timeout, annots}, nil
+		return ceraEngine{timeout: timeout, annots: annots, overprint: simulateOverprint}, nil
 	case "pdfium":
 		p, err := pdfium.New()
 		if err != nil {
@@ -82,6 +82,8 @@ func newEngine(name string, timeout time.Duration, annots bool) (engine, error) 
 type ceraEngine struct {
 	timeout time.Duration
 	annots  bool
+	// overprint simulates overprint (RenderOptions.SimulateOverprint).
+	overprint bool
 }
 
 func (ceraEngine) name() string    { return "cera" }
@@ -112,7 +114,7 @@ func (c ceraEngine) render(f *file, pages []int, scale float64) ([]*image.RGBA, 
 		var st cera.Stats
 		err = p.Render(context.Background(), img, cera.RenderOptions{
 			Scale: scale, Background: color.RGBA{255, 255, 255, 255}, Deadline: time.Now().Add(c.timeout), Stats: &st,
-			Annotations: mode,
+			Annotations: mode, SimulateOverprint: c.overprint,
 		})
 		f.unsupported[i] = st.UnsupportedKeys()
 		var pe *cera.PanicError

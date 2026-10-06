@@ -15,6 +15,15 @@ What cera draws today, and what it counts as unsupported.
   forms through the font's `vert` feature
 - Text knockout (`TK`) for overlapping glyphs below opacity 1
 
+Embedded programs PDF writers got wrong are read repaired, as PDFium and
+pdf.js read them (`fontrepair.go`): TrueType tables that disagree (glyph
+count, `loca`, `hmtx`/`vmtx`, index format, `unitsPerEm`), tables a few
+bytes from where the directory says, directory entries of garbage, a
+TrueType collection as `FontFile2`, CFF DICTs with an empty real or bytes
+that start no operand, a CFF program as `FontFile`, a PFB cut off before
+its trailer. A program whose glyphs themselves are damaged is left to a
+stand-in (`font-bad`).
+
 Fonts a file does not embed:
 
 | font asked for | drawn with |
