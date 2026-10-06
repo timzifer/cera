@@ -12,11 +12,11 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/png"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/timzifer/calamus/png"
 	"github.com/timzifer/cera"
 )
 
@@ -174,6 +174,8 @@ func writePNG(name string, img image.Image) error {
 	if err != nil {
 		return err
 	}
+	// calamus writes the PNG in bands on all cores; encoding, not
+	// rendering, was most of this command's time with image/png (#67).
 	enc := png.Encoder{CompressionLevel: png.BestSpeed}
 	if err := enc.Encode(f, img); err != nil {
 		f.Close()

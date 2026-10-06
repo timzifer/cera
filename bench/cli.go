@@ -47,7 +47,8 @@ func setupTools(cache string) ([]*tool, []string) {
 				exe = ".exe"
 			}
 			t.bin = filepath.Join(cache, "cera"+exe)
-			cmd := exec.Command("go", "build", "-trimpath", "-o", t.bin, "github.com/timzifer/cera/cmd/cera")
+			// cmd/cera is a module of its own (it writes PNGs with calamus).
+			cmd := exec.Command("go", "build", "-C", filepath.Join("..", "cmd", "cera"), "-trimpath", "-o", t.bin, ".")
 			if out, e := cmd.CombinedOutput(); e != nil {
 				err = fmt.Errorf("go build: %v: %s", e, firstLine(out))
 			}
