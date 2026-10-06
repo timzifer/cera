@@ -111,6 +111,8 @@ cd accuracy/reference
 go run . -dir ../../testdata/corpus                         # → ../../report-reference/report.html
 go run . -dir ../../testdata/borb -pages 3 -dpi 72 -sample 200
 go run . -engines cera,pdfium,mupdf -match synthetic/       # a subset of engines and files
+go run . -cmyk-profile USWebCoatedSWOP.icc                  # cera's DeviceCMYK through another profile
+go run . -overprint                                         # cera with overprint simulated
 ```
 
 The charts are drawn with [figure](https://github.com/timzifer/figure)

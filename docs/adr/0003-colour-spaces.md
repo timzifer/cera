@@ -181,6 +181,20 @@ Not done yet:
   37.2 % to 1.9 %). Of the 22 files of the pinned, pdf.js and borb
   corpora with Default spaces, no other page in the first three changes
   measurably.
+- **TR 005 against the references' profiles, over a corpus** (#34;
+  pinned, pdf.js and borb, 3 pages per file, 96 dpi, 2761 pages against
+  the consensus of PDFium, MuPDF, Poppler and Ghostscript): the pages
+  that count `overprint` differ from the references through the CMYK
+  conversion, not through overprint (simulating it raises cera's outlier
+  share there from 0.89 % to 1.19 %; the references do not simulate it
+  either). Deep CMYK is where TR 005 and Adobe's profile part most: the
+  rich black C81 M76 Y73 K89 of borb `0159.pdf` becomes 18 17 19 with
+  TR 005 and 0 0 0 with Adobe's, as the references draw it (2 2 2).
+  With Adobe's profile as `CMYKProfile`, cera's outlier share over the
+  corpus falls from 1.27 % to 0.85 % (207 pages better, 8 slightly
+  worse), on the `overprint` pages from 0.89 % to 0.40 %. TR 005 stays
+  the default for its licence; `accuracy/reference -cmyk-profile`
+  measures any other.
 - LUT-based grey and RGB ICC profiles fall back on the device space of
   their component count, and are not counted as `icc-lut`.
 
