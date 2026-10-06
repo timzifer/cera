@@ -38,8 +38,11 @@ const (
 	maxComps         = 32 // components of a colour (DeviceN allows 32)
 	maxFunctionDepth = 8  // stitching functions naming functions
 	maxPSStack       = 100
-	maxLayerDepth    = 16 // /Order nesting and /VE expressions
-	maxFieldDepth    = 32 // the AcroForm field tree
+	maxLayerDepth    = 16       // /Order nesting and /VE expressions
+	maxFieldDepth    = 32       // the AcroForm field tree
+	maxInfoEntries   = 256      // entries of /Info beyond the standard ones
+	maxInfoString    = 64 << 10 // bytes of one decoded /Info string
+	maxXMPBytes      = 16 << 20 // bytes of the decoded XMP metadata stream
 )
 
 // Caches bound memory kept for reuse; past them entries are dropped and
@@ -89,6 +92,9 @@ var budgets = []budget{
 	{"maxPSStack", maxPSStack, "", "operand stack of a PostScript calculator function; further pushes are dropped"},
 	{"maxLayerDepth", maxLayerDepth, "", "/Order nesting and visibility expressions; deeper ones do not read (oc-bad)"},
 	{"maxFieldDepth", maxFieldDepth, "", "depth of the AcroForm field tree; deeper fields are not read"},
+	{"maxInfoEntries", maxInfoEntries, "", "entries of /Info beyond the standard ones kept in Metadata.Custom; further ones are left out"},
+	{"maxInfoString", maxInfoString, "", "bytes of one decoded /Info string in Metadata; a longer one is cut"},
+	{"maxXMPBytes", maxXMPBytes, "", "bytes of the decoded XMP metadata stream; a larger one is left out of Metadata"},
 	{"content.MaxNesting", content.MaxNesting, "", "arrays and dictionaries nested in one operand (Stats.Errors)"},
 	{"content.MaxOperands", content.MaxOperands, "", "operands kept for one operator; the first are dropped"},
 	{"cmap.MaxSpans", cmap.MaxSpans, "", "code ranges of one CMap; further ones are ignored"},

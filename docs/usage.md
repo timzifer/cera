@@ -128,6 +128,21 @@ content never stop a page; a non-nil error means a partial image
 that also implements `TextDevice` receives every string shown, in every
 render mode. `Page.Text` is built on it.
 
+## Metadata
+
+```go
+m := doc.Metadata()
+fmt.Println(m.Title, m.Author, m.Created.Format(time.DateOnly))
+if m.XMP != nil {
+	// parse with encoding/xml if dc:title and the like are needed
+}
+```
+
+`Metadata` never fails: a missing or damaged `/Info` leaves fields empty.
+Dates are read leniently (a missing `D:`, missing fields, `Z00'00'`); a
+date without a time zone is taken as UTC. PDF 2.0 deprecates `/Info`, but
+for its dates, in favour of XMP, which is returned raw.
+
 ## Command line
 
 ```sh

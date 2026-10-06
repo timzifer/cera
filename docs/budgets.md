@@ -32,6 +32,9 @@ A test keeps this table in step with the code.
 | `maxPSStack` | 100 | – | operand stack of a PostScript calculator function; further pushes are dropped |
 | `maxLayerDepth` | 16 | – | /Order nesting and visibility expressions; deeper ones do not read (oc-bad) |
 | `maxFieldDepth` | 32 | – | depth of the AcroForm field tree; deeper fields are not read |
+| `maxInfoEntries` | 256 | – | entries of /Info beyond the standard ones kept in Metadata.Custom; further ones are left out |
+| `maxInfoString` | 64 Ki | – | bytes of one decoded /Info string in Metadata; a longer one is cut |
+| `maxXMPBytes` | 16 Mi | – | bytes of the decoded XMP metadata stream; a larger one is left out of Metadata |
 | `content.MaxNesting` | 32 | – | arrays and dictionaries nested in one operand (Stats.Errors) |
 | `content.MaxOperands` | 4 Ki | – | operands kept for one operator; the first are dropped |
 | `cmap.MaxSpans` | 128 Ki | – | code ranges of one CMap; further ones are ignored |

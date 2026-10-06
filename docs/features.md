@@ -109,6 +109,15 @@ Fonts a file does not embed:
 - `cmd/cera -field name=value` fills a form
 - Not run: JavaScript. XFA: drawn from the AcroForm fallback, counted as `xfa`
 
+### Metadata
+
+- `Document.Metadata`: the document information dictionary decoded (title,
+  author and the other standard entries, dates as `time.Time`, other string
+  entries in `Custom`) and the XMP stream, raw
+- Text strings in UTF-16BE, UTF-8 and PDFDocEncoding (all of it, accents at
+  0x18–0x1F included), language escapes dropped; lenient dates
+- With `/EncryptMetadata false` the XMP stream is read as stored
+
 ## Unsupported
 
 Counted per page in `Stats.Unsupported`, so the corpus reports show what

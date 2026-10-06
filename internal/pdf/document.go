@@ -291,17 +291,21 @@ func (d *Document) parseIndirect(ctx *loadCtx, t *table, p *parser) (Ref, *Objec
 		return ref, nil, err
 	}
 	if st, ok := obj.Stream(); ok && dec != nil && dec.streams != cryptNone &&
-		!dec.skips(ref.Num) && !isXRef(st.Dict.e) && !streamIsPlain(st.Dict) {
+		!dec.skips(ref.Num) && !isXRef(st.Dict.e) && !streamIsPlain(st.Dict) &&
+		(!dec.plainMetadata || !hasType(st.Dict.e, "Metadata")) {
 		st.dec = dec
 	}
 	return ref, obj, nil
 }
 
-func isXRef(e []Entry) bool {
+func isXRef(e []Entry) bool { return hasType(e, "XRef") }
+
+// hasType reports whether a dictionary's /Type is t.
+func hasType(e []Entry, t Name) bool {
 	for _, x := range e {
 		if x.Key == "Type" {
 			n, _ := x.Val.Name()
-			return n == "XRef"
+			return n == t
 		}
 	}
 	return false

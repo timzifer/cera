@@ -21,6 +21,11 @@ func buildPDF(contents []string, pageExtra string, objs ...string) []byte {
 
 // buildPDFCatalog is buildPDF with catalogExtra added to the catalog.
 func buildPDFCatalog(catalogExtra string, contents []string, pageExtra string, objs ...string) []byte {
+	return buildPDFTrailer("", catalogExtra, contents, pageExtra, objs...)
+}
+
+// buildPDFTrailer is buildPDFCatalog with trailerExtra added to the trailer.
+func buildPDFTrailer(trailerExtra, catalogExtra string, contents []string, pageExtra string, objs ...string) []byte {
 	var b bytes.Buffer
 	offsets := map[int]int{}
 	obj := func(n int, body string) {
@@ -54,7 +59,7 @@ func buildPDFCatalog(catalogExtra string, contents []string, pageExtra string, o
 			b.WriteString("0000000000 65535 f \n")
 		}
 	}
-	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", last+1, xref)
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R %s >>\nstartxref\n%d\n%%%%EOF\n", last+1, trailerExtra, xref)
 	return b.Bytes()
 }
 
