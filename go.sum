@@ -12,10 +12,6 @@ github.com/go-opentype/opentype v0.13.0 h1:q9K7IGDfwMP/ik51ZkwiYf6jbaqPfocvAIuoj
 github.com/go-opentype/opentype v0.13.0/go.mod h1:AOixevJf7XQaH7+WG+OMIOZEbYPXfMqklVk26Y6YTUU=
 github.com/tannevaled/gobig2 v0.2.0 h1:yx97/ltljALrIWDFVqHjPUIjAp3bfUUhH8Z8UROvNLc=
 github.com/tannevaled/gobig2 v0.2.0/go.mod h1:X0S1H+N35kg6zYgVYRqGMsGj3C35zs+iA2r1MXyPcV4=
-github.com/timzifer/stilus v0.8.0 h1:HHl0zhPclvSS2jp7MBVkoggvaZ+P5+RzWQzkS6ATE5w=
-github.com/timzifer/stilus v0.8.0/go.mod h1:J8uybarHVrCcMUgRwrEkZOw5USCYqbIcfqjTGm2pB2o=
-github.com/timzifer/stilus v0.8.1-0.20261006163711-f9dc45c35145 h1:yIw2UJS4V9khPXKGfF8u9d6q/1DnqZ3iWT57Pw+/8lI=
-github.com/timzifer/stilus v0.8.1-0.20261006163711-f9dc45c35145/go.mod h1:J8uybarHVrCcMUgRwrEkZOw5USCYqbIcfqjTGm2pB2o=
 github.com/timzifer/stilus v0.9.0 h1:6LisRplrGPdSbLozc+vXd2lt8rLegc1k/8ezJ+9CF3A=
 github.com/timzifer/stilus v0.9.0/go.mod h1:J8uybarHVrCcMUgRwrEkZOw5USCYqbIcfqjTGm2pB2o=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
