@@ -115,6 +115,12 @@ allocations); median allocations per rendered page 33 → 3.
   to them.
 - Mac Roman and Mac Expert fonts render and extract correctly; the accuracy
   thresholds of affected files go down.
+- A symbolic Type 1 or CFF font without `/Encoding` takes its codes from
+  the program's built-in encoding before StandardEncoding (PDF 2.0
+  9.6.5.2, as PDFium and pdf.js read it; borb 0345.pdf moves closer to
+  PDFium). With `/Differences` but no `/BaseEncoding` StandardEncoding
+  stays the base: in five subsets of the corpora the built-in encoding
+  contradicts the ToUnicode map there (code 39 `quoteright` → `l`).
 
 ## Alternatives considered
 

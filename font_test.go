@@ -84,6 +84,42 @@ func TestType1BuiltinEncodingWithoutCmap(t *testing.T) {
 	}
 }
 
+// A symbolic Type 1 font without /Encoding is addressed through its
+// program's built-in encoding, even where StandardEncoding names a glyph the
+// program also has (PDF 2.0 9.6.5.2; borb 0345.pdf, a TeX font whose code
+// 177 is sacute, not endash). With /Differences but no /BaseEncoding the
+// standard names still come first: there the built-in encoding of subsets
+// contradicts their ToUnicode maps (borb 0012.pdf, code 39).
+func TestType1BuiltinEncodingWithoutEncoding(t *testing.T) {
+	prog, len1, len2 := type1Program("A", "G65")
+	for _, tc := range []struct {
+		encoding string
+		want     string
+	}{
+		{"", "G65"},
+		{"/Encoding << /Type /Encoding /Differences [9 /A] >> ", "A"},
+	} {
+		font := "<< /Type /Font /Subtype /Type1 /BaseFont /ABCDEF+Test /FirstChar 65 /LastChar 65 /Widths [500] " +
+			tc.encoding + "/FontDescriptor 101 0 R >>"
+		desc := "<< /Type /FontDescriptor /FontName /ABCDEF+Test /Flags 4 /FontFile 102 0 R >>"
+		stream := fmt.Sprintf("<< /Length %d /Length1 %d /Length2 %d /Length3 0 >>\nstream\n%s\nendstream", len(prog), len1, len2, prog)
+		d, err := Open(textPDF("BT /F1 10 Tf (A) Tj ET", font, desc, stream))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f := d.font(d.dict(d.dict(mustPage(t, d).dict.Get("Resources")).Get("Font")).Get("F1"))
+		if f.program == nil || f.substituted {
+			t.Fatalf("program not read: %+v", f)
+		}
+		f.mu.Lock()
+		gid := f.glyphIndex(65)
+		f.mu.Unlock()
+		if got, _ := f.program.GlyphName(gid); got != tc.want {
+			t.Errorf("encoding %q: code 65 is glyph %q, want %s", tc.encoding, got, tc.want)
+		}
+	}
+}
+
 func mustPage(t *testing.T, d *Document) *Page {
 	t.Helper()
 	p, err := d.Page(0)

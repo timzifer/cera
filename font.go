@@ -86,6 +86,11 @@ type Font struct {
 	// Paths are never modified once stored, so devices may read them from
 	// any goroutine.
 	outlines map[opentype.GlyphIndex]*Path
+	// builtinBase says the codes of a simple font are the program's own:
+	// a symbolic Type 1 or CFF program and no /Encoding at all, so the
+	// built-in encoding comes before StandardEncoding (PDF 2.0 9.6.5.2,
+	// as PDFium and pdf.js read it).
+	builtinBase bool
 	// hasToUnicode says the font dictionary has a ToUnicode map.
 	hasToUnicode bool
 	// gids caches the glyph index of each code of a simple font (-1 = not
@@ -211,6 +216,10 @@ func (d *Document) loadFont(dict pdf.Dict) *Font {
 	}
 	if f.program == nil {
 		f.substitute(d)
+	}
+	if f.program != nil && !f.substituted && !f.composite() && f.pdf.Symbolic() && !isTrueType(f.program) &&
+		d.resolve(dict.Get("Encoding")).IsNull() {
+		f.builtinBase = true
 	}
 	if f.vertical && f.program != nil {
 		f.gsub = f.program.GSUB()
@@ -413,6 +422,11 @@ func (f *Font) simpleGlyphIndex(code int) opentype.GlyphIndex {
 			return opentype.GlyphIndex(g.GID)
 		}
 		return 0
+	}
+	if f.builtinBase {
+		if gid, ok := p.GlyphIndexByCode(byte(code)); ok && gid != 0 {
+			return gid
+		}
 	}
 	if f.pdf.Symbolic() {
 		if gid, ok := f.byChar(code); ok {
