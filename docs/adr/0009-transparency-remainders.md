@@ -85,6 +85,18 @@ These are rare in the corpus but visible when they occur.
   glyph procedures that stroke, draw images or paint unbounded shadings.
 - 4 is justified only by corpus evidence; until then the key stays in the
   report as a known approximation.
+- **4, measured** (#34; pinned, pdf.js and borb, 3 pages per file): `AIS
+  true` changes nothing outside knockout groups, where shape and opacity
+  multiply (PDF 2.0 11.3.7), so `alpha-is-shape` is now counted only
+  inside one (`interp.shapeAlpha`): from 88 pages to 1, `pdf.js
+  issue18032`, whose knockout group with AIS holds only empty forms. The
+  outliers of the 88 pages had other causes: the CMYK profile (ADR 0003),
+  and on issue18032 a group at opacity 0 that the display list folded
+  into a fill at alpha 0, which then knocked out a gradient in its
+  knockout group. A group at opacity 0 is now dropped like any object
+  painted at opacity 0, and knocks out nothing, as Acrobat, PDFium and
+  Ghostscript draw that page (MuPDF and Poppler draw it as cera did). No
+  file needs the shape channel of 4.
 
 ## Alternatives considered
 
