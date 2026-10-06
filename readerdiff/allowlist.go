@@ -23,6 +23,7 @@ var reasons = map[string]string{
 	"macexpert-encoding": "MacExpertEncoding is its own table, not StandardEncoding",
 	"saslprep":           "revision 5 and 6 passwords are prepared with SASLprep (RFC 4013)",
 	"encrypt-unreadable": "a file whose /Encrypt dictionary does not parse is read unencrypted, as PDFium does",
+	"brotli":             "/BrotliDecode (RFC 7932) is decoded, as pdf.js does",
 	"literal-eol":        "a literal string keeps its raw end-of-line bytes, as pdf.js, MuPDF and PDFium do",
 }
 

@@ -9,6 +9,9 @@ require (
 
 require github.com/go-pdfkit/pdffont v0.3.1
 
-require golang.org/x/text v0.34.0 // indirect
+require (
+	github.com/andybalholm/brotli v1.2.6 // indirect
+	golang.org/x/text v0.34.0 // indirect
+)
 
 replace github.com/timzifer/cera => ../

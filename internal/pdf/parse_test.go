@@ -180,6 +180,7 @@ func TestFilters(t *testing.T) {
 		want []byte
 	}{
 		{"FlateDecode", deflate(plain), plain},
+		{"BrotliDecode", brotliCompress(plain), plain},
 		{"AHx", []byte("48 65 6C6C6F7>"), []byte("Hello\x70")},
 		{"A85", []byte("<~87cURD]i,\"Ebo80~>"), []byte("Hello World!")},
 		{"RL", []byte{2, 'a', 'b', 'c', 254, 'x', 128}, []byte("abcxxx")},
@@ -200,6 +201,22 @@ func TestFilters(t *testing.T) {
 	if out, err := flateDecode(z[:len(z)/2], 0); err == nil || len(out) == 0 {
 		t.Errorf("truncated Flate: %d bytes, %v", len(out), err)
 	}
+	// So does truncated Brotli.
+	long := make([]byte, 1<<20)
+	rng := rand.New(rand.NewPCG(1, 2))
+	for i := range long {
+		long[i] = 'a' + byte(rng.IntN(16))
+	}
+	b := brotliCompress(long)
+	if out, err := brotliDecode(b[:len(b)/2], 0); err == nil || len(out) == 0 {
+		t.Errorf("truncated Brotli: %d bytes, %v", len(out), err)
+	}
+	// Brotli takes Flate's predictors: PNG Up rows of three columns.
+	parm := NewDict(Entry{"Predictor", Integer(12)}, Entry{"Columns", Integer(3)})
+	out, err := applyFilter("BrotliDecode", brotliCompress([]byte{2, 1, 2, 3, 2, 1, 1, 1}), parm, none)
+	if err != nil || !bytes.Equal(out, []byte{1, 2, 3, 2, 3, 4}) {
+		t.Errorf("Brotli with predictor: %v, %v", out, err)
+	}
 }
 
 func TestStreamCap(t *testing.T) {
@@ -213,6 +230,9 @@ func TestStreamCap(t *testing.T) {
 	rl := bytes.Repeat([]byte{129, 0}, 100)
 	if _, err := runLengthDecode(rl); !errors.Is(err, ErrTooLarge) {
 		t.Errorf("RunLength: %v", err)
+	}
+	if _, err := brotliDecode(brotliCompress(make([]byte, 5000)), 0); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("Brotli: %v", err)
 	}
 }
 

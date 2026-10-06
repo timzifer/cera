@@ -9,6 +9,7 @@ require (
 
 require (
 	github.com/ajroetker/go-highway v0.0.12 // indirect
+	github.com/andybalholm/brotli v1.2.6 // indirect
 	github.com/anthonynsimon/bild v0.14.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect

@@ -12,6 +12,10 @@
 saslprep-r6.pdf * saslprep
 PDFBOX-4352-0.pdf * encrypt-unreadable
 
+# Streams compressed with Brotli, the cross-reference stream among them:
+# v0.6 does not open the file.
+Brotli-Prototype-FileA.pdf * brotli
+
 # Fonts whose program, ToUnicode map or CIDToGIDMap only decodes without
 # the Adler-32 check: v0.6 refused the stream, so the font had none.
 * adler/ adler-ignored

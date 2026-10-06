@@ -1,7 +1,8 @@
 // Ported from github.com/go-pdfkit/reader v0.6.0 (BSD-3-Clause,
 // Copyright (c) 2026 the go-pdfkit/reader authors); see LICENSE-go-pdfkit.
 // Changed: every filter is capped by MaxStreamBytes, Flate reuses its
-// decompressors and ignores the Adler-32 checksum (as pdf.js and MuPDF do).
+// decompressors and ignores the Adler-32 checksum (as pdf.js and MuPDF do);
+// BrotliDecode is added.
 
 package pdf
 
@@ -12,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/andybalholm/brotli"
 
 	"github.com/timzifer/cera/internal/pdfsyntax"
 )
@@ -161,6 +164,12 @@ func applyFilter(f Name, data []byte, parm Dict, resolve func(Object) Object) ([
 			return salvage(out, err, parm, resolve)
 		}
 		return applyPredictor(out, parm, resolve)
+	case "BrotliDecode":
+		out, err := brotliDecode(data, sizeHint(len(data)))
+		if err != nil {
+			return salvage(out, err, parm, resolve)
+		}
+		return applyPredictor(out, parm, resolve)
 	case "ASCIIHexDecode", "AHx":
 		return asciiHexDecode(data)
 	case "ASCII85Decode", "A85":
@@ -293,6 +302,17 @@ func flateDecode(data []byte, hint int) ([]byte, error) {
 	out, err := inflate(data, hint)
 	if err != nil {
 		return out, fmt.Errorf("pdf: FlateDecode: %w", err)
+	}
+	return out, nil
+}
+
+// brotliDecode decompresses a /BrotliDecode stream (RFC 7932), the filter
+// the PDF Association adds to PDF 2.0; its decode parameters are Flate's.
+// A truncated stream gives back its prefix with the error that ended it.
+func brotliDecode(data []byte, hint int) ([]byte, error) {
+	out, err := readCapped(brotli.NewReader(bytes.NewReader(data)), hint)
+	if err != nil {
+		return out, fmt.Errorf("pdf: BrotliDecode: %w", err)
 	}
 	return out, nil
 }

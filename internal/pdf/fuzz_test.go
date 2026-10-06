@@ -98,10 +98,11 @@ func FuzzFilters(f *testing.F) {
 	f.Add(byte(1), byte(0), byte(0), []byte{0x80, 0x0B, 0x60, 0x50, 0x22, 0x0C, 0x0C, 0x85, 0x01})
 	f.Add(byte(2), byte(0), byte(0), []byte("<~87cURD]i,\"Ebo80~>"))
 	f.Add(byte(5), byte(0), byte(0), []byte{0x00, 0x10, 0x01})
+	f.Add(byte(7), byte(0), byte(0), []byte{0x0b, 0x02, 0x80, 0x68, 0x69, 0x03})
 	saved := MaxStreamBytes
 	MaxStreamBytes = 1 << 20
 	defer func() { MaxStreamBytes = saved }()
-	names := []Name{"FlateDecode", "LZWDecode", "ASCII85Decode", "ASCIIHexDecode", "RunLengthDecode", "CCITTFaxDecode", "Crypt"}
+	names := []Name{"FlateDecode", "LZWDecode", "ASCII85Decode", "ASCIIHexDecode", "RunLengthDecode", "CCITTFaxDecode", "Crypt", "BrotliDecode"}
 	none := func(o Object) Object { return o }
 	f.Fuzz(func(t *testing.T, which, pred, cols byte, data []byte) {
 		parm := NewDict(

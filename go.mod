@@ -3,6 +3,7 @@ module github.com/timzifer/cera
 go 1.26.4
 
 require (
+	github.com/andybalholm/brotli v1.2.6
 	github.com/go-images/jpeg v0.2.0
 	github.com/go-images/jpeg2000 v0.13.2
 	github.com/go-opentype/fonts v0.10.0

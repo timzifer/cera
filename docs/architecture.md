@@ -6,7 +6,7 @@ cores are used. The rest comes from libraries:
 
 | layer | source |
 |---|---|
-| file reader: xref, objects, filters, encryption, repair, decoded-stream cache | cera (`internal/pdf`), ported from [go-pdfkit/reader](https://github.com/go-pdfkit/reader) (BSD-3) onto its own object model ([ADR 0012](adr/0012-own-pdf-reader.md)) |
+| file reader: xref, objects, filters, encryption, repair, decoded-stream cache | cera (`internal/pdf`), ported from [go-pdfkit/reader](https://github.com/go-pdfkit/reader) (BSD-3) onto its own object model ([ADR 0012](adr/0012-own-pdf-reader.md)); Brotli through [andybalholm/brotli](https://github.com/andybalholm/brotli) (MIT) |
 | content scanner, interpreter, graphics state | cera |
 | display list, bands, workers | cera |
 | rasterizer, stroker, clip, compositing; shaders for images, glyph masks, layers, blend modes, gradients, meshes | [timzifer/stilus](https://github.com/timzifer/stilus) (MIT) |

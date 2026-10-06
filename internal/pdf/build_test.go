@@ -5,6 +5,8 @@ import (
 	"compress/zlib"
 	"fmt"
 	"strings"
+
+	"github.com/andybalholm/brotli"
 )
 
 // file builds a PDF from numbered object bodies (the text between
@@ -60,6 +62,14 @@ func stream(dict string, data []byte) string {
 func deflate(b []byte) []byte {
 	var out bytes.Buffer
 	w := zlib.NewWriter(&out)
+	w.Write(b)
+	w.Close()
+	return out.Bytes()
+}
+
+func brotliCompress(b []byte) []byte {
+	var out bytes.Buffer
+	w := brotli.NewWriter(&out)
 	w.Write(b)
 	w.Close()
 	return out.Bytes()

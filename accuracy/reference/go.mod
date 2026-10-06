@@ -9,6 +9,8 @@ require (
 	github.com/timzifer/figure v0.14.1-0.20260929122627-5c067d67d2c9
 )
 
+require github.com/andybalholm/brotli v1.2.6 // indirect
+
 require (
 	github.com/ajroetker/go-highway v0.0.12 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect

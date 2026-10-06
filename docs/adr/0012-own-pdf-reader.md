@@ -74,7 +74,10 @@ Encrypted streams are decrypted lazily, as the first decode stage. The
 cause) is kept.
 
 **Filters.** Flate with pooled decompressors and no Adler-32 check (as pdf.js
-and MuPDF), LZW rewritten on prefix tables, every filter capped by
+and MuPDF), LZW rewritten on prefix tables, `/BrotliDecode` (RFC 7932,
+which the PDF Association adds to PDF 2.0; Flate's predictors; decoded
+with github.com/andybalholm/brotli, pure Go, MIT — PDFium does not open
+such files, pdf.js does), every filter capped by
 `MaxStreamBytes`, predictor rows bounded by `MaxPredictorRow`, parser nesting
 by `MaxNesting`; hybrid sections merge table `n`, then `/XRefStm`, then table
 `f`.
