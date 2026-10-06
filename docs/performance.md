@@ -163,8 +163,11 @@ share, which narrows the differences. On the three scan pages cera's
 library is slower than MuPDF's but `cmd/cera` is faster than `mutool`;
 presumably start-up and encoding outweigh drawing there, which is not
 yet examined. `mutool` gains much from
-threads on the drawings; `cmd/cera` hardly does: it draws pages one after
-another, and Go's PNG encoder uses one core.
+threads on the drawings; `cmd/cera` hardly does. It spends 61–88 % of its
+time in Go's PNG encoder (about 90 % when rendering on 16 cores), which
+runs on one core and tries every filter on every row; so this row measures
+the encoder more than cera. Writing PNGs in parallel bands is
+[#67](https://github.com/timzifer/cera/issues/67).
 
 ## Accuracy alongside
 
