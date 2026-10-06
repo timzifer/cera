@@ -1,6 +1,8 @@
 package cera
 
 import (
+	"math"
+
 	"github.com/timzifer/stilus"
 )
 
@@ -19,13 +21,30 @@ const (
 	// spec (and what Ghostscript does): pixel art, QR codes and scans stay
 	// crisp.
 	ImageNearest ImageFilter = iota
-	// ImageSmooth samples bilinearly, as PDFium, MuPDF and Poppler do.
+	// ImageSmooth samples bilinearly while the image is magnified less
+	// than smoothLimit times, as PDFium, MuPDF and Poppler all do; images
+	// magnified further stay crisp, as in all three.
 	ImageSmooth
 )
 
-// smooth reports whether img is drawn smoothed when magnified under f.
-func (f ImageFilter) smooth(img *Image) bool {
-	return img.Interpolate || f == ImageSmooth
+// smoothLimit is the magnification from which ImageSmooth samples the
+// nearest pixel. PDFium, MuPDF and Poppler smooth below 2×; from 2× MuPDF
+// stops (PDFium at 3×, Poppler at 4×, Ghostscript never smooths).
+const smoothLimit = 2
+
+// smooth reports whether img is drawn smoothed when drawn through m (the
+// unit square to the device) under f.
+func (f ImageFilter) smooth(img *Image, m Matrix) bool {
+	if img.Interpolate {
+		return true
+	}
+	if f != ImageSmooth {
+		return false
+	}
+	// Device pixels per sample along the image's rows and columns.
+	sx := math.Hypot(m[0], m[1]) / float64(img.W)
+	sy := math.Hypot(m[2], m[3]) / float64(img.H)
+	return sx < smoothLimit && sy < smoothLimit
 }
 
 // imageDraw is the per-device state of DrawImage, reused between images.
@@ -69,7 +88,7 @@ func (d *RasterDevice) drawImage(img *Image, m Matrix, paint *Paint) {
 	defer s.Reset() // keep no image alive
 	// The image and its mask take the same filter, so that their edges
 	// line up.
-	smooth := d.ImageFilter.smooth(img)
+	smooth := d.ImageFilter.smooth(img, m)
 	if img.Stencil || img.color == nil {
 		if paint.Color.A == 0 {
 			return

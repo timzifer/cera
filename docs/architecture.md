@@ -76,8 +76,10 @@ rows. An image drawn smaller than its samples is read from a mip level
 as fine as the device, bilinearly; magnified images are sampled at the
 nearest pixel unless they ask for `/Interpolate`, as Ghostscript does.
 `RenderOptions.ImageFilter = ImageSmooth` (`-image-filter smooth` in
-`cmd/cera`) smooths every magnified image bilinearly instead, as PDFium,
-MuPDF and Poppler do; switching it does not interpret the page again. An
+`cmd/cera`) smooths images magnified less than 2× bilinearly instead, as
+PDFium, MuPDF and Poppler do; beyond that all three draw them crisp (MuPDF
+from 2×, PDFium from 3×, Poppler from 4×), and so does cera. Switching it
+does not interpret the page again. An
 opaque image drawn right over another on the same parallelogram replaces
 it in the display list, so the lower image does not show through the
 antialiased edges as a frame.

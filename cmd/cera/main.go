@@ -30,7 +30,7 @@ func main() {
 	verbose := flag.Bool("v", false, "print timing and statistics per page")
 	workers := flag.Int("workers", 0, "goroutines drawing one page (0 = all cores)")
 	annots := flag.String("annots", "view", "annotations to draw: view, print or none")
-	imageFilter := flag.String("image-filter", "nearest", "how magnified images without /Interpolate are sampled: nearest or smooth")
+	imageFilter := flag.String("image-filter", "nearest", "how magnified images without /Interpolate are sampled: nearest or smooth (bilinearly below 2× magnification)")
 	cmykProfile := flag.String("cmyk-profile", "", "ICC profile `file` DeviceCMYK is converted through instead of the bundled SWOP profile")
 	naiveCMYK := flag.Bool("naive-cmyk", false, "convert CMYK naively, as device values, without a profile")
 	var fields []string

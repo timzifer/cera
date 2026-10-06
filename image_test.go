@@ -572,9 +572,17 @@ func BenchmarkDecodeMatte(b *testing.B) {
 }
 
 func TestImageFilter(t *testing.T) {
-	im := streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", []byte{0, 255})
+	// 64 × 64 samples, columns black and white in turn, drawn 100 pixels
+	// square: magnified 1.5625×, which ImageSmooth smooths.
+	stripes := make([]byte, 64*64)
+	for i := 1; i < len(stripes); i += 2 {
+		stripes[i] = 255
+	}
+	im := streamObj("/Subtype /Image /Width 64 /Height 64 /ColorSpace /DeviceGray /BitsPerComponent 8", stripes)
 	interp := streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Interpolate true", []byte{0, 255})
-	pdf := imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q q 100 0 0 100 100 0 cm /Im1 Do Q", im, interp)
+	// Two samples drawn 100 pixels wide, magnified 50×: crisp either way.
+	big := streamObj("/Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", []byte{0, 255})
+	pdf := imagePDF("q 100 0 0 100 0 0 cm /Im0 Do Q q 100 0 0 50 100 0 cm /Im1 Do Q q 100 0 0 50 100 50 cm /Im2 Do Q", im, interp, big)
 	doc, err := Open(pdf)
 	if err != nil {
 		t.Fatal(err)
@@ -596,12 +604,16 @@ func TestImageFilter(t *testing.T) {
 		if i > 0 && !st.Reused {
 			t.Errorf("filter %d: the page was interpreted again", c.filter)
 		}
-		// Between the sample centres at x = 25 and 75.
+		// Pixel 40 is centred between samples 25 and 26.
 		if got := dst.RGBAAt(40, 50).R; smoothed(got) != c.smooth {
 			t.Errorf("filter %d: pixel 40 is %d, smoothed %v", c.filter, got, c.smooth)
 		}
+		// Between the sample centres at x = 125 and 175, but magnified 50×.
+		if got := dst.RGBAAt(140, 25).R; smoothed(got) {
+			t.Errorf("filter %d: pixel 140 of the 50× image is %d", c.filter, got)
+		}
 		// /Interpolate is smoothed either way.
-		if got := dst.RGBAAt(140, 50).R; !smoothed(got) {
+		if got := dst.RGBAAt(140, 75).R; !smoothed(got) {
 			t.Errorf("filter %d: /Interpolate pixel 140 is %d", c.filter, got)
 		}
 	}

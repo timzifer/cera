@@ -70,8 +70,10 @@ type RenderOptions struct {
 	Form *FormState
 	// ImageFilter sets how magnified images that do not ask for
 	// /Interpolate are sampled: ImageNearest (the default) samples the
-	// nearest pixel, ImageSmooth samples bilinearly, as PDFium, MuPDF and
-	// Poppler do. Images with /Interpolate true are always smoothed;
+	// nearest pixel, ImageSmooth samples bilinearly while an image is
+	// magnified less than 2×, as PDFium, MuPDF and Poppler do (beyond it
+	// they draw it crisp, and so does cera). Images with /Interpolate true
+	// are always smoothed;
 	// minified images are read from their mip levels either way. Switching
 	// it does not interpret the page again. Images inside the cells of a
 	// tiling pattern are drawn into the pattern's tile when the page is
