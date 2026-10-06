@@ -128,6 +128,13 @@ at 1500 dpi all five agree to 0.07 px). Where text is most of the ink,
 the three outvote cera and PDFium on the glyph edges: that is a
 convention, not an error, and stays counted.
 
+Images are placed exactly as well; all four references round an image's
+rectangle outward to whole device pixels and stretch the image over it.
+A small image comes out larger by up to a pixel on each side: the
+19.0 × 25.5 px bullets of `pdfjs/smaskdim.pdf` cover 20 × 27 px in all
+four, 11 % more ink than the exact rendering, which cera matches. That
+too stays counted.
+
 The charts are drawn with [figure](https://github.com/timzifer/figure)
 (SVG, once with light and once with dark tokens, the page showing the one
 its colour scheme asks for); the tables below them hold every value.
