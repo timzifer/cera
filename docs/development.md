@@ -111,9 +111,15 @@ cd accuracy/reference
 go run . -dir ../../testdata/corpus                         # → ../../report-reference/report.html
 go run . -dir ../../testdata/borb -pages 3 -dpi 72 -sample 200
 go run . -engines cera,pdfium,mupdf -match synthetic/       # a subset of engines and files
+go run . -image-filter nearest                             # cera's default image sampling
 go run . -cmyk-profile USWebCoatedSWOP.icc                  # cera's DeviceCMYK through another profile
 go run . -overprint                                         # cera with overprint simulated
 ```
+
+cera smooths magnified images here (`-image-filter smooth`, its
+`RenderOptions.ImageFilter = ImageSmooth`), as PDFium, MuPDF and Poppler
+do; with its default, the nearest pixel, every page with a magnified image
+would count cera as the outlier.
 
 The charts are drawn with [figure](https://github.com/timzifer/figure)
 (SVG, once with light and once with dark tokens, the page showing the one

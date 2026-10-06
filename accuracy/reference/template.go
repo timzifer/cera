@@ -105,7 +105,7 @@ details { margin: 8px 0; } summary { cursor: pointer; color: var(--text-secondar
 <body>
 <main>
 <h1>cera against the references</h1>
-<div class="meta">{{.R.Generated}} · {{.R.DPI}} dpi · {{.R.Files}} files · {{.R.Pages}} pages ({{.R.Compared}} compared) · {{if .R.Annotations}}with annotations (MuPDF draws none, PDFium no form widgets){{else}}page content only, no annotations{{end}}{{if .R.Overprint}} · cera simulates overprint{{end}}{{if .R.CMYKProfile}} · cera's DeviceCMYK through {{.R.CMYKProfile}}{{end}} · engines: {{join .R.Engines ", "}}{{if .R.Sample}} · random batch of {{.R.Sample}}, seed {{.R.Seed}}{{end}} · {{.R.Dirs}}</div>
+<div class="meta">{{.R.Generated}} · {{.R.DPI}} dpi · {{.R.Files}} files · {{.R.Pages}} pages ({{.R.Compared}} compared) · {{if .R.Annotations}}with annotations (MuPDF draws none, PDFium no form widgets){{else}}page content only, no annotations{{end}}{{if .R.Overprint}} · cera simulates overprint{{end}} · cera's magnified images {{.R.ImageFilter}}{{if .R.CMYKProfile}} · cera's DeviceCMYK through {{.R.CMYKProfile}}{{end}} · engines: {{join .R.Engines ", "}}{{if .R.Sample}} · random batch of {{.R.Sample}}, seed {{.R.Seed}}{{end}} · {{.R.Dirs}}</div>
 {{if .R.Missing}}<p class="note">Not available: {{join .R.Missing "; "}}.</p>{{end}}
 
 <p class="lead">No renderer is ground truth. Every engine is held against the median of all

@@ -114,7 +114,7 @@ func (c ceraEngine) render(f *file, pages []int, scale float64) ([]*image.RGBA, 
 		var st cera.Stats
 		err = p.Render(context.Background(), img, cera.RenderOptions{
 			Scale: scale, Background: color.RGBA{255, 255, 255, 255}, Deadline: time.Now().Add(c.timeout), Stats: &st,
-			Annotations: mode, SimulateOverprint: c.overprint,
+			Annotations: mode, SimulateOverprint: c.overprint, ImageFilter: imageFilter,
 		})
 		f.unsupported[i] = st.UnsupportedKeys()
 		var pe *cera.PanicError
