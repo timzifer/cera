@@ -763,7 +763,11 @@ func (l *displayList) EndGroup() {
 	l.clips = l.clips[:len(l.clips)-1]
 	begin := &l.items[o.at]
 	g := &l.groups[begin.style]
-	if int(o.at) == len(l.items)-1 {
+	if int(o.at) == len(l.items)-1 || g.Alpha == 0 {
+		// Nothing drawn, or drawn at opacity 0: the group is dropped, as
+		// an object painted at opacity 0 is. In a knockout group it
+		// knocks nothing out either, as Acrobat, PDFium and Ghostscript
+		// draw it (pdf.js issue18032).
 		l.items = l.items[:o.first]
 		l.endRun()
 		return

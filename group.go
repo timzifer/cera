@@ -179,6 +179,16 @@ func (in *interp) transparent() bool {
 	return in.gs.blend != BlendNormal || in.gs.smask != nil
 }
 
+// shapeAlpha counts alpha that is shape (AIS true) inside a knockout
+// group, where cera draws it as opacity: outside knockout groups shape and
+// opacity multiply, and the two read the same (PDF 2.0 11.3.7), so AIS
+// changes nothing there (ADR 0009).
+func (in *interp) shapeAlpha() {
+	if in.gs.ais && in.knockouts > 0 {
+		in.st.unsupported("alpha-is-shape")
+	}
+}
+
 // beginObject starts the group of an object bounded by r under m,
 // composited with blend mode bm; a knockout group holds the glyphs of a
 // run (see textKnockout). It keeps in.paint.

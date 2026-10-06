@@ -131,6 +131,35 @@ func TestKnockoutNestedAndBlend(t *testing.T) {
 	assertPixel(t, img, 20, 50, color.RGBA{255, 255, 0, 255})
 }
 
+// A group drawn at opacity 0 draws nothing, also as an object of a
+// knockout group: it knocks out nothing below it, as Acrobat, PDFium and
+// Ghostscript draw it (pdf.js issue18032, where InDesign puts such a
+// group over a gradient).
+func TestKnockoutOpacityZero(t *testing.T) {
+	zero := formObj("/Group << /S /Transparency >>", "0 0 1 rg 50 30 100 40 re f")
+	ko := formObj("/Group << /S /Transparency /K true >> /Resources << /ExtGState << /Z << /ca 0 /CA 0 >> >> /XObject << /Z 101 0 R >> >>",
+		"1 0 0 rg 0 0 100 100 re f /Z gs /Z Do")
+	img, _ := renderTransparent(t, "/K Do", "/XObject << /K 100 0 R >>", ko, zero)
+	assertPixel(t, img, 75, 50, color.RGBA{255, 0, 0, 255})
+	assertPixel(t, img, 125, 50, white)
+}
+
+// AIS true is counted only where cera draws shape as opacity and the two
+// differ: inside a knockout group. Elsewhere shape and opacity multiply
+// (PDF 2.0 11.3.7), and the page is drawn as the spec says.
+func TestAlphaIsShapeCounted(t *testing.T) {
+	gs := "/ExtGState << /S << /AIS true /ca 0.5 >> >>"
+	_, st := renderTransparent(t, "/S gs 1 0 0 rg 0 0 100 100 re f", gs)
+	if n := st.Unsupported["alpha-is-shape"]; n != 0 {
+		t.Errorf("AIS outside a knockout group counted %d times", n)
+	}
+	ko := formObj("/Group << /S /Transparency /K true >> /Resources << "+gs+" >>", "/S gs 1 0 0 rg 0 0 100 100 re f")
+	_, st = renderTransparent(t, "/K Do", "/XObject << /K 100 0 R >>", ko)
+	if st.Unsupported["alpha-is-shape"] == 0 {
+		t.Error("AIS inside a knockout group not counted")
+	}
+}
+
 func TestNonIsolatedGroup(t *testing.T) {
 	// Multiply inside a non-isolated group at 50%: the group's result is
 	// the red page multiplied by blue (black), half way over the red.

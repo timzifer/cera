@@ -148,7 +148,7 @@ column says.
 |---|---|---|
 | `blend-mode` | unknown blend mode | as Normal |
 | `non-isolated-blend` | non-isolated group with blend modes inside, object of a knockout group | isolated |
-| `alpha-is-shape` | `/AIS` | – |
+| `alpha-is-shape` | `/AIS true` inside a knockout group (elsewhere shape and opacity read the same) | alpha as opacity |
 | `smask-transfer` | soft-mask transfer function that does not read | – |
 | `overprint` | overprint not simulated | painted over |
 | `transfer` | transfer functions on images, shadings, patterns, or that do not read | without |
