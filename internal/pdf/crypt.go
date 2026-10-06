@@ -72,6 +72,9 @@ type decryptor struct {
 	owner     bool  // the password given was the owner's
 	skipObj   int32 // the /Encrypt dictionary's own object number
 	skipKnown bool
+	// plainMetadata: /EncryptMetadata false, so metadata streams are
+	// stored as they are.
+	plainMetadata bool
 	v3        cipher.Block // AESV3: the file key's cipher, shared
 }
 
@@ -124,6 +127,7 @@ func newDecryptor(enc Dict, id []byte, password string, resolve func(Object) Obj
 	}
 
 	dec.perm = Permissions(uint32(perm)) & AllPermissions
+	dec.plainMetadata = !metadata
 	if dec.streams == cryptNone && dec.strings == cryptNone {
 		// Nothing in the body is encrypted, so the password is not checked.
 		return dec, nil

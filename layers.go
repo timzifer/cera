@@ -3,6 +3,7 @@ package cera
 import (
 	"math"
 	"slices"
+	"strings"
 	"sync"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -626,8 +627,9 @@ func (oc *ocProps) visExpr(d *Document, a pdf.Array, depth int) (ocExpr, bool) {
 	return e, true
 }
 
-// textString decodes a PDF text string: UTF-16BE or UTF-8 with a byte
-// order mark, else PDFDocEncoding.
+// textString decodes a PDF text string (PDF 2.0, 7.9.2.2): UTF-16BE or
+// UTF-8 after a byte order mark, else PDFDocEncoding. Language escapes
+// (ESC, a language and optional country code, ESC) are dropped.
 func textString(o pdf.Object) string {
 	b, ok := o.Str()
 	if !ok {
@@ -639,22 +641,57 @@ func textString(o pdf.Object) string {
 		for i := 2; i+1 < len(b); i += 2 {
 			u = append(u, uint16(b[i])<<8|uint16(b[i+1]))
 		}
-		return string(utf16.Decode(u))
+		return dropLanguageEscapes(string(utf16.Decode(u)))
 	case len(b) >= 3 && b[0] == 0xef && b[1] == 0xbb && b[2] == 0xbf && utf8.Valid(b[3:]):
-		return string(b[3:])
+		return dropLanguageEscapes(string(b[3:]))
 	}
 	r := make([]rune, len(b))
 	for i, c := range b {
-		r[i] = rune(c)
-		if c >= 0x80 && int(c-0x80) < len(pdfDocHigh) {
-			r[i] = pdfDocHigh[c-0x80]
-		}
+		r[i] = pdfDocRune(c)
 	}
 	return string(r)
 }
 
-// pdfDocHigh is PDFDocEncoding from 0x80 to 0xA0 (PDF 2.0, D.3); above
-// it the encoding is Latin-1.
+// dropLanguageEscapes removes the language marks of a Unicode text string:
+// from an ESC to the next one. An unpaired ESC is dropped alone.
+func dropLanguageEscapes(s string) string {
+	i := strings.IndexByte(s, 0x1b)
+	if i < 0 {
+		return s
+	}
+	var b strings.Builder
+	for i >= 0 {
+		b.WriteString(s[:i])
+		s = s[i+1:]
+		if j := strings.IndexByte(s, 0x1b); j >= 0 {
+			s = s[j+1:]
+		}
+		i = strings.IndexByte(s, 0x1b)
+	}
+	b.WriteString(s)
+	return b.String()
+}
+
+// pdfDocRune maps a PDFDocEncoding byte to its character (PDF 2.0, D.3).
+// Codes the encoding leaves undefined become U+FFFD.
+func pdfDocRune(c byte) rune {
+	switch {
+	case c >= 0x18 && c <= 0x1f:
+		return pdfDocLow[c-0x18]
+	case c == 0x7f || c == 0xad:
+		return utf8.RuneError
+	case c >= 0x80 && int(c-0x80) < len(pdfDocHigh):
+		return pdfDocHigh[c-0x80]
+	}
+	return rune(c)
+}
+
+// pdfDocLow is PDFDocEncoding from 0x18 to 0x1F: accents, where Latin-1 has
+// control characters.
+var pdfDocLow = [...]rune{'˘', 'ˇ', 'ˆ', '˙', '˝', '˛', '˚', '˜'}
+
+// pdfDocHigh is PDFDocEncoding from 0x80 to 0xA0; above it the encoding is
+// Latin-1 but for 0xAD, which it leaves undefined.
 var pdfDocHigh = [...]rune{
 	'•', '†', '‡', '…', '—', '–', 'ƒ', '⁄', '‹', '›', '−', '‰', '„', '“', '”', '‘',
 	'’', '‚', '™', 'ﬁ', 'ﬂ', 'Ł', 'Œ', 'Š', 'Ÿ', 'Ž', 'ı', 'ł', 'œ', 'š', 'ž', '�',
