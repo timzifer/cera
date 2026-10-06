@@ -15,7 +15,7 @@ require (
 	github.com/go-opentype/fonts v0.10.0 // indirect
 	github.com/go-opentype/opentype v0.13.0 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
-	github.com/timzifer/stilus v0.8.0 // indirect
+	github.com/timzifer/stilus v0.9.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 )

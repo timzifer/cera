@@ -24,7 +24,7 @@ require (
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/timzifer/cera/fonts/cjk v0.0.0
-	github.com/timzifer/stilus v0.8.0 // indirect
+	github.com/timzifer/stilus v0.9.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )

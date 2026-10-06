@@ -6,6 +6,7 @@ require (
 	github.com/klippa-app/go-pdfium v1.21.1
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/timzifer/cera v0.0.0
+	github.com/timzifer/figure v0.14.1-0.20260929122627-5c067d67d2c9
 	golang.org/x/sys v0.48.0
 )
 
@@ -19,8 +20,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jolestar/go-commons-pool/v2 v2.1.2 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
-	github.com/timzifer/figure v0.14.1-0.20260929122627-5c067d67d2c9 // indirect
-	github.com/timzifer/stilus v0.8.0 // indirect
+	github.com/timzifer/stilus v0.9.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
 
