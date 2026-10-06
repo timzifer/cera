@@ -19,6 +19,11 @@ var exceptions = []exception{
 		reason: "check boxes without /AP under /NeedAppearances: cera generates the check mark of the checked box (ADR 0006, section 5); " +
 			"PDFium, MuPDF, Poppler and Ghostscript generate no appearance and draw nothing",
 	},
+	{
+		file: "clippath.pdf", page: 1,
+		reason: "a rectangular clip off the pixel grid: cera covers the edge pixels by the share of their area inside the clip; " +
+			"PDFium, MuPDF, Poppler and Ghostscript round the clip outward to whole pixels and draw them black",
+	},
 }
 
 // excepted returns why page (1-based) of the file at rel is left out,
