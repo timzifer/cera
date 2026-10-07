@@ -399,3 +399,120 @@ func TestWindsOneWay(t *testing.T) {
 		}
 	}
 }
+
+// TestViewportOneWorker draws viewports of one band and of several with
+// one worker, which then replays the bands' items rather than the whole
+// list: groups, masks, clips, optional content and annotations come out
+// as in the whole page and as several workers draw them.
+func TestViewportOneWorker(t *testing.T) {
+	annots := buildPDFCatalog("/OCProperties << /OCGs [102 0 R] /D << /OFF [102 0 R] >> >>", []string{"0 0 1 rg 0 0 200 100 re f"},
+		"/Annots [100 0 R 101 0 R]",
+		"<< /Subtype /Stamp /Rect [0 0 20 20] /CA 0.5 /AP << /N 103 0 R >> >>",
+		"<< /Subtype /Stamp /Rect [40 0 60 20] /OC 102 0 R /AP << /N 103 0 R >> >>",
+		"<< /Type /OCG /Name (Stamps) >>",
+		apSquare)
+	for _, tc := range []struct {
+		name string
+		data []byte
+		page int
+	}{
+		{"drawing", drawingPDF(), 0},
+		{"transparency", transparencyPDF(), 0},
+		{"layers", layersPDF(), 0},
+		{"nested layers", layersPDF(), 1},
+		{"annotations", annots, 0},
+	} {
+		doc, err := Open(tc.data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, _ := doc.Page(tc.page)
+		const scale = 7 // 1400×700 px: bands of 64 rows
+		render := func(workers int, r image.Rectangle) *image.RGBA {
+			dst := image.NewRGBA(r)
+			if err := p.Render(context.Background(), dst, RenderOptions{Scale: scale, Background: white, Workers: workers}); err != nil {
+				t.Fatal(err)
+			}
+			return dst
+		}
+		full := render(1, p.Bounds(scale))
+		bh := p.dl.bandH
+		for _, vp := range []image.Rectangle{
+			image.Rect(50, bh+5, 400, 2*bh-5),     // one band
+			image.Rect(0, 2*bh-10, 1400, 2*bh+10), // two
+			image.Rect(300, bh/2, 900, 5*bh),      // five
+		} {
+			one := render(1, vp)
+			if d := maxDiff(t, full, one, vp); d > 2 {
+				t.Errorf("%s %v: differs from the whole page by %d", tc.name, vp, d)
+			}
+			if d := maxDiff(t, render(4, vp), one, vp); d > 2 {
+				t.Errorf("%s %v: one and 4 workers differ by %d", tc.name, vp, d)
+			}
+		}
+	}
+}
+
+// TestViewportDrawsItemsOnce draws a translucent fill across bands in a
+// viewport that merges the bands' items: drawn twice it would be darker.
+func TestViewportDrawsItemsOnce(t *testing.T) {
+	var c strings.Builder
+	for i := range 400 {
+		fmt.Fprintf(&c, "%d g %d 0 1 1 re f\n", i%2, i%200)
+	}
+	c.WriteString("/H gs 1 0 0 rg 0 0 200 100 re f\n")
+	doc, _ := Open(buildPDF([]string{c.String()}, "/Resources << /ExtGState << /H << /ca 0.5 >> >> >>"))
+	p, _ := doc.Page(0)
+	const scale = 7
+	if err := p.Render(context.Background(), image.NewRGBA(p.Bounds(scale)), RenderOptions{Scale: scale, Workers: 1}); err != nil {
+		t.Fatal(err)
+	}
+	l := p.dl
+	vp := image.Rect(100, 10, 200, 4*l.bandH)
+	b0, b1 := l.bandRange(vp)
+	idx, _ := l.regionItems(nil, b0, b1)
+	if len(idx) == len(l.allItems) || !slices.IsSorted(idx) || len(slices.Compact(slices.Clone(idx))) != len(idx) {
+		t.Fatalf("bands %d–%d: %d of %d items, %v", b0, b1, len(idx), len(l.allItems), idx)
+	}
+	dst := image.NewRGBA(vp)
+	if err := p.Render(context.Background(), dst, RenderOptions{Scale: scale, Background: white, Workers: 1}); err != nil {
+		t.Fatal(err)
+	}
+	for _, y := range []int{vp.Min.Y, l.bandH, 2*l.bandH + 1, vp.Max.Y - 1} {
+		if c := dst.RGBAAt(150, y); diff(c, color.RGBA{255, 128, 128, 255}) > 1 {
+			t.Errorf("row %d: %v", y, c)
+		}
+	}
+}
+
+// BenchmarkViewport draws a small viewport of a cached list with one
+// worker. One rectangle is visible; the others lie outside the viewport,
+// in other bands, and are what the benchmark varies.
+func BenchmarkViewport(b *testing.B) {
+	for _, offscreen := range []int{1000, 100000} {
+		var c strings.Builder
+		for i := range offscreen {
+			fmt.Fprintf(&c, "%d g %d %d 4 4 re f\n", i%2, i%250, i%2900)
+		}
+		c.WriteString("0.5 g 10 4050 20 20 re f\n")
+		doc, err := Open(buildPDF([]string{c.String()}, "/MediaBox [0 0 256 4096]"))
+		if err != nil {
+			b.Fatal(err)
+		}
+		p, _ := doc.Page(0)
+		if err := p.Render(context.Background(), image.NewRGBA(p.Bounds(1)), RenderOptions{Workers: 1}); err != nil {
+			b.Fatal(err)
+		}
+		for _, vp := range []image.Rectangle{image.Rect(0, 0, 64, 64), image.Rect(0, 0, 64, 700)} {
+			dst := image.NewRGBA(vp)
+			b.Run(fmt.Sprintf("offscreen=%d/rows=%d", offscreen, vp.Dy()), func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					if err := p.Render(context.Background(), dst, RenderOptions{Workers: 1}); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}

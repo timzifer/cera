@@ -563,8 +563,9 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers in
 	if vis == nil {
 		vis = &noLayers
 	}
-	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af)}
+	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf}
 	if workers = min(workers, b1-b0); workers == 1 {
+		j.idx, j.buf = l.regionItems(j.buf, b0, b1)
 		j.work(true)
 	} else {
 		j.next.Store(int32(b0))
@@ -578,7 +579,7 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers in
 	if err == nil && lim.hit.Load() {
 		err = ErrDeadline
 	}
-	*j = job{vis: j.vis[:0]}
+	*j = job{vis: j.vis[:0], buf: j.buf[:0]}
 	jobs.Put(j)
 	return err
 }
@@ -590,7 +591,9 @@ type job struct {
 	region image.Rectangle
 	lim    *limit
 	b1     int
-	vis    []bool // per tag of the list: drawn
+	vis    []bool  // per tag of the list: drawn
+	idx    []int32 // the items a single pass draws
+	buf    []int32 // storage of idx when it is not the list's
 	iso    bool
 	filter ImageFilter
 	next   atomic.Int32 // next band to draw
@@ -645,7 +648,7 @@ func (j *job) work(whole bool) {
 	}
 }
 
-// paint draws r, band b of the list or the whole region if b < 0.
+// paint draws r, band b of the list or, if b < 0, the items j.idx.
 func (j *job) paint(pt *painter, b int, r image.Rectangle) {
 	dst := j.dst
 	if j.iso {
@@ -662,7 +665,7 @@ func (j *job) paint(pt *painter, b int, r image.Rectangle) {
 	pt.dev.ImageFilter = j.filter
 	var ok bool
 	if b < 0 {
-		ok = j.l.drawAll(&pt.dev, &pt.ds, r, j.vis, j.lim)
+		ok = j.l.drawItems(&pt.dev, &pt.ds, j.idx, r, j.vis, j.lim)
 	} else {
 		ok = j.l.drawBand(&pt.dev, &pt.ds, b, r, j.vis, j.lim)
 	}
