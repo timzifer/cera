@@ -231,6 +231,10 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 		ctx = context.Background()
 	}
 	lim := &limit{ctx: ctx, deadline: opt.Deadline}
+	if lim.expired() {
+		st.set(&Stats{})
+		return ErrDeadline
+	}
 	scale := normScale(opt.Scale)
 
 	dl, reused := p.list(scale, opt.SimulateOverprint, lim)
@@ -351,7 +355,7 @@ func (p *Page) recordWidget(w *Widget, vals map[*Field]Value, scale float64, ove
 		in.overprint = overprint
 		in.devBox = p.Bounds(scale)
 		in.formVals = vals
-		if a := &annots[i]; a.Flags&AnnotHidden == 0 {
+		if a := &annots[i]; a.Flags&AnnotHidden == 0 && !in.expired() {
 			in.annotation(p, a, base, scale)
 		}
 		dl.complete = in.err == nil
@@ -424,6 +428,11 @@ func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, overprin
 	in.formVals = vals
 	if vis != nil {
 		in.ocVis, in.ocZoom = vis, scale
+	}
+	// The interpreter checks every checkEvery operators: a short page
+	// would otherwise be recorded whole after the deadline.
+	if in.expired() {
+		return false
 	}
 	res := p.doc.dict(p.dict.Get("Resources"))
 	dec, derr := p.doc.r.PageContents(p.index + 1)
@@ -541,6 +550,11 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers in
 	b0, b1 := l.bandRange(region)
 	if b0 >= b1 {
 		return nil
+	}
+	// The periodic checks come after hundreds of items; a short list
+	// would otherwise be drawn whole after the deadline.
+	if lim.expired() {
+		return ErrDeadline
 	}
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0)
