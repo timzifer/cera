@@ -33,6 +33,8 @@ type Document struct {
 	imgs     map[pdf.Ref]*list.Element
 	imgLRU   list.List
 	imgBytes int
+	// Decodes in progress by reference; under imgMu.
+	imgFlights map[pdf.Ref]*imageFlight
 
 	ocOnce sync.Once
 	oc     *ocProps // optional content, read on first use

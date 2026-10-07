@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -394,6 +395,87 @@ func TestImageCache(t *testing.T) {
 	}
 }
 
+// bigImageObj is an unfiltered n × n DeviceRGB image, red.
+func bigImageObj(n int) string {
+	data := bytes.Repeat([]byte{255, 0, 0}, n*n)
+	return streamObj(fmt.Sprintf("/Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB /BitsPerComponent 8", n, n), data)
+}
+
+func TestImageConcurrentMisses(t *testing.T) {
+	doc, err := Open(imagePDF("", bigImageObj(1024)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := pdf.Ref{Num: 100}
+	s := doc.stream(ref.Object())
+	if s == nil {
+		t.Fatal("no image stream")
+	}
+	const n = 8
+	var (
+		results [n]imageResult
+		start   = make(chan struct{})
+		wg      sync.WaitGroup
+	)
+	for i := range n {
+		wg.Go(func() {
+			<-start
+			results[i] = doc.image(ref, s, pdf.Dict{})
+		})
+	}
+	close(start)
+	wg.Wait()
+	for i := range results {
+		if results[i].img == nil || results[i].img != results[0].img {
+			t.Fatalf("request %d got image %p, request 0 %p", i, results[i].img, results[0].img)
+		}
+	}
+	if len(doc.imgs) != 1 || len(doc.imgFlights) != 0 {
+		t.Errorf("%d cached images, %d decodes pending", len(doc.imgs), len(doc.imgFlights))
+	}
+}
+
+// TestImageSharedAcrossPages renders pages that draw one large image from
+// many goroutines: their display lists hold the same decoded image.
+func TestImageSharedAcrossPages(t *testing.T) {
+	const pages = 8
+	c := "q 100 0 0 100 0 0 cm /Im0 Do Q"
+	contents := make([]string, pages)
+	for i := range contents {
+		contents[i] = c
+	}
+	doc, err := Open(buildPDF(contents, "/Resources << /XObject << /Im0 100 0 R >> >>", bigImageObj(1024)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	dsts := make([]*image.RGBA, pages)
+	ps := make([]*Page, pages)
+	for i := range pages {
+		p, _ := doc.Page(i)
+		ps[i] = p
+		dsts[i] = image.NewRGBA(p.Bounds(1))
+		wg.Go(func() {
+			if err := p.Render(context.Background(), dsts[i], RenderOptions{Workers: 2}); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	var first *Image
+	for i, p := range ps {
+		if len(p.dl.images) != 1 {
+			t.Fatalf("page %d: %d images", i, len(p.dl.images))
+		}
+		if img := p.dl.images[0]; first == nil {
+			first = img
+		} else if img != first {
+			t.Errorf("page %d holds its own decode of the image", i)
+		}
+		assertPixel(t, dsts[i], 25, 25, red)
+	}
+}
+
 func imageDrawingPDF() []byte {
 	rgbData := make([]byte, 3*64*48)
 	for i := range rgbData {
@@ -679,5 +761,31 @@ func TestSameParallelogram(t *testing.T) {
 		if got := sameParallelogram(m, c.b); got != c.want {
 			t.Errorf("%v: %v, want %v", c.b, got, c.want)
 		}
+	}
+}
+
+// BenchmarkColdSharedImagePages opens a document and renders its pages,
+// which all draw one large image, concurrently.
+func BenchmarkColdSharedImagePages(b *testing.B) {
+	const pages = 8
+	contents := make([]string, pages)
+	for i := range contents {
+		contents[i] = "q 100 0 0 100 0 0 cm /Im0 Do Q"
+	}
+	data := buildPDF(contents, "/Resources << /XObject << /Im0 100 0 R >> >>", bigImageObj(1024))
+	b.ReportAllocs()
+	for b.Loop() {
+		doc, err := Open(data)
+		if err != nil {
+			b.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		for i := range pages {
+			p, _ := doc.Page(i)
+			wg.Go(func() {
+				_ = p.Render(context.Background(), image.NewRGBA(p.Bounds(1)), RenderOptions{Workers: 1})
+			})
+		}
+		wg.Wait()
 	}
 }
