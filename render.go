@@ -369,17 +369,102 @@ func (p *Page) recordWidget(w *Widget, vals map[*Field]Value, scale float64, ove
 }
 
 // list returns the display list of the page at scale, with overprint
-// simulated or not, recording it unless the cached one fits. The caller
-// must pass it to done.
+// simulated or not, recording it unless the cached one fits. Renders that
+// want a list being recorded wait for it rather than record it again,
+// unless their limit ends first. The caller must pass it to done.
 func (p *Page) list(scale float64, overprint bool, lim *limit) (dl *displayList, reused bool) {
-	p.mu.Lock()
-	if dl := p.dl; dl != nil && dl.scale == scale && dl.overprint == overprint {
-		dl.refs++
+	key := listKey{scale, overprint}
+	for {
+		p.mu.Lock()
+		if dl := p.dl; dl != nil && dl.scale == scale && dl.overprint == overprint {
+			dl.refs++
+			p.mu.Unlock()
+			return dl, true
+		}
+		f := p.flights[key]
+		if f == nil {
+			f = &listFlight{done: make(chan struct{})}
+			if p.flights == nil {
+				p.flights = map[listKey]*listFlight{}
+			}
+			p.flights[key] = f
+			p.mu.Unlock()
+			return p.recordList(key, lim, f), false
+		}
+		f.waiters++
 		p.mu.Unlock()
-		return dl, true
+		if !p.wait(key, f, lim) {
+			// The limit ended: recording stops at once, with an
+			// incomplete list of this render's own.
+			return p.recordList(key, lim, nil), false
+		}
+		if f.dl != nil && f.dl.complete {
+			return f.dl, true
+		}
+		// The recording stopped at its own limit or panicked: try again.
+		if f.dl != nil {
+			p.done(f.dl)
+		}
+	}
+}
+
+// listKey is what a display list of a page is recorded for.
+type listKey struct {
+	scale     float64
+	overprint bool
+}
+
+// listFlight is a recording in progress.
+type listFlight struct {
+	done chan struct{} // closed when the recording ends
+	dl   *displayList  // the list recorded, nil if recording panicked
+	// waiters are the renders waiting, for which dl holds a reference;
+	// under Page.mu.
+	waiters int
+}
+
+// wait waits for f to end and reports whether it did, or whether lim
+// ended first and the render gave up waiting.
+func (p *Page) wait(key listKey, f *listFlight, lim *limit) bool {
+	var timeout <-chan time.Time
+	if !lim.deadline.IsZero() {
+		t := time.NewTimer(time.Until(lim.deadline))
+		defer t.Stop()
+		timeout = t.C
+	}
+	select {
+	case <-f.done:
+		return true
+	case <-lim.ctx.Done():
+	case <-timeout:
+	}
+	p.mu.Lock()
+	if p.flights[key] == f {
+		f.waiters--
+		p.mu.Unlock()
+		lim.hit.Store(true)
+		return false
 	}
 	p.mu.Unlock()
+	<-f.done // it ended meanwhile, with a reference for this render
+	return true
+}
 
+// recordList records the list for key and, when it is complete, caches
+// it. The renders waiting for f, if not nil, get it too.
+func (p *Page) recordList(key listKey, lim *limit, f *listFlight) (dl *displayList) {
+	ended := false
+	if f != nil {
+		defer func() {
+			if !ended { // recording panicked outside the interpreter
+				p.mu.Lock()
+				delete(p.flights, key)
+				p.mu.Unlock()
+				close(f.done)
+			}
+		}()
+	}
+	scale, overprint := key.scale, key.overprint
 	dl = getList()
 	dl.reset(p.Bounds(scale))
 	dl.scale, dl.overprint = scale, overprint
@@ -404,6 +489,11 @@ func (p *Page) list(scale float64, overprint bool, lim *limit) (dl *displayList,
 
 	p.mu.Lock()
 	dl.refs++
+	if f != nil {
+		dl.refs += f.waiters
+		f.dl = dl
+		delete(p.flights, key)
+	}
 	if dl.complete {
 		if old := p.dl; old != nil && old.refs == 0 {
 			putList(old)
@@ -411,7 +501,11 @@ func (p *Page) list(scale float64, overprint bool, lim *limit) (dl *displayList,
 		p.dl = dl
 	}
 	p.mu.Unlock()
-	return dl, false
+	if f != nil {
+		ended = true
+		close(f.done)
+	}
+	return dl
 }
 
 // record interprets the page into dev at scale and reports whether it got
