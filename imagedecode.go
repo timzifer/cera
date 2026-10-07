@@ -54,10 +54,13 @@ type imageDecoder struct {
 }
 
 // image returns the decoded image XObject s, from the document's cache
-// when ref (its object) has been decoded before.
+// when ref (its object) has been decoded before. Concurrent requests for
+// one ref share a single decode and its result.
 func (d *Document) image(ref pdf.Ref, s *pdf.Stream, res pdf.Dict) imageResult {
-	cache := ref != (pdf.Ref{})
-	if cache {
+	if ref == (pdf.Ref{}) {
+		return d.decodeImage(s.Dict, d.r.Raw(s), res)
+	}
+	for {
 		d.imgMu.Lock()
 		if e, ok := d.imgs[ref]; ok {
 			d.imgLRU.MoveToFront(e)
@@ -65,13 +68,45 @@ func (d *Document) image(ref pdf.Ref, s *pdf.Stream, res pdf.Dict) imageResult {
 			d.imgMu.Unlock()
 			return r
 		}
+		if f, ok := d.imgFlights[ref]; ok {
+			d.imgMu.Unlock()
+			<-f.done
+			if f.ok {
+				return f.res
+			}
+			continue // the decode panicked: try it here
+		}
+		f := &imageFlight{done: make(chan struct{})}
+		if d.imgFlights == nil {
+			d.imgFlights = map[pdf.Ref]*imageFlight{}
+		}
+		d.imgFlights[ref] = f
 		d.imgMu.Unlock()
+		return d.decodeShared(ref, s, res, f)
 	}
-	r := d.decodeImage(s.Dict, d.r.Raw(s), res)
-	if cache {
-		d.cacheImage(ref, r)
-	}
-	return r
+}
+
+// imageFlight is a decode in progress, which other requests for its image
+// wait for.
+type imageFlight struct {
+	done chan struct{} // closed when the decode ends
+	res  imageResult
+	ok   bool // the decode returned (did not panic)
+}
+
+// decodeShared decodes the image of f, caches it and hands it to the
+// requests waiting for f.
+func (d *Document) decodeShared(ref pdf.Ref, s *pdf.Stream, res pdf.Dict, f *imageFlight) imageResult {
+	defer func() {
+		d.imgMu.Lock()
+		delete(d.imgFlights, ref)
+		d.imgMu.Unlock()
+		close(f.done)
+	}()
+	f.res = d.decodeImage(s.Dict, d.r.Raw(s), res)
+	d.cacheImage(ref, f.res)
+	f.ok = true
+	return f.res
 }
 
 type imageEntry struct {
