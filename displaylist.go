@@ -935,10 +935,25 @@ func (l *displayList) drawBand(dev Device, ds *drawState, b int, r image.Rectang
 	return l.drawItems(dev, ds, l.bandItems[l.bandStart[b]:l.bandStart[b+1]], r, vis, lim)
 }
 
-// drawAll replays the items that touch r and whose tags vis shows onto
-// dev in one pass.
-func (l *displayList) drawAll(dev Device, ds *drawState, r image.Rectangle, vis []bool, lim *limit) bool {
-	return l.drawItems(dev, ds, l.allItems, r, vis, lim)
+// regionItems returns the items one pass over bands [b0, b1) visits, in
+// list order: those of the band, for one band; for several, the union of
+// theirs, made in buf, when it is much smaller than the whole list (whose
+// items the pass would otherwise only cull by their boxes); else the
+// whole list. It returns buf for reuse.
+func (l *displayList) regionItems(buf []int32, b0, b1 int) (idx, _ []int32) {
+	band := l.bandItems[l.bandStart[b0]:l.bandStart[b1]]
+	if b1-b0 == 1 {
+		return band, buf
+	}
+	// Merging costs a sort of the band lists; culling costs a box test
+	// per item.
+	if 8*len(band) > len(l.allItems) {
+		return l.allItems, buf
+	}
+	buf = append(buf[:0], band...)
+	slices.Sort(buf)
+	buf = slices.Compact(buf)
+	return buf, buf
 }
 
 // drawItems replays the items idx that touch r and whose tags vis shows
