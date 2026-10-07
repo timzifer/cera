@@ -169,6 +169,71 @@ func TestDeadlineIsNotCached(t *testing.T) {
 	}
 }
 
+// TestShortPageDeadline checks that a page too short for the periodic
+// checks still stops at an ended context or a passed deadline, recorded
+// or replayed, empty or not, with one worker or several.
+func TestShortPageDeadline(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	ends := []struct {
+		name string
+		ctx  context.Context
+		opt  RenderOptions
+	}{
+		{"cancelled", cancelled, RenderOptions{}},
+		{"deadline", context.Background(), RenderOptions{Deadline: time.Now().Add(-time.Second)}},
+	}
+	for _, content := range []string{"0 g 10 10 20 20 re f", ""} {
+		for _, end := range ends {
+			for _, workers := range []int{1, 4} {
+				for _, cached := range []bool{false, true} {
+					name := fmt.Sprintf("%q/%s/workers=%d/cached=%v", content, end.name, workers, cached)
+					doc, _ := Open(buildPDF([]string{content}, ""))
+					p, _ := doc.Page(0)
+					dst := image.NewRGBA(p.Bounds(1))
+					if cached {
+						if err := p.Render(context.Background(), dst, RenderOptions{}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					opt := end.opt
+					opt.Workers = workers
+					opt.Background = color.RGBA{255, 255, 255, 255}
+					if err := p.Render(end.ctx, dst, opt); !errors.Is(err, ErrDeadline) {
+						t.Errorf("%s: err = %v, want ErrDeadline", name, err)
+					}
+					if c := dst.RGBAAt(20, int(p.Bounds(1).Dy())-20); c.R != 255 {
+						t.Errorf("%s: shape drawn: %v", name, c)
+					}
+					if !cached && p.dl != nil {
+						t.Errorf("%s: list cached", name)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestShortPageRunCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	doc, _ := Open(buildPDF([]string{"BT /F1 12 Tf 10 10 Td (Hi) Tj ET"}, "/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >>"))
+	p, _ := doc.Page(0)
+	if _, err := p.Text(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var td textDevice
+	if err := p.RunWith(ctx, &td, RunOptions{}); !errors.Is(err, ErrDeadline) {
+		t.Errorf("RunWith: err = %v, want ErrDeadline", err)
+	}
+	if len(td.chars) != 0 {
+		t.Errorf("RunWith: %d chars after cancellation", len(td.chars))
+	}
+	if txt, err := p.Text(ctx); !errors.Is(err, ErrDeadline) || len(txt.Chars) != 0 {
+		t.Errorf("Text: err = %v, %d chars", err, len(txt.Chars))
+	}
+}
+
 func TestConcurrentRenders(t *testing.T) {
 	doc, _ := Open(drawingPDF())
 	p, _ := doc.Page(0)
