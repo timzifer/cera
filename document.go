@@ -161,6 +161,8 @@ type Page struct {
 
 	mu sync.Mutex
 	dl *displayList // cached by Render; see Release
+	// flights are the lists being recorded; see list.
+	flights map[listKey]*listFlight
 	// wl are the lists of widgets showing values of a FormState, by
 	// annotation index; see Render.
 	wl map[int]*widgetList

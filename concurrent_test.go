@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/timzifer/cera/internal/corpus"
 )
@@ -178,4 +180,193 @@ func TestConcurrentCorpusPages(t *testing.T) {
 			}
 		}
 	}
+}
+
+// bigListPDF is a page whose recording takes a while.
+func bigListPDF(n int) []byte {
+	return buildPDF([]string{strings.Repeat("0 g 0 0 1 1 re f 0.5 g 0 0 1 1 re f\n", n)}, "")
+}
+
+// flight returns the recording of p at key in progress, if any, and the
+// renders waiting for it.
+func (p *Page) flight(key listKey) (*listFlight, int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	f := p.flights[key]
+	if f == nil {
+		return nil, 0
+	}
+	return f, f.waiters
+}
+
+// waitFor polls cond until it holds.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for end := time.Now().Add(10 * time.Second); !cond(); {
+		if time.Now().After(end) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(100 * time.Microsecond)
+	}
+}
+
+func TestColdConcurrentRecording(t *testing.T) {
+	doc, _ := Open(bigListPDF(10000))
+	p, _ := doc.Page(0)
+	const n = 8
+	var (
+		lists  [n]*displayList
+		reused [n]bool
+		start  = make(chan struct{})
+		wg     sync.WaitGroup
+	)
+	for i := range n {
+		wg.Go(func() {
+			<-start
+			lists[i], reused[i] = p.list(1, false, &limit{ctx: context.Background()})
+		})
+	}
+	close(start)
+	wg.Wait()
+	recorded := 0
+	for i := range n {
+		if lists[i] != lists[0] || !lists[i].complete {
+			t.Errorf("request %d: list %p (complete %v), request 0 %p", i, lists[i], lists[i].complete, lists[0])
+		}
+		if !reused[i] {
+			recorded++
+		}
+	}
+	if recorded != 1 {
+		t.Errorf("recorded %d times", recorded)
+	}
+	if p.dl != lists[0] || p.dl.refs != n || len(p.flights) != 0 {
+		t.Errorf("cached %p with %d refs, %d recordings pending", p.dl, p.dl.refs, len(p.flights))
+	}
+	for _, dl := range lists {
+		p.done(dl)
+	}
+	if p.dl.refs != 0 {
+		t.Errorf("%d refs left", p.dl.refs)
+	}
+	// Other keys are recorded on their own.
+	var other [3]*displayList
+	for i, k := range []listKey{{2, false}, {1, true}, {2, false}} {
+		wg.Go(func() { other[i], _ = p.list(k.scale, k.overprint, &limit{ctx: context.Background()}) })
+	}
+	wg.Wait()
+	if other[0] != other[2] || other[0] == other[1] || other[0].scale != 2 || !other[1].overprint {
+		t.Errorf("lists for other keys: %p %p %p", other[0], other[1], other[2])
+	}
+	for _, dl := range other {
+		p.done(dl)
+	}
+}
+
+// TestRecordingLeaderCancelled cancels the render that records while
+// others wait: they record again rather than share its partial list.
+func TestRecordingLeaderCancelled(t *testing.T) {
+	doc, _ := Open(bigListPDF(200000))
+	p, _ := doc.Page(0)
+	key := listKey{1, false}
+	ctx, cancel := context.WithCancel(context.Background())
+	var leader *displayList
+	var wg sync.WaitGroup
+	wg.Go(func() { leader, _ = p.list(1, false, &limit{ctx: ctx}) })
+	waitFor(t, "the recording", func() bool { f, _ := p.flight(key); return f != nil })
+	const n = 4
+	var lists [n]*displayList
+	for i := range n {
+		wg.Go(func() { lists[i], _ = p.list(1, false, &limit{ctx: context.Background()}) })
+	}
+	waitFor(t, "the waiters", func() bool { _, w := p.flight(key); return w == n })
+	cancel()
+	wg.Wait()
+	if leader.complete {
+		t.Skip("recording ended before the cancellation")
+	}
+	for i := range n {
+		if !lists[i].complete || lists[i] != lists[0] {
+			t.Errorf("waiter %d: list %p (complete %v), waiter 0 %p", i, lists[i], lists[i].complete, lists[0])
+		}
+	}
+	if p.dl != lists[0] {
+		t.Error("the waiters' list is not cached")
+	}
+	p.done(leader)
+	for _, dl := range lists {
+		p.done(dl)
+	}
+	if p.dl.refs != 0 {
+		t.Errorf("%d refs left", p.dl.refs)
+	}
+}
+
+// TestRecordingWaiterGivesUp ends the limit of a render waiting for a
+// recording: it returns at once, and the recording goes on.
+func TestRecordingWaiterGivesUp(t *testing.T) {
+	doc, _ := Open(bigListPDF(200000))
+	p, _ := doc.Page(0)
+	key := listKey{1, false}
+	var leader *displayList
+	var wg sync.WaitGroup
+	wg.Go(func() { leader, _ = p.list(1, false, &limit{ctx: context.Background()}) })
+	waitFor(t, "the recording", func() bool { f, _ := p.flight(key); return f != nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	got := make(chan *displayList)
+	go func() {
+		dl, _ := p.list(1, false, &limit{ctx: ctx})
+		got <- dl
+	}()
+	waitFor(t, "the waiter", func() bool { f, w := p.flight(key); return f == nil || w == 1 })
+	deadline := make(chan *displayList)
+	go func() {
+		dl, _ := p.list(1, false, &limit{ctx: context.Background(), deadline: time.Now().Add(time.Millisecond)})
+		deadline <- dl
+	}()
+	cancel()
+	for _, c := range []chan *displayList{got, deadline} {
+		dl := <-c
+		if f, _ := p.flight(key); f == nil {
+			t.Skip("recording ended before the waiters gave up")
+		}
+		if dl.complete || dl == leader {
+			t.Errorf("a waiter that gave up got list %p (complete %v)", dl, dl.complete)
+		}
+		p.done(dl)
+	}
+	p.Release() // while recording
+	wg.Wait()
+	if !leader.complete || leader.refs != 1 {
+		t.Errorf("recorded list: complete %v, %d refs", leader.complete, leader.refs)
+	}
+	if p.dl != leader {
+		t.Error("the recorded list is not cached")
+	}
+	p.done(leader)
+}
+
+// BenchmarkColdConcurrentTiles opens a document and renders eight tiles of
+// its page concurrently, as a viewer does when it first shows the page.
+func BenchmarkColdConcurrentTiles(b *testing.B) {
+	data := buildPDF([]string{strings.Repeat("0 g 0 0 1 1 re f 0.5 g 0 0 1 1 re f\n", 10000)}, "")
+	b.ReportAllocs()
+	var records atomic.Int64
+	for b.Loop() {
+		doc, _ := Open(data)
+		p, _ := doc.Page(0)
+		var wg sync.WaitGroup
+		for i := range 8 {
+			wg.Go(func() {
+				dst := image.NewRGBA(image.Rect(i*25, 0, i*25+25, 100))
+				var st Stats
+				_ = p.Render(context.Background(), dst, RenderOptions{Workers: 1, Stats: &st})
+				if !st.Reused {
+					records.Add(1)
+				}
+			})
+		}
+		wg.Wait()
+	}
+	b.ReportMetric(float64(records.Load())/float64(b.N), "records/op")
 }
