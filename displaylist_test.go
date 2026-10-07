@@ -202,7 +202,7 @@ func TestShortPageDeadline(t *testing.T) {
 					if err := p.Render(end.ctx, dst, opt); !errors.Is(err, ErrDeadline) {
 						t.Errorf("%s: err = %v, want ErrDeadline", name, err)
 					}
-					if c := dst.RGBAAt(20, int(p.Bounds(1).Dy())-20); c.R != 255 {
+					if c := dst.RGBAAt(20, p.Bounds(1).Dy()-20); c.R != 255 {
 						t.Errorf("%s: shape drawn: %v", name, c)
 					}
 					if !cached && p.dl != nil {
