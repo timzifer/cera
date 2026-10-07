@@ -1140,24 +1140,51 @@ func deviceBoxPoints(pts []stilus.Point, m Matrix, pad float64) image.Rectangle 
 	if len(pts) == 0 {
 		return image.Rectangle{}
 	}
-	x0, y0 := math.Inf(1), math.Inf(1)
-	x1, y1 := math.Inf(-1), math.Inf(-1)
+	// Comparisons rather than min and max, which are calls in WebAssembly
+	// (#65). They skip NaN, which nan, the sum of every coordinate times
+	// 0, keeps instead: it is NaN once a coordinate is NaN or infinite.
+	x0, y0 := pts[0].X, pts[0].Y
+	x1, y1 := x0, y0
+	var nan float32
 	for _, q := range pts {
-		x, y := float64(q.X), float64(q.Y)
-		x0, x1 = min(x0, x), max(x1, x)
-		y0, y1 = min(y0, y), max(y1, y)
+		x, y := q.X, q.Y
+		nan += x*0 + y*0
+		if x < x0 {
+			x0 = x
+		}
+		if x > x1 {
+			x1 = x
+		}
+		if y < y0 {
+			y0 = y
+		}
+		if y > y1 {
+			y1 = y
+		}
 	}
 	// The box of the transformed rectangle is the box of the transformed
 	// path.
-	var bx0, by0 = math.Inf(1), math.Inf(1)
-	var bx1, by1 = math.Inf(-1), math.Inf(-1)
-	for _, c := range [4][2]float64{{x0, y0}, {x1, y0}, {x0, y1}, {x1, y1}} {
-		x, y := m.Apply(c[0], c[1])
-		bx0, bx1 = min(bx0, x), max(bx1, x)
-		by0, by1 = min(by0, y), max(by1, y)
+	bx0, by0 := m.Apply(float64(x0), float64(y0))
+	bx1, by1 := bx0, by0
+	chk := float64(nan) + bx0*0 + by0*0
+	for _, c := range [3][2]float32{{x1, y0}, {x0, y1}, {x1, y1}} {
+		x, y := m.Apply(float64(c[0]), float64(c[1]))
+		chk += x*0 + y*0
+		if x < bx0 {
+			bx0 = x
+		}
+		if x > bx1 {
+			bx1 = x
+		}
+		if y < by0 {
+			by0 = y
+		}
+		if y > by1 {
+			by1 = y
+		}
 	}
 	const lim = 1 << 30
-	if !(bx0 >= -lim && by0 >= -lim && bx1 <= lim && by1 <= lim) {
+	if !(chk == 0 && bx0 >= -lim && by0 >= -lim && bx1 <= lim && by1 <= lim) {
 		// NaN or huge: let the rasterizer decide.
 		return image.Rect(-lim, -lim, lim, lim)
 	}

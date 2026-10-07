@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/timzifer/stilus"
 )
 
 // drawingPDF is a page with most of what the interpreter draws: fills,
@@ -514,5 +518,86 @@ func BenchmarkViewport(b *testing.B) {
 				}
 			})
 		}
+	}
+}
+
+// deviceBoxMinMax is deviceBoxPoints as it was, with min and max.
+func deviceBoxMinMax(pts []stilus.Point, m Matrix, pad float64) image.Rectangle {
+	if len(pts) == 0 {
+		return image.Rectangle{}
+	}
+	x0, y0 := math.Inf(1), math.Inf(1)
+	x1, y1 := math.Inf(-1), math.Inf(-1)
+	for _, q := range pts {
+		x, y := float64(q.X), float64(q.Y)
+		x0, x1 = min(x0, x), max(x1, x)
+		y0, y1 = min(y0, y), max(y1, y)
+	}
+	var bx0, by0 = math.Inf(1), math.Inf(1)
+	var bx1, by1 = math.Inf(-1), math.Inf(-1)
+	for _, c := range [4][2]float64{{x0, y0}, {x1, y0}, {x0, y1}, {x1, y1}} {
+		x, y := m.Apply(c[0], c[1])
+		bx0, bx1 = min(bx0, x), max(bx1, x)
+		by0, by1 = min(by0, y), max(by1, y)
+	}
+	const lim = 1 << 30
+	if !(bx0 >= -lim && by0 >= -lim && bx1 <= lim && by1 <= lim) {
+		return image.Rect(-lim, -lim, lim, lim)
+	}
+	return image.Rect(
+		int(math.Floor(bx0-pad)), int(math.Floor(by0-pad)),
+		int(math.Ceil(bx1+pad)), int(math.Ceil(by1+pad)),
+	)
+}
+
+func TestDeviceBoxPoints(t *testing.T) {
+	nan, inf := float32(math.NaN()), float32(math.Inf(1))
+	rng := rand.New(rand.NewPCG(1, 2))
+	coord := func() float32 {
+		switch rng.IntN(40) {
+		case 0:
+			return nan
+		case 1:
+			return inf
+		case 2:
+			return -inf
+		case 3:
+			return 3e9
+		}
+		return float32(rng.NormFloat64() * 300)
+	}
+	matrices := []Matrix{
+		{1, 0, 0, 1, 0, 0}, {2, 0, 0, -2, 10, 800}, {0, 1.5, -1.5, 0, 300, 0},
+		{0.7, 0.7, -0.7, 0.7, 5, 5}, {1e9, 0, 0, 1e9, 0, 0},
+		{math.NaN(), 0, 0, 1, 0, 0}, {1, 0, 0, 1, math.Inf(1), 0}, {math.Inf(1), 0, 0, 1, 0, 0},
+	}
+	for range 20000 {
+		pts := make([]stilus.Point, rng.IntN(6))
+		for i := range pts {
+			pts[i] = stilus.Point{X: coord(), Y: coord()}
+		}
+		m := matrices[rng.IntN(len(matrices))]
+		pad := float64(rng.IntN(3))
+		if got, want := deviceBoxPoints(pts, m, pad), deviceBoxMinMax(pts, m, pad); got != want {
+			t.Fatalf("points %v, matrix %v: box %v, want %v", pts, m, got, want)
+		}
+	}
+	// A NaN anywhere covers everything, as it did.
+	all := image.Rect(-1<<30, -1<<30, 1<<30, 1<<30)
+	for _, pts := range [][]stilus.Point{{{X: nan, Y: 0}}, {{X: 0, Y: 0}, {X: 5, Y: nan}}, {{X: 1, Y: 1}, {X: nan, Y: nan}, {X: 2, Y: 2}}} {
+		if got := deviceBoxPoints(pts, Matrix{1, 0, 0, 1, 0, 0}, 1); got != all {
+			t.Errorf("points %v: box %v", pts, got)
+		}
+	}
+}
+
+func BenchmarkDeviceBoxPoints(b *testing.B) {
+	pts := make([]stilus.Point, 64)
+	for i := range pts {
+		pts[i] = stilus.Point{X: float32(i%13) * 7, Y: float32(i%7) * 11}
+	}
+	m := Matrix{2, 0, 0, -2, 10, 800}
+	for b.Loop() {
+		_ = deviceBoxPoints(pts, m, 1)
 	}
 }
