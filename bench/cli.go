@@ -208,7 +208,7 @@ func runCLI(files []*file, m *meta, cache string) {
 		modes = append(modes, true)
 	}
 	n := max(*runs, 1)
-	logs := map[key]map[string][]float64{} // per tool and mode, per category
+	logs := map[key]map[string][]float64{}        // per tool and mode, per category
 	sizeLogs := map[string]map[string][]float64{} // per tool, per category
 	failed := map[key]int{}
 	rows := [][]string{{"file", "category", "tool", "cores", "ratio", "spread", "size", "error"}}
@@ -310,7 +310,7 @@ func runCLI(files []*file, m *meta, cache string) {
 	sum := struct {
 		Meta    *meta                                  `json:"meta"`
 		Ratios  map[string]map[string]map[string]group `json:"ratios"` // cores ("1", "all") → category → tool
-		Sizes   map[string]map[string]group            `json:"sizes"` // category → tool: bytes of the PNGs against the reference's
+		Sizes   map[string]map[string]group            `json:"sizes"`  // category → tool: bytes of the PNGs against the reference's
 		Threads map[string]bool                        `json:"threads"`
 	}{m, out, sizes, threads}
 	b, _ := json.MarshalIndent(sum, "", " ")

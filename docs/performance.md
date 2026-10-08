@@ -24,10 +24,10 @@ ratios per page and per file, no times.
 | pages | all<br>113 | drawings¹<br>8 | papers<br>58 | text, fonts<br>20 | shadings<br>11 | transparency<br>7 | images<br>4 | scans<br>3 | vector<br>2 |
 |---|---|---|---|---|---|---|---|---|---|
 | MuPDF | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× |
-| **cera** | **0.68×** | **0.11×** | **0.82×** | **0.89×** | **0.48×** | **0.72×** | **0.57×** | **1.43×** | **0.47×** |
-| PDFium | 1.13× | 0.28× | 1.25× | 1.29× | 1.71× | 0.67× | 1.64× | 1.62× | 0.72× |
-| hayro | 1.32× | 0.13× | 1.95× | 1.59× | 1.61× | 0.49× | 1.32× | 1.19× | 0.43× |
-| pdf.js | 3.72× | 0.25× | 6.07× | 5.85× | 0.95× | 2.06× | 9.43× | 3.76× | 2.91× |
+| **cera** | **0.65×** | **0.11×** | **0.82×** | **0.83×** | **0.49×** | **0.75×** | **0.48×** | **0.71×** | **0.34×** |
+| PDFium | 1.11× | 0.27× | 1.25× | 1.27× | 1.67× | 0.67× | 1.60× | 1.63× | 0.61× |
+| hayro | 1.31× | 0.12× | 1.94× | 1.62× | 1.52× | 0.52× | 1.30× | 1.19× | 0.35× |
+| pdf.js | 3.73× | 0.27× | 6.19× | 5.87× | 0.93× | 2.03× | 9.09× | 3.10× | 2.57× |
 
 ¹ The drawings are cera's own synthetic A3 scenes (`cmd/corpus scenes`):
 hatches, short strokes and contours of thousands of paths. MuPDF is unusually
@@ -35,10 +35,11 @@ slow on them (seconds per page; go-fitz, MuPDF linked statically, confirms
 it), so this column says more about MuPDF's stroker than about cera. Read
 the papers and text columns for everyday documents.
 
-Where cera loses: scans (CCITT and JBIG2 images, 3 pages), where it takes
-1.4× MuPDF's time; on transparency hayro and PDFium are ahead of it. A
-page's ratio varies between paired runs by 9 % (median interquartile
-range); for how far the means hold, see [How stable the ratios are](#how-stable-the-ratios-are).
+Where cera loses: on transparency hayro and PDFium are ahead of it. On
+scans (CCITT and JBIG2 images, 3 pages) it took 1.4× MuPDF's time until
+1-bit images got their own sampling (#71) and large pages that draw little
+were filled past the caches (#81). A page's ratio varies between paired
+runs by 11 % (median interquartile range); for how far the means hold, see [How stable the ratios are](#how-stable-the-ratios-are).
 
 ## All cores, whole documents
 
@@ -50,26 +51,31 @@ range); for how far the means hold, see [How stable the ratios are](#how-stable-
 | 16 cores | all files (41) | documents of 5+ pages (6) | one-page files (34) |
 |---|---|---|---|
 | MuPDF | 1.00× | 1.00× | 1.00× |
-| **cera** | **0.27×** | **0.86×** | **0.23×** |
-| PDFium | 0.81× | 1.16× | 0.71× |
-| hayro | 0.63× | 1.21× | 0.52× |
-| pdf.js | 2.18× | 6.77× | 1.71× |
+| **cera** | **0.23×** | **0.57×** | **0.20×** |
+| PDFium | 0.77× | 1.07× | 0.68× |
+| hayro | 0.61× | 1.05× | 0.51× |
+| pdf.js | 2.12× | 5.82× | 1.69× |
 
 Each engine's own gain over one core:
 
 | | documents of 5+ pages | one-page files | how |
 |---|---|---|---|
-| cera | 1.9× | 1.4× | its own threads: pages concurrently, bands of a page |
-| MuPDF | 2.2× | 0.8× | one process per core |
-| PDFium | 2.4× | 0.8× | one process per core |
-| hayro | 3.3× | 0.9× | one process per core |
-| pdf.js | 1.5× | 0.8× | one process per core |
+| cera | 3.2× | 1.6× | its own threads: pages concurrently, bands of a page |
+| MuPDF | 2.3× | 0.9× | one process per core |
+| PDFium | 2.9× | 0.9× | one process per core |
+| hayro | 4.1× | 0.9× | one process per core |
+| pdf.js | 1.8× | 0.9× | one process per core |
 
 On a single page only cera uses more than one core, hence its lead on
-one-page files. On documents of several pages the others scale better than
-cera does: a page's bands and the pages of a document share the cores
-poorly so far. On 16 cores, every engine is far from 16×: the documents
-are of 5 to 22 pages, and their slowest page bounds the whole.
+one-page files. On documents of several pages cera gained 1.9× over one
+core until 2026-10-06. Several changes raised that to 3.2× (#63):
+- cheap pages are drawn in one pass, not by many workers (#78);
+- the background is filled band by band while the band is in the cache,
+  so pages drawn at once wait less on memory (#79).
+
+hayro, one process per core, gains more. On 16 cores, every engine is far
+from 16×: the documents are of 5 to 22 pages, and their slowest page bounds
+the whole.
 
 ## First page
 
@@ -79,10 +85,10 @@ viewer shows something (one sample per file, noisier):
 | | all files | drawings | papers | text, fonts |
 |---|---|---|---|---|
 | MuPDF | 1.00× | 1.00× | 1.00× | 1.00× |
-| **cera** | **0.43×** | **0.11×** | **1.21×** | **0.32×** |
-| PDFium | 0.69× | 0.28× | 0.93× | 0.71× |
-| hayro | 0.39× | 0.13× | 0.69× | 0.27× |
-| pdf.js | 7.07× | 0.68× | 11.93× | 14.71× |
+| **cera** | **0.36×** | **0.12×** | **1.07×** | **0.30×** |
+| PDFium | 0.59× | 0.28× | 0.91× | 0.58× |
+| hayro | 0.42× | 0.13× | 0.81× | 0.32× |
+| pdf.js | 6.25× | 0.67× | 11.30× | 14.70× |
 
 pdf.js pays here for compiling its JavaScript before its first page. cera is
 behind MuPDF on the first page of the papers; why is not yet examined.
@@ -99,22 +105,30 @@ One core, per page, against native MuPDF:
 | | all pages |
 |---|---|
 | MuPDF, native | 1.00× |
-| PDFium, WebAssembly (go-pdfium on wazero) | 2.10× |
-| pdf.js (JavaScript, Node) | 3.72× |
-| **cera, WebAssembly (`wasip1` on wazero)** | **5.05×** |
+| **cera, WebAssembly (`wasip1` on V8, Node's WASI)** | **1.62×** |
+| PDFium, WebAssembly (go-pdfium on wazero) | 2.07× |
+| pdf.js (JavaScript, Node) | 3.73× |
+| cera, WebAssembly (`wasip1` on wazero) | 3.80× |
 
-cera compiled to WebAssembly takes 7.4× its native time; PDFium's
-WebAssembly build loses less against the native one measured here (1.9×;
-not the same build). This is the weakest spot of the comparison for cera.
+The same `ceraworker.wasm` runs on two runtimes:
+- **V8**, the engine of Chrome and Node, through Node's WASI, single-threaded
+  like the pdf.js worker. This is what a browser gives.
+- **wazero**, whose compiler does not optimize. It is the runtime go-pdfium
+  runs PDFium on.
 
-Much of it is the runtime. Both WebAssembly engines run on wazero, whose
-compiler does not optimize. On seven pages (papers, a drawing, text, a
-shading) the same `ceraworker.wasm` took 3.5× its native time under Node's
-V8, the engine of Chrome, and 9.4× under wazero. In a browser, expect the
-former. Within cera, builtin `min` and `max` on floats compile to runtime
-calls in WebAssembly and cost about 30 % under V8; see
-[#65](https://github.com/timzifer/cera/issues/65). PDFium was not measured
-under V8.
+cera takes 2.5× its native time on V8 and 5.8× on wazero. PDFium's module
+needs Emscripten's imports, so it is measured on wazero only. PDFium on wazero
+against cera on V8 is therefore not a comparison of equals, and cera on
+wazero (3.80×) against PDFium on wazero (2.07×) is.
+
+Builtin `min` and `max` on floats compile to runtime calls in WebAssembly
+([golang/go#82073](https://github.com/golang/go/issues/82073)). The path
+boxes of the display list took them by comparisons instead, which made cera
+about 30 % faster under V8 (#77, [#65](https://github.com/timzifer/cera/issues/65)).
+
+On the first page in a fresh process, cera on V8 is slower than on wazero
+(4.01× against 2.12× MuPDF): V8 compiles the module in every new process,
+and wazero takes it from its compilation cache.
 
 ## Memory
 
@@ -124,19 +138,19 @@ and the largest), the interpreter included for pdf.js:
 | | median | largest |
 |---|---|---|
 | hayro | 15 MB | 8.6 GB² |
-| **cera** | **41 MB** | **165 MB** |
+| **cera** | **38 MB** | **148 MB** |
 | MuPDF | 60 MB | 113 MB |
 | PDFium | 91 MB | 323 MB |
-| pdf.js | 149 MB | 995 MB |
+| pdf.js | 153 MB | 995 MB |
 
 ² `tiling-pattern-box.pdf`.
 
-cera allocates once per page (median; 90th percentile 86, most 1 713),
-48 bytes, the bitmap not counted, counted as `cmd/corpus run` counts: the
+cera allocates 3 times per page (median; 90th percentile 88, most 1 715),
+184 bytes, the bitmap not counted, counted as `cmd/corpus run` counts: the
 page drawn, released, and drawn again from scratch. The count depends a
 little on what the caches and pools hold: against `cmd/corpus run` it agrees
 within 10 % or 5 allocations on 103 of 113 pages. Drawing a page again from
-cera's display list (another tile, a scrolled viewport) takes 71 % of the
+cera's display list (another tile, a scrolled viewport) takes 69 % of the
 first render.
 
 ## Command line, PDF to PNG
@@ -222,7 +236,7 @@ No engine drew less than half the median engine's ink on any page.
 
 ## How stable the ratios are
 
-The 47 pages of the pdf.js files were measured three times with cera,
+On 2026-10-06, the 47 pages of the pdf.js files were measured three times with cera,
 MuPDF, PDFium and hayro: twice on a quiet machine (once inside the full run
 above, once alone) and once with 8 of the 16 hardware threads kept busy by
 another program:
@@ -243,7 +257,7 @@ tables above come from a quiet machine; read cera's ratios as ±10 %.
 ## Machine and versions
 
 AMD Ryzen 7 5800H (8 cores, 16 threads), Windows 11, Go 1.27.1; corpus
-`359fe26ef817`; 2026-10-06. cera v0.4.0 (this branch); MuPDF 1.28.2
+`359fe26ef817`; 2026-10-08. cera v0.5.0-27; MuPDF 1.28.2
 (PyMuPDF 1.28.2) and `mutool` 1.28.0; PDFium 156.0.8076.0 (pypdfium2
 5.14.0); hayro 0.8.0; pdf.js 6.4.299 on Node 24.17.0 and @napi-rs/canvas
 1.0.10; go-pdfium 1.21.1 on wazero 1.12.0; Poppler 26.09.0; Ghostscript
@@ -296,8 +310,9 @@ microseconds against pages of milliseconds.
 - **First page.** Opening a file and drawing its first page in a fresh
   process: the wait before a viewer shows anything. One sample per file,
   so noisier than the rest.
-- **WebAssembly.** cera built for `wasip1` and PDFium as go-pdfium ships it,
-  both on wazero, against the native engines.
+- **WebAssembly.** cera built for `wasip1` on wazero and on V8 (Node's
+  WASI), and PDFium as go-pdfium ships it on wazero, against the native
+  engines.
 - **Fairness checks.** A page an engine fails on leaves that engine's mean
   and is counted. Each first render records how much of the page is inked;
   an engine drawing less than half the median engine's ink is listed, so

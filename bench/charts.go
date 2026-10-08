@@ -52,7 +52,7 @@ func dotColors(names []string, dark bool) palette.Qualitative {
 		switch n {
 		case engineLabels["cera"]:
 			q = append(q, accent)
-		case engineLabels["cera-wasm"]:
+		case engineLabels["cera-wasm"], engineLabels["cera-v8-wasm"]:
 			q = append(q, accent2)
 		default:
 			q = append(q, grey)

@@ -21,16 +21,17 @@ type engine struct {
 }
 
 // engineOrder is the fixed order of engines in reports.
-var engineOrder = []string{"mupdf", "cera", "pdfium", "hayro", "pdfjs", "cera-wasm", "pdfium-wasm"}
+var engineOrder = []string{"mupdf", "cera", "pdfium", "hayro", "pdfjs", "cera-wasm", "cera-v8-wasm", "pdfium-wasm"}
 
 var engineLabels = map[string]string{
-	"mupdf":       "MuPDF",
-	"cera":        "cera",
-	"pdfium":      "PDFium",
-	"hayro":       "hayro",
-	"pdfjs":       "pdf.js",
-	"cera-wasm":   "cera (wasm)",
-	"pdfium-wasm": "PDFium (wasm)",
+	"mupdf":        "MuPDF",
+	"cera":         "cera",
+	"pdfium":       "PDFium",
+	"hayro":        "hayro",
+	"pdfjs":        "pdf.js",
+	"cera-wasm":    "cera (wasm, wazero)",
+	"cera-v8-wasm": "cera (wasm, V8)",
+	"pdfium-wasm":  "PDFium (wasm, wazero)",
 }
 
 // setup makes engine name ready (building its worker if needed) and asks
@@ -60,6 +61,16 @@ func setup(name, cache string) (*engine, error) {
 		e.wasm, e.wasmFS = true, true
 		e.argv = []string{self}
 		e.env = []string{workerEnv + "=wasm-host", "BENCH_WASM=" + wasm, "BENCH_WASM_CACHE=" + filepath.Join(cache, "wazero")}
+	case "cera-v8-wasm":
+		// The same module under Node's WASI: V8, as in a browser. PDFium's
+		// module needs Emscripten's imports, so it stays on wazero only.
+		wasm := filepath.Join(cache, "ceraworker.wasm")
+		if err := goBuild(wasm, []string{"GOOS=wasip1", "GOARCH=wasm"}); err != nil {
+			return nil, err
+		}
+		e.wasm, e.wasmFS = true, true
+		e.argv = []string{*node, "--single-threaded", "--no-warnings", filepath.Join("workers", "wasi", "host.mjs")}
+		e.env = []string{"BENCH_WASM=" + wasm}
 	case "pdfium-wasm":
 		e.wasm = true
 		e.argv = []string{self}
@@ -97,7 +108,7 @@ func setup(name, cache string) (*engine, error) {
 		return nil, fmt.Errorf("%s: %v", name, err)
 	}
 	e.version = v[0]
-	if name == "cera" || name == "cera-wasm" {
+	if name == "cera" || name == "cera-wasm" || name == "cera-v8-wasm" {
 		e.version = "cera " + ceraVersion()
 	}
 	return e, nil
