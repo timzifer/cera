@@ -31,9 +31,11 @@ the pinned corpus of 113 pages:
 
 - All 16 cores: 0.23× MuPDF on one-page files (cera splits a page into
   bands), 0.86× on documents of several pages.
-- Command line, PDF to PNG: `cmd/cera` 0.58× `mutool draw` on one core, 0.50×
-  on 16 (PNGs written with [calamus](https://github.com/timzifer/calamus));
-  Poppler 2.63×, Ghostscript 3.83×.
+- Command line, PDF to PNG: `cmd/cera` 0.55× `mutool draw` on one core, 0.47×
+  on 16 (PNGs written with [calamus](https://github.com/timzifer/calamus) at
+  the fastest level, 1.27× the size of MuPDF's; with `image/png` 0.62× and
+  0.73×; compressing bands while drawing, `-png stream`, 0.55× and 0.48×);
+  Poppler 2.64×, Ghostscript 3.88×.
 - WebAssembly on wazero: 5.05× native MuPDF, PDFium 2.10×; under V8 (Chrome,
   Node) cera's WebAssembly ran about 2.7× faster than on wazero (7 pages).
 - One allocation per page (median), 41 MB peak memory per file (median).
