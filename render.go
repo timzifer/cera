@@ -673,7 +673,10 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.R
 	if vis == nil {
 		vis = &noLayers
 	}
-	*j = job{l: l, dst: dst, region: region, bg: bg, fill: fill, lim: lim, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf}
+	// A cheap page drawn in one pass touches few of its pixels after the
+	// fill; a large one is filled past the caches.
+	stream := whole && 4*region.Dx()*region.Dy() >= streamFill && l.workersFor(region) == 1
+	*j = job{l: l, dst: dst, region: region, bg: bg, fill: fill, stream: stream, lim: lim, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf}
 	if whole {
 		j.idx, j.buf = l.regionItems(j.buf, b0, b1)
 		j.work(true)
@@ -757,6 +760,10 @@ func (l *displayList) plan(region image.Rectangle, b0, b1, workers int) (int, bo
 	return workers, workers == 1 && replays > 2*len(l.allItems)
 }
 
+// streamFill is the size in bytes from which a region drawn in one pass
+// is filled past the caches: larger than a core's L2 cache.
+const streamFill = 2 << 20
+
 // job is one render of a display list, shared by its workers.
 type job struct {
 	l      *displayList
@@ -764,6 +771,7 @@ type job struct {
 	region image.Rectangle
 	bg     color.RGBA // with fill, set in each part before it is drawn
 	fill   bool
+	stream bool // fill with fillRegionStream
 	lim    *limit
 	b1     int
 	vis    []bool  // per tag of the list: drawn
@@ -828,7 +836,9 @@ func (j *job) work(whole bool) {
 
 // paint draws r, band b of the list or, if b < 0, the items j.idx.
 func (j *job) paint(pt *painter, b int, r image.Rectangle) {
-	if j.fill {
+	if j.stream {
+		fillRegionStream(j.dst, r, j.bg)
+	} else if j.fill {
 		fillRegion(j.dst, r, j.bg)
 	}
 	dst := j.dst
