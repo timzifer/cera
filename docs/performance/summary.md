@@ -61,7 +61,7 @@ Gain over one core, one-page files: MuPDF 0.9× (one process per core); cera 1.6
 | hayro | 15 MB | 8643 MB |
 | pdf.js | 153 MB | 995 MB |
 
-cera allocates 3 times per page (median; 90th percentile 88, most 1715), 184 B, the bitmap not counted.
+cera allocates 1 times per page (median; 90th percentile 86, most 1713), 48 B, the bitmap not counted.
 Drawing a page again from cera's display list (scrolling, another tile) takes 69 % of its first render.
 
 ## Checks

@@ -187,16 +187,16 @@ func bigListPDF(n int) []byte {
 	return buildPDF([]string{strings.Repeat("0 g 0 0 1 1 re f 0.5 g 0 0 1 1 re f\n", n)}, "")
 }
 
-// flight returns the recording of p at key in progress, if any, and the
-// renders waiting for it.
-func (p *Page) flight(key listKey) (*listFlight, int) {
+// flight reports whether p is recording at key, and how many renders
+// wait for it.
+func (p *Page) flight(key listKey) (bool, int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	f := p.flights[key]
+	f, busy := p.flights[key]
 	if f == nil {
-		return nil, 0
+		return busy, 0
 	}
-	return f, f.waiters
+	return busy, f.waiters
 }
 
 // waitFor polls cond until it holds.
@@ -273,7 +273,7 @@ func TestRecordingLeaderCancelled(t *testing.T) {
 	var leader *displayList
 	var wg sync.WaitGroup
 	wg.Go(func() { leader, _ = p.list(1, false, &limit{ctx: ctx}) })
-	waitFor(t, "the recording", func() bool { f, _ := p.flight(key); return f != nil })
+	waitFor(t, "the recording", func() bool { busy, _ := p.flight(key); return busy })
 	const n = 4
 	var lists [n]*displayList
 	for i := range n {
@@ -311,14 +311,14 @@ func TestRecordingWaiterGivesUp(t *testing.T) {
 	var leader *displayList
 	var wg sync.WaitGroup
 	wg.Go(func() { leader, _ = p.list(1, false, &limit{ctx: context.Background()}) })
-	waitFor(t, "the recording", func() bool { f, _ := p.flight(key); return f != nil })
+	waitFor(t, "the recording", func() bool { busy, _ := p.flight(key); return busy })
 	ctx, cancel := context.WithCancel(context.Background())
 	got := make(chan *displayList)
 	go func() {
 		dl, _ := p.list(1, false, &limit{ctx: ctx})
 		got <- dl
 	}()
-	waitFor(t, "the waiter", func() bool { f, w := p.flight(key); return f == nil || w == 1 })
+	waitFor(t, "the waiter", func() bool { busy, w := p.flight(key); return !busy || w == 1 })
 	deadline := make(chan *displayList)
 	go func() {
 		dl, _ := p.list(1, false, &limit{ctx: context.Background(), deadline: time.Now().Add(time.Millisecond)})
@@ -327,7 +327,7 @@ func TestRecordingWaiterGivesUp(t *testing.T) {
 	cancel()
 	for _, c := range []chan *displayList{got, deadline} {
 		dl := <-c
-		if f, _ := p.flight(key); f == nil {
+		if busy, _ := p.flight(key); !busy {
 			t.Skip("recording ended before the waiters gave up")
 		}
 		if dl.complete || dl == leader {
@@ -369,4 +369,26 @@ func BenchmarkColdConcurrentTiles(b *testing.B) {
 		wg.Wait()
 	}
 	b.ReportMetric(float64(records.Load())/float64(b.N), "records/op")
+}
+
+// A recording no other render waits for allocates no flight (#76 made
+// two allocations per recording, a flight and its channel).
+func TestRecordingAllocations(t *testing.T) {
+	if raceEnabled {
+		t.Skip("sync.Pool drops items under the race detector")
+	}
+	doc, _ := Open(buildPDF([]string{"0 g 10 10 20 20 re f"}, ""))
+	p, _ := doc.Page(0)
+	dst := image.NewRGBA(p.Bounds(1))
+	opt := RenderOptions{Workers: 1}
+	if err := p.Render(context.Background(), dst, opt); err != nil {
+		t.Fatal(err)
+	}
+	n := testing.AllocsPerRun(100, func() {
+		p.Release()
+		_ = p.Render(context.Background(), dst, opt)
+	})
+	if n > 1 {
+		t.Errorf("%v allocations per recording and render, want at most 1", n)
+	}
 }
