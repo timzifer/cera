@@ -177,18 +177,23 @@ func (w *worker) all(scale float64, threads int) []string {
 		mu    sync.Mutex
 		first error
 	)
-	t0 := clock.Now()
-	for range g {
-		wg.Go(func() {
-			for i := range next {
-				if _, _, err := w.render(i, scale, max(1, threads/g)); err != nil {
-					mu.Lock()
-					first = cmpErr(first, err)
-					mu.Unlock()
-				}
+	pages := func() {
+		for i := range next {
+			if _, _, err := w.render(i, scale, max(1, threads/g)); err != nil {
+				mu.Lock()
+				first = cmpErr(first, err)
+				mu.Unlock()
 			}
-		})
+		}
 	}
+	t0 := clock.Now()
+	// The calling goroutine draws pages too, as a program would: starting
+	// and waiting for one goroutine per page cost about as much as a page
+	// of tens of microseconds.
+	for range g - 1 {
+		wg.Go(pages)
+	}
+	pages()
 	wg.Wait()
 	ns := clock.Since(t0)
 	if first != nil {
