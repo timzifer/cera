@@ -81,6 +81,15 @@ type RenderOptions struct {
 	// tiling pattern are drawn into the pattern's tile when the page is
 	// interpreted, at the nearest pixel unless they ask for /Interpolate.
 	ImageFilter ImageFilter
+	// Band, when set, is called with each part of the region once its
+	// pixels are final, so that an encoder can start on the first rows
+	// while others are drawn. The parts are horizontal strips spanning
+	// the region's width; they do not overlap and together cover the
+	// region. They come in no particular order, possibly from several
+	// goroutines at once, and all of them before Render returns, also
+	// after a deadline or a panic. With Form values to draw over the
+	// page, the region is one part.
+	Band func(r image.Rectangle)
 }
 
 // Stats describes what rendering a page did.
@@ -219,11 +228,19 @@ var recorders = sync.Pool{New: func() any { return new(interp) }}
 // Broken content does not stop rendering. A non-nil error means the page
 // was drawn partially: ErrDeadline, a rasterizer budget, or a *PanicError.
 func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (err error) {
-	defer recoverPanic(&err)
 	region := dst.Bounds()
 	if !opt.Region.Empty() {
 		region = region.Intersect(opt.Region)
 	}
+	// The region is reported whole at the end unless the display list
+	// reports its parts as it draws them.
+	report := opt.Band != nil && !region.Empty()
+	defer func() {
+		if report {
+			opt.Band(region)
+		}
+	}()
+	defer recoverPanic(&err)
 	// The display list fills the background band by band, each just
 	// before it is drawn; until it takes over, an early return or a panic
 	// leaves the region filled here.
@@ -278,7 +295,12 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 	}
 	iso := dl.blends && opt.Background.A != 0
 	fill = false
-	if derr := dl.render(dst, region, opt.Background, true, opt.Workers, vis, &pageAF, lim, iso, opt.ImageFilter); derr != nil && err == nil {
+	// Overlays draw over the page's bands after them.
+	var band func(image.Rectangle)
+	if report && len(overlays) == 0 {
+		band, report = opt.Band, false
+	}
+	if derr := dl.render(dst, region, opt.Background, true, band, opt.Workers, vis, &pageAF, lim, iso, opt.ImageFilter); derr != nil && err == nil {
 		err = derr
 	}
 	if len(overlays) > 0 {
@@ -287,7 +309,7 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 		}
 	}
 	for _, ol := range overlays {
-		if derr := ol.render(dst, region, color.RGBA{}, false, opt.Workers, vis, &af, lim, false, opt.ImageFilter); derr != nil && err == nil {
+		if derr := ol.render(dst, region, color.RGBA{}, false, nil, opt.Workers, vis, &af, lim, false, opt.ImageFilter); derr != nil && err == nil {
 			err = derr
 		}
 	}
@@ -651,13 +673,16 @@ func (p *Page) Release() {
 // touch it. With iso set, each band is drawn onto a transparent image
 // first and then composited onto dst, which holds the background. Images
 // are magnified with filter.
-func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.RGBA, fill bool, workers int, vis *Visibility, af *annotFilter, lim *limit, iso bool, filter ImageFilter) error {
+func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.RGBA, fill bool, band func(image.Rectangle), workers int, vis *Visibility, af *annotFilter, lim *limit, iso bool, filter ImageFilter) error {
 	b0, b1 := l.bandRange(region)
 	// The periodic checks come after hundreds of items; a short list
 	// would otherwise be drawn whole after the deadline.
 	if b0 >= b1 || lim.expired() {
 		if fill {
 			fillRegion(dst, region, bg)
+		}
+		if band != nil {
+			band(region)
 		}
 		if b0 >= b1 {
 			return nil
@@ -668,6 +693,16 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.R
 		// The bands cover the page; the rest of region is filled now.
 		fillOutside(dst, region, l.bounds, bg)
 	}
+	in := region.Intersect(l.bounds)
+	if band != nil {
+		// The rows above and below the page are final.
+		if in.Min.Y > region.Min.Y {
+			band(rows(region, region.Min.Y, in.Min.Y))
+		}
+		if region.Max.Y > in.Max.Y {
+			band(rows(region, in.Max.Y, region.Max.Y))
+		}
+	}
 	workers, whole := l.plan(region, b0, b1, workers)
 	j := jobs.Get().(*job)
 	if vis == nil {
@@ -676,11 +711,17 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.R
 	// A cheap page drawn in one pass touches few of its pixels after the
 	// fill; a large one is filled past the caches.
 	stream := whole && 4*region.Dx()*region.Dy() >= streamFill && l.workersFor(region) == 1
-	*j = job{l: l, dst: dst, region: region, bg: bg, fill: fill, stream: stream, lim: lim, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf}
+	*j = job{l: l, dst: dst, region: region, bg: bg, fill: fill, stream: stream, band: band, lim: lim, b0: b0, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf, told: j.told}
 	if whole {
 		j.idx, j.buf = l.regionItems(j.buf, b0, b1)
 		j.work(true)
+		if band != nil {
+			band(rows(region, in.Min.Y, in.Max.Y))
+		}
 	} else {
+		if band != nil {
+			j.told = append(j.told[:0], make([]bool, b1-b0)...)
+		}
 		// The caller draws bands too.
 		j.next.Store(int32(b0))
 		j.wg.Add(workers - 1)
@@ -695,12 +736,20 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.R
 				fillRegion(dst, l.band(b).Intersect(region), bg)
 			}
 		}
+		if band != nil {
+			// Bands no worker finished: left, or whose drawing panicked.
+			for b := b0; b < b1; b++ {
+				if !j.told[b-b0] {
+					band(j.bandRows(b))
+				}
+			}
+		}
 	}
 	err := j.err
 	if err == nil && lim.hit.Load() {
 		err = ErrDeadline
 	}
-	*j = job{vis: j.vis[:0], buf: j.buf[:0]}
+	*j = job{vis: j.vis[:0], buf: j.buf[:0], told: j.told[:0]}
 	jobs.Put(j)
 	return err
 }
@@ -772,8 +821,10 @@ type job struct {
 	bg     color.RGBA // with fill, set in each part before it is drawn
 	fill   bool
 	stream bool // fill with fillRegionStream
+	band   func(image.Rectangle)
+	told   []bool // per band from b0: passed to band
 	lim    *limit
-	b1     int
+	b0, b1 int
 	vis    []bool  // per tag of the list: drawn
 	idx    []int32 // the items a single pass draws
 	buf    []int32 // storage of idx when it is not the list's
@@ -831,7 +882,22 @@ func (j *job) work(whole bool) {
 			return
 		}
 		j.paint(pt, b, j.l.band(b).Intersect(j.region))
+		if j.band != nil {
+			j.told[b-j.b0] = true
+			j.band(j.bandRows(b))
+		}
 	}
+}
+
+// bandRows returns the rows of band b in the region, across its width.
+func (j *job) bandRows(b int) image.Rectangle {
+	r := j.l.band(b).Intersect(j.region)
+	return rows(j.region, r.Min.Y, r.Max.Y)
+}
+
+// rows returns rows y0 to y1 of r.
+func rows(r image.Rectangle, y0, y1 int) image.Rectangle {
+	return image.Rect(r.Min.X, y0, r.Max.X, y1)
 }
 
 // paint draws r, band b of the list or, if b < 0, the items j.idx.

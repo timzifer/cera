@@ -3,7 +3,7 @@ module github.com/timzifer/cera/cmd/cera
 go 1.26.4
 
 require (
-	github.com/timzifer/calamus v0.1.0
+	github.com/timzifer/calamus v0.2.0
 	github.com/timzifer/cera v0.0.0
 )
 

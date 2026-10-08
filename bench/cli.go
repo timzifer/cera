@@ -31,9 +31,20 @@ type tool struct {
 	threads bool
 }
 
-var toolOrder = []string{"mupdf", "cera", "poppler", "ghostscript"}
+var toolOrder = []string{"mupdf", "cera", "cera-stream", "cera-stdlib", "poppler", "ghostscript"}
+
+// ceraPNG is how each variant of cmd/cera writes its PNGs (its -png flag),
+// all at the fastest compression level. The variants differ in more than
+// speed: calamus compresses bands on their own, which makes files larger
+// than one stream (the size ratio is reported next to the time).
+var ceraPNG = map[string]struct{ mode, label string }{
+	"cera":        {"encode", "cera (`cmd/cera`: calamus after drawing, bands on all cores)"},
+	"cera-stream": {"stream", "cera (`-png stream`: calamus, bands while drawn)"},
+	"cera-stdlib": {"stdlib", "cera (`-png stdlib`: image/png, one core)"},
+}
 
 func setupTools(cache string) ([]*tool, []string) {
+	var ceraBuilt bool
 	var tools []*tool
 	var missing []string
 	d := strconv.FormatFloat(*dpi, 'g', -1, 64)
@@ -41,20 +52,26 @@ func setupTools(cache string) ([]*tool, []string) {
 		t := &tool{name: name}
 		var err error
 		switch name {
-		case "cera":
+		case "cera", "cera-stream", "cera-stdlib":
 			exe := ""
 			if runtime.GOOS == "windows" {
 				exe = ".exe"
 			}
 			t.bin = filepath.Join(cache, "cera"+exe)
-			// cmd/cera is a module of its own (it writes PNGs with calamus).
-			cmd := exec.Command("go", "build", "-C", filepath.Join("..", "cmd", "cera"), "-trimpath", "-o", t.bin, ".")
-			if out, e := cmd.CombinedOutput(); e != nil {
-				err = fmt.Errorf("go build: %v: %s", e, firstLine(out))
+			if name == "cera" {
+				// cmd/cera is a module of its own (it writes PNGs with calamus).
+				cmd := exec.Command("go", "build", "-C", filepath.Join("..", "cmd", "cera"), "-trimpath", "-o", t.bin, ".")
+				if out, e := cmd.CombinedOutput(); e != nil {
+					err = fmt.Errorf("go build: %v: %s", e, firstLine(out))
+				}
+				ceraBuilt = err == nil
+			} else if !ceraBuilt {
+				err = fmt.Errorf("cmd/cera did not build")
 			}
-			t.label, t.version, t.threads = "cera", "cera "+ceraVersion(), true
+			v := ceraPNG[name]
+			t.label, t.version, t.threads = v.label, "cera "+ceraVersion()+", -png "+v.mode, true
 			t.args = func(f *file, dir string, multi bool) []string {
-				a := []string{"-dpi", d, "-o", filepath.Join(dir, "p-%d.png")}
+				a := []string{"-dpi", d, "-png", v.mode, "-o", filepath.Join(dir, "p-%d.png")}
 				if !multi {
 					a = append(a, "-workers", "1")
 				}
@@ -132,11 +149,12 @@ func toolVersion(bin, flag string) string {
 	return firstLine(out)
 }
 
-// run draws f once; it returns the wall clock.
-func (t *tool) run(f *file, multi bool) (int64, error) {
+// run draws f once; it returns the wall clock and the bytes of the PNGs
+// written.
+func (t *tool) run(f *file, multi bool) (int64, int64, error) {
 	dir, err := os.MkdirTemp("", "cera-bench-*")
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -147,12 +165,19 @@ func (t *tool) run(f *file, multi bool) (int64, error) {
 	out, err := cmd.CombinedOutput()
 	ns := clock.Since(t0)
 	if err != nil {
-		return 0, fmt.Errorf("%v: %s", err, firstLine(out))
+		return 0, 0, fmt.Errorf("%v: %s", err, firstLine(out))
 	}
-	if pngs, _ := filepath.Glob(filepath.Join(dir, "*.png")); len(pngs) == 0 {
-		return 0, fmt.Errorf("no page written")
+	pngs, _ := filepath.Glob(filepath.Join(dir, "*.png"))
+	if len(pngs) == 0 {
+		return 0, 0, fmt.Errorf("no page written")
 	}
-	return int64(ns), nil
+	var size int64
+	for _, p := range pngs {
+		if fi, err := os.Stat(p); err == nil {
+			size += fi.Size()
+		}
+	}
+	return int64(ns), size, nil
 }
 
 // runCLI compares the command-line tools file by file, taking turns.
@@ -175,6 +200,7 @@ func runCLI(files []*file, m *meta, cache string) {
 	}
 	type res struct {
 		times map[key][]int64
+		size  map[key]int64 // bytes of the PNGs
 		err   map[key]string
 	}
 	modes := []bool{false}
@@ -183,10 +209,11 @@ func runCLI(files []*file, m *meta, cache string) {
 	}
 	n := max(*runs, 1)
 	logs := map[key]map[string][]float64{} // per tool and mode, per category
+	sizeLogs := map[string]map[string][]float64{} // per tool, per category
 	failed := map[key]int{}
-	rows := [][]string{{"file", "category", "tool", "cores", "ratio", "spread", "error"}}
+	rows := [][]string{{"file", "category", "tool", "cores", "ratio", "spread", "size", "error"}}
 	for fi, f := range files {
-		r := res{times: map[key][]int64{}, err: map[key]string{}}
+		r := res{times: map[key][]int64{}, size: map[key]int64{}, err: map[key]string{}}
 		step := 0
 		for range n + 1 { // the first round warms the disk cache and is not counted
 			for _, multi := range modes {
@@ -196,12 +223,13 @@ func runCLI(files []*file, m *meta, cache string) {
 					if _, bad := r.err[k]; bad {
 						continue
 					}
-					ns, err := t.run(f, multi)
+					ns, size, err := t.run(f, multi)
 					if err != nil {
 						r.err[k] = err.Error()
 						continue
 					}
 					r.times[k] = append(r.times[k], ns)
+					r.size[k] = size
 				}
 			}
 		}
@@ -227,11 +255,23 @@ func runCLI(files []*file, m *meta, cache string) {
 				} else if len(refT) == n+1 {
 					failed[k]++
 				}
+				size := math.NaN()
+				if rs := r.size[key{refName, multi}]; rs > 0 && r.size[k] > 0 {
+					size = float64(r.size[k]) / float64(rs)
+					if !multi {
+						if sizeLogs[t.name] == nil {
+							sizeLogs[t.name] = map[string][]float64{}
+						}
+						for _, c := range []string{f.category, "all"} {
+							sizeLogs[t.name][c] = append(sizeLogs[t.name][c], math.Log(size))
+						}
+					}
+				}
 				c := "1"
 				if multi {
 					c = strconv.Itoa(*cores)
 				}
-				rows = append(rows, []string{f.rel, f.category, t.name, c, fmtF(ratio, 4), fmtF(spread, 4), oneLine(r.err[k])})
+				rows = append(rows, []string{f.rel, f.category, t.name, c, fmtF(ratio, 4), fmtF(spread, 4), fmtF(size, 4), oneLine(r.err[k])})
 			}
 		}
 		log.Printf("[%d/%d] %s", fi+1, len(files), f.rel)
@@ -254,6 +294,15 @@ func runCLI(files []*file, m *meta, cache string) {
 			out[mode][c][k.tool] = g
 		}
 	}
+	sizes := map[string]map[string]group{} // category → tool
+	for name, cats := range sizeLogs {
+		for c, l := range cats {
+			if sizes[c] == nil {
+				sizes[c] = map[string]group{}
+			}
+			sizes[c][name] = group{Ratio: math.Exp(mean(l)), N: len(l)}
+		}
+	}
 	threads := map[string]bool{}
 	for _, t := range tools {
 		threads[t.name] = t.threads
@@ -261,8 +310,9 @@ func runCLI(files []*file, m *meta, cache string) {
 	sum := struct {
 		Meta    *meta                                  `json:"meta"`
 		Ratios  map[string]map[string]map[string]group `json:"ratios"` // cores ("1", "all") → category → tool
+		Sizes   map[string]map[string]group            `json:"sizes"` // category → tool: bytes of the PNGs against the reference's
 		Threads map[string]bool                        `json:"threads"`
-	}{m, out, threads}
+	}{m, out, sizes, threads}
 	b, _ := json.MarshalIndent(sum, "", " ")
 	must(os.WriteFile(filepath.Join(*outDir, "cli-summary.json"), b, 0o644))
 	fh, err := os.Create(filepath.Join(*outDir, "cli-files.csv"))
@@ -293,6 +343,25 @@ func runCLI(files []*file, m *meta, cache string) {
 			for _, c := range cats {
 				if g, ok := out[mode][c][t.name]; ok {
 					fmt.Fprintf(&md, " %s |", ratioCell(g))
+				} else {
+					md.WriteString(" — |")
+				}
+			}
+			md.WriteString("\n")
+		}
+		md.WriteString("\n")
+	}
+	if cats := present(categoryOrder, sizes); len(cats) > 0 {
+		md.WriteString("## Size of the PNGs\n\nBytes written, relative to " + labelOf(tools, refName) + "; geometric mean per file.\n\n| |")
+		for _, c := range cats {
+			fmt.Fprintf(&md, " %s |", categoryLabels[c])
+		}
+		md.WriteString("\n|---|" + strings.Repeat("---|", len(cats)) + "\n")
+		for _, t := range tools {
+			fmt.Fprintf(&md, "| %s |", t.label)
+			for _, c := range cats {
+				if g, ok := sizes[c][t.name]; ok {
+					fmt.Fprintf(&md, " %.2f× |", g.Ratio)
 				} else {
 					md.WriteString(" — |")
 				}

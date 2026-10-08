@@ -145,33 +145,73 @@ The plain question "how long does converting this PDF to PNGs take?": each
 tool's wall clock from start to exit, PNG encoding included, against
 `mutool draw`.
 
+What each tool does with its PNGs matters here as much as drawing, so cera
+appears three times: the way `cmd/cera` writes PNGs by default, and its
+two other `-png` modes. All three compress at the fastest level
+(`BestSpeed`).
+
+- `cmd/cera` (`-png encode`, the default): after drawing a page, calamus
+  compresses it in bands of rows on all cores.
+- `-png stream`: calamus compresses each band as soon as it is drawn
+  (`RenderOptions.Band`), while the other bands are still being drawn.
+- `-png stdlib`: Go's `image/png` after drawing, on one core.
+
+The other tools write PNGs as they always do, at their default levels.
+
 | | all files | drawings | papers | text, fonts | scans |
 |---|---|---|---|---|---|
 | **one core** | | | | | |
 | MuPDF (`mutool draw`) | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× |
-| **cera** (`cmd/cera`) | **0.58×** | **0.26×** | **0.70×** | **0.74×** | **0.64×** |
-| Poppler (`pdftoppm`) | 2.63× | 1.06× | 5.90× | 3.08× | 2.62× |
-| Ghostscript | 3.83× | 1.33× | 2.55× | 4.87× | 4.46× |
+| **cera** (`cmd/cera`) | **0.55×** | **0.25×** | **0.72×** | **0.69×** | **0.56×** |
+| cera, `-png stream` | 0.55× | 0.24× | 0.71× | 0.70× | 0.56× |
+| cera, `-png stdlib` | 0.62× | 0.28× | 0.81× | 0.80× | 0.64× |
+| Poppler (`pdftoppm`) | 2.64× | 1.09× | 5.87× | 3.15× | 2.48× |
+| Ghostscript | 3.88× | 1.34× | 2.56× | 4.95× | 4.37× |
 | **16 cores** | | | | | |
 | MuPDF (`mutool draw -T 16 -B 256`) | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× |
-| **cera** | **0.50×** | **0.29×** | **0.34×** | **0.64×** | **0.59×** |
-| Poppler (no threads) | 3.38× | 2.99× | 6.47× | 3.11× | 2.51× |
-| Ghostscript (`-dNumRenderingThreads=16`) | 4.82× | 3.56× | 2.71× | 4.96× | 4.34× |
+| **cera** | **0.47×** | **0.27×** | **0.33×** | **0.62×** | **0.55×** |
+| cera, `-png stream` | 0.48× | 0.28× | 0.38× | 0.61× | 0.53× |
+| cera, `-png stdlib` | 0.73× | 0.65× | 0.81× | 0.80× | 0.67× |
+| Poppler (no threads) | 3.32× | 3.10× | 6.41× | 3.11× | 2.57× |
+| Ghostscript (`-dNumRenderingThreads=16`) | 4.89× | 3.75× | 2.70× | 5.07× | 4.44× |
 
-On the command line, starting the process and writing PNGs take a large
-share, which narrows the differences. On the three scan pages cera's
-library is slower than MuPDF's but `cmd/cera` is faster than `mutool`;
-presumably start-up and encoding outweigh drawing there, which is not
-yet examined.
+**The files are not the same size.** Bytes written against `mutool draw`:
 
-`cmd/cera` writes its PNGs with [calamus](https://github.com/timzifer/calamus),
-which encodes them in bands on all cores. With `image/png`, encoding was
-61–88 % of the command's time and the command gained little from cores
-(0.76× `mutool` on 16 cores, 0.63× on one); with calamus it is 0.50× on 16
-cores and 0.58× on one, while Poppler and Ghostscript, unchanged, measured
-the same as before within 2 %. The pages are still written one after
-another; overlapping drawing and encoding is the rest of
-[#67](https://github.com/timzifer/cera/issues/67).
+| | all files | drawings | papers | text, fonts | scans |
+|---|---|---|---|---|---|
+| cera (all three modes) | 1.27× | 1.17× | 1.25× | 1.75× | 1.77× |
+| Poppler | 0.67× | 0.44× | 1.15× | 0.95× | 0.76× |
+| Ghostscript | 0.61× | 0.61× | 0.55× | 0.61× | 0.52× |
+
+cera's PNGs are about a quarter larger than MuPDF's, up to 1.8× on text
+and scans. That comes from `BestSpeed`, not from the bands: `image/png`
+at the same level writes the same sizes within 1 %. Part of cera's lead
+here is therefore spending less effort on compression than the other
+tools do. A comparison at equal file size is not made yet.
+
+Two runs of the whole comparison gave the same ratios within 0.02, except
+for papers on 16 cores, where `-png stream` was 0.38× in both runs
+against 0.33× for the default.
+
+Streaming gains nothing measurable:
+
+- On one core nothing can overlap.
+- On 16 cores calamus already compresses a page in bands on all cores
+  once it is drawn.
+- Streamed, a band is compressed on the goroutine that drew it, joined
+  with its neighbours to at least 256 rows, while other bands are still
+  drawn. On papers this is slower than compressing the finished page on
+  all cores.
+
+`-png stream` stays as an option, and the default writes as before.
+
+With `image/png`, encoding was 61–88 % of the command's time (#67).
+calamus made the command 1.1× faster on one core and 1.6× on 16. Poppler
+and Ghostscript, unchanged, measured the same as before within 2 %.
+
+On the three scan pages cera's library is about as fast as MuPDF's
+(1.04× and below, #64). On the command line start-up and encoding add to
+both.
 
 ## Accuracy alongside
 

@@ -4,16 +4,26 @@
 //	cera -dpi 150 -o 'out-%d.png' input.pdf   # all pages
 //	cera -field name=Ada -field agree=Yes -page 1 form.pdf
 //	cera -cmyk-profile CoatedFOGRA39.icc -page 1 print.pdf
+//
+// PNGs are written at the fastest compression level, which makes them
+// larger than other tools' (see docs/performance.md). With -png encode
+// (the default) calamus compresses a page after drawing it, in bands on
+// all cores; with -png stream each band as soon as it is drawn, while
+// the others are still drawn; -png stdlib uses image/png, on one core.
 package main
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"fmt"
 	"image"
 	"image/color"
+	stdpng "image/png"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/timzifer/calamus/png"
@@ -33,6 +43,7 @@ func main() {
 	imageFilter := flag.String("image-filter", "nearest", "how magnified images without /Interpolate are sampled: nearest or smooth (bilinearly below 2× magnification)")
 	cmykProfile := flag.String("cmyk-profile", "", "ICC profile `file` DeviceCMYK is converted through instead of the bundled SWOP profile")
 	naiveCMYK := flag.Bool("naive-cmyk", false, "convert CMYK naively, as device values, without a profile")
+	pngMode := flag.String("png", "encode", "how PNGs are compressed: encode (calamus, after drawing), stream (calamus, bands while they are drawn) or stdlib (image/png)")
 	var fields []string
 	flag.Func("field", "set a form field, `name=value` (repeatable); a check box or radio button takes the name of its state", func(s string) error {
 		if !strings.Contains(s, "=") {
@@ -62,6 +73,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "cera: -image-filter %q: want nearest or smooth\n", *imageFilter)
 		os.Exit(2)
 	}
+	if !slices.Contains([]string{"stream", "encode", "stdlib"}, *pngMode) {
+		fmt.Fprintf(os.Stderr, "cera: -png %q: want stream, encode or stdlib\n", *pngMode)
+		os.Exit(2)
+	}
 	opt := cera.OpenOptions{Password: *password, NaiveCMYK: *naiveCMYK}
 	if *cmykProfile != "" {
 		b, err := os.ReadFile(*cmykProfile)
@@ -71,13 +86,13 @@ func main() {
 		}
 		opt.CMYKProfile = b
 	}
-	if err := run(flag.Arg(0), opt, *dpi, *page, *out, *transparent, *timeout, *verbose, *workers, mode, filter, fields); err != nil {
+	if err := run(flag.Arg(0), opt, *dpi, *page, *out, *transparent, *timeout, *verbose, *workers, mode, filter, fields, *pngMode); err != nil {
 		fmt.Fprintln(os.Stderr, "cera:", err)
 		os.Exit(1)
 	}
 }
 
-func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, filter cera.ImageFilter, fields []string) error {
+func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, filter cera.ImageFilter, fields []string, pngMode string) error {
 	data, err := os.ReadFile(in)
 	if err != nil {
 		return err
@@ -110,13 +125,25 @@ func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, tra
 		if err != nil {
 			return err
 		}
+		name := out
+		if strings.Contains(out, "%d") {
+			name = fmt.Sprintf(out, n)
+		}
 		dst := image.NewRGBA(p.Bounds(dpi / 72))
 		var st cera.Stats
-		t0 := time.Now()
-		err = p.Render(context.Background(), dst, cera.RenderOptions{
+		ropt := cera.RenderOptions{
 			Scale: dpi / 72, Background: bg, Deadline: time.Now().Add(timeout), Stats: &st,
 			Workers: workers, Annotations: annots, Form: form, ImageFilter: filter,
-		})
+		}
+		var sw *streamPNG
+		if pngMode == "stream" {
+			if sw, err = newStreamPNG(name, dst, bg.A == 255); err != nil {
+				return err
+			}
+			ropt.Band = sw.band
+		}
+		t0 := time.Now()
+		err = p.Render(context.Background(), dst, ropt)
 		p.Release()
 		elapsed := time.Since(t0)
 		if err != nil {
@@ -131,11 +158,12 @@ func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, tra
 			}
 			fmt.Fprintln(os.Stderr)
 		}
-		name := out
-		if strings.Contains(out, "%d") {
-			name = fmt.Sprintf(out, n)
+		if sw != nil {
+			err = sw.close()
+		} else {
+			err = writePNG(name, dst, pngMode)
 		}
-		if err := writePNG(name, dst); err != nil {
+		if err != nil {
 			return err
 		}
 	}
@@ -169,17 +197,87 @@ func fill(doc *cera.Document, fields []string) (*cera.FormState, error) {
 	return s, nil
 }
 
-func writePNG(name string, img image.Image) error {
+// writePNG writes img to the file name after drawing: with calamus in
+// bands on all cores, or with image/png. Encoding, not rendering, was most
+// of this command's time with image/png (#67).
+func writePNG(name string, img image.Image, mode string) error {
 	f, err := os.Create(name)
 	if err != nil {
 		return err
 	}
-	// calamus writes the PNG in bands on all cores; encoding, not
-	// rendering, was most of this command's time with image/png (#67).
-	enc := png.Encoder{CompressionLevel: png.BestSpeed}
-	if err := enc.Encode(f, img); err != nil {
-		f.Close()
-		return err
+	if mode == "stdlib" {
+		err = (&stdpng.Encoder{CompressionLevel: stdpng.BestSpeed}).Encode(f, img)
+	} else {
+		err = (&png.Encoder{CompressionLevel: png.BestSpeed}).Encode(f, img)
 	}
-	return f.Close()
+	return cmp.Or(err, f.Close())
+}
+
+// streamRows is the fewest rows streamPNG compresses together: calamus
+// loses at most 0.4 % in size on bands of 256 rows, up to 3 % on 64.
+const streamRows = 256
+
+// streamPNG writes a page to a PNG file while it is drawn: band is
+// RenderOptions.Band. Finished parts are joined with the finished rows
+// next to them and handed to calamus once streamRows are together, on
+// the goroutine that finished them.
+type streamPNG struct {
+	f   *os.File
+	w   *png.Writer
+	dst *image.RGBA
+
+	mu   sync.Mutex
+	open []image.Rectangle // finished rows not handed over yet
+	err  error
+}
+
+func newStreamPNG(name string, dst *image.RGBA, opaque bool) (*streamPNG, error) {
+	f, err := os.Create(name)
+	if err != nil {
+		return nil, err
+	}
+	enc := &png.Encoder{CompressionLevel: png.BestSpeed}
+	b := dst.Bounds()
+	w, err := enc.NewWriter(f, png.Header{Width: b.Dx(), Height: b.Dy(), ColorModel: color.RGBAModel, Opaque: opaque})
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return &streamPNG{f: f, w: w, dst: dst}, nil
+}
+
+func (s *streamPNG) band(r image.Rectangle) {
+	s.mu.Lock()
+	for i := 0; i < len(s.open); {
+		if o := s.open[i]; o.Max.Y == r.Min.Y || o.Min.Y == r.Max.Y {
+			r = r.Union(o)
+			s.open = slices.Delete(s.open, i, i+1)
+			continue
+		}
+		i++
+	}
+	if r.Dy() < streamRows && r != s.dst.Bounds() {
+		s.open = append(s.open, r)
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	s.write(r)
+}
+
+func (s *streamPNG) write(r image.Rectangle) {
+	if err := s.w.WriteRows(s.dst.SubImage(r)); err != nil {
+		s.mu.Lock()
+		s.err = cmp.Or(s.err, err)
+		s.mu.Unlock()
+	}
+}
+
+// close hands over the rows left and finishes the file.
+func (s *streamPNG) close() error {
+	for _, r := range s.open {
+		s.write(r)
+	}
+	s.open = nil
+	return cmp.Or(s.err, s.w.Close(), s.f.Close())
 }
