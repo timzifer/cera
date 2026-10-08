@@ -34,10 +34,12 @@ type RenderOptions struct {
 	Deadline time.Time
 	// Stats, when non-nil, receives what rendering did.
 	Stats *Stats
-	// Workers is the number of goroutines drawing the page, each taking
+	// Workers is the most goroutines drawing the page, each taking
 	// horizontal bands of it: 0 means GOMAXPROCS, 1 draws on the calling
-	// goroutine in one pass. Antialiasing may round differently by one
-	// level where bands meet.
+	// goroutine in one pass. A page or region estimated to draw quickly
+	// is drawn by fewer, or in one pass, since starting and joining
+	// goroutines would cost more than it saves. Antialiasing may round
+	// differently by one level where bands meet.
 	Workers int
 	// Layers selects the optional content to draw; nil is the document's
 	// default configuration for Usage (see Document.Layers). Switching
@@ -653,6 +655,9 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers in
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0)
 	}
+	if workers > 1 && adaptWorkers {
+		workers = min(workers, l.workersFor(region))
+	}
 	j := jobs.Get().(*job)
 	if vis == nil {
 		vis = &noLayers
@@ -676,6 +681,35 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers in
 	*j = job{vis: j.vis[:0], buf: j.buf[:0]}
 	jobs.Put(j)
 	return err
+}
+
+// Drawing is shared between workers only when it is estimated to take
+// at least serialBelow on one core, and then by about one worker per
+// perWorker of it. Starting goroutines, waking cores for them and joining
+// them takes tens of microseconds; on a page that draws faster several
+// workers were slower than one (#63).
+const (
+	serialBelow = 150e3 // ns
+	perWorker   = 100e3 // ns
+)
+
+// adaptWorkers is off in tests that hold the drawing of bands by several
+// workers against one pass, on pages that would not be shared.
+var adaptWorkers = true
+
+// workersFor returns how many workers drawing region is worth, from the
+// list's estimated cost scaled to the part of the page region covers.
+func (l *displayList) workersFor(region image.Rectangle) int {
+	r := region.Intersect(l.bounds)
+	page := float64(l.bounds.Dx()) * float64(l.bounds.Dy())
+	if r.Empty() || page == 0 {
+		return 1
+	}
+	est := l.cost * float64(r.Dx()) * float64(r.Dy()) / page
+	if est < serialBelow {
+		return 1
+	}
+	return max(2, int(est/perWorker))
 }
 
 // job is one render of a display list, shared by its workers.

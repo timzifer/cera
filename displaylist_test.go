@@ -601,3 +601,40 @@ func BenchmarkDeviceBoxPoints(b *testing.B) {
 		_ = deviceBoxPoints(pts, m, 1)
 	}
 }
+
+// TestWorkersFor checks that a page estimated to draw quickly is drawn
+// by one worker, and that the number of workers grows with the estimate
+// and with the part of the page drawn.
+func TestWorkersFor(t *testing.T) {
+	render := func(content string, scale float64) *displayList {
+		doc, err := Open(buildPDF([]string{content}, ""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, _ := doc.Page(0)
+		if err := p.Render(context.Background(), image.NewRGBA(p.Bounds(scale)), RenderOptions{Scale: scale, Workers: 1}); err != nil {
+			t.Fatal(err)
+		}
+		return p.dl
+	}
+	small := render("0 g 10 10 20 20 re f", 2)
+	if n := small.workersFor(small.bounds); n != 1 {
+		t.Errorf("small fill: %d workers", n)
+	}
+	var c strings.Builder
+	for i := range 200 {
+		fmt.Fprintf(&c, "%d g 0 %d 200 3 re f\n", i%2, i%100)
+	}
+	big := render(c.String(), 8)
+	all := big.workersFor(big.bounds)
+	if all < 4 {
+		t.Errorf("200 page-wide fills at 8×: %d workers (cost %.0f ns)", all, big.cost)
+	}
+	tile := big.workersFor(image.Rect(0, 0, 100, 100))
+	if tile >= all {
+		t.Errorf("a tile gets %d workers, the page %d", tile, all)
+	}
+	if n := big.workersFor(image.Rect(-100, -100, -1, -1)); n != 1 {
+		t.Errorf("outside the page: %d workers", n)
+	}
+}

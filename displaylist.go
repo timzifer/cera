@@ -142,6 +142,9 @@ type displayList struct {
 	overprint bool // simulated
 	stats     Stats
 	complete  bool
+	// cost estimates the drawing of the whole list in nanoseconds on one
+	// core; see itemCost.
+	cost float64
 	// blends says that something is blended onto the page itself: the
 	// page is then drawn transparent and composited onto the background,
 	// since the page group's backdrop is transparent and the paper comes
@@ -878,11 +881,13 @@ func (l *displayList) finish() {
 	l.bandItems = slices.Grow(l.bandItems[:0], total)[:total]
 	l.bandFill = append(l.bandFill[:0], l.bandStart[:nb]...)
 	l.allItems = l.allItems[:0]
+	l.cost = 0
 	for i := range l.items {
 		if l.items[i].op == dlNop {
 			continue
 		}
 		l.allItems = append(l.allItems, int32(i))
+		l.cost += l.itemCost(&l.items[i])
 		b0, b1 := l.bandRange(l.items[i].bbox)
 		for b := b0; b < b1; b++ {
 			l.bandItems[l.bandFill[b]] = int32(i)
@@ -890,6 +895,28 @@ func (l *displayList) finish() {
 		}
 	}
 	l.clips = l.clips[:0]
+}
+
+// itemCost estimates what drawing it costs, in nanoseconds on one core:
+// about a nanosecond a pixel of its box for paths and images, eight for
+// what shades every pixel (shadings, patterns, groups, masks), and a
+// third of a microsecond a glyph besides its pixels. It is rough, but on
+// the pages of testdata/corpus it orders the drawing times well enough
+// to tell the pages that are not worth sharing between workers (#63).
+func (l *displayList) itemCost(it *dlItem) float64 {
+	a := it.bbox.Intersect(l.bounds)
+	px := float64(a.Dx()) * float64(a.Dy())
+	switch it.op {
+	case dlFill, dlStroke, dlClipPath, dlClipStroke:
+		return 200 + px
+	case dlImage:
+		return px
+	case dlGlyphs:
+		return 300*float64(it.v1-it.v0) + px/2
+	case dlShading, dlTile, dlBeginGroup, dlBeginMask:
+		return 8 * px
+	}
+	return 0
 }
 
 // bandHeight splits a page into about 16 bands of a multiple of 32 rows,
