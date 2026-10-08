@@ -14,6 +14,8 @@ github.com/tannevaled/gobig2 v0.2.0 h1:yx97/ltljALrIWDFVqHjPUIjAp3bfUUhH8Z8UROvN
 github.com/tannevaled/gobig2 v0.2.0/go.mod h1:X0S1H+N35kg6zYgVYRqGMsGj3C35zs+iA2r1MXyPcV4=
 github.com/timzifer/calamus v0.1.0 h1:XDNfn3gWD+iegPYzkzjmzuTsRWyO3IJS5FwSQBk2D1A=
 github.com/timzifer/calamus v0.1.0/go.mod h1:Z6fVRZRraaG0hgfvqynq9TM9vCq1ZGVm8AgDvnugCqw=
+github.com/timzifer/calamus v0.2.0 h1:pOdCAVu75XASMhL5fiI3+qObJMCtiKZ1ehA4ZOOPWdA=
+github.com/timzifer/calamus v0.2.0/go.mod h1:Z6fVRZRraaG0hgfvqynq9TM9vCq1ZGVm8AgDvnugCqw=
 github.com/timzifer/stilus v0.9.0 h1:6LisRplrGPdSbLozc+vXd2lt8rLegc1k/8ezJ+9CF3A=
 github.com/timzifer/stilus v0.9.0/go.mod h1:J8uybarHVrCcMUgRwrEkZOw5USCYqbIcfqjTGm2pB2o=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
