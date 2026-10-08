@@ -145,8 +145,8 @@ and the largest), the interpreter included for pdf.js:
 
 ² `tiling-pattern-box.pdf`.
 
-cera allocates 3 times per page (median; 90th percentile 88, most 1 715),
-184 bytes, the bitmap not counted, counted as `cmd/corpus run` counts: the
+cera allocates once per page (median; 90th percentile 86, most 1 713),
+48 bytes, the bitmap not counted, counted as `cmd/corpus run` counts: the
 page drawn, released, and drawn again from scratch. The count depends a
 little on what the caches and pools hold: against `cmd/corpus run` it agrees
 within 10 % or 5 allocations on 103 of 113 pages. Drawing a page again from

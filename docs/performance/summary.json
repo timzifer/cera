@@ -825,10 +825,10 @@
   "pdfjs": 994.9
  },
  "cera_allocs": {
-  "median": 3,
-  "p90": 88.39999999999999,
-  "max": 1715,
-  "bytes_median": 184
+  "median": 1,
+  "p90": 86.39999999999999,
+  "max": 1713,
+  "bytes_median": 48
  },
  "cera_again": {
   "all": 0.691059580431743,

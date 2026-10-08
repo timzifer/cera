@@ -38,7 +38,7 @@ the pinned corpus of 113 pages:
   Poppler 2.64×, Ghostscript 3.88×.
 - WebAssembly, against native MuPDF: cera 1.62× on V8 (Chrome, Node), 3.80×
   on wazero; PDFium 2.07× on wazero (its module runs on wazero only).
-- 3 allocations per page (median), 38 MB peak memory per file (median).
+- One allocation per page (median), 38 MB peak memory per file (median).
 
 cera's own synthetic drawings, on which MuPDF is unusually slow (cera
 0.11×), are left out of this table. Ratios only, never times: engines take

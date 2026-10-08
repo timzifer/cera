@@ -414,22 +414,27 @@ func (p *Page) list(scale float64, overprint bool, lim *limit) (dl *displayList,
 			p.mu.Unlock()
 			return dl, true
 		}
-		f := p.flights[key]
-		if f == nil {
-			f = &listFlight{done: make(chan struct{})}
+		f, busy := p.flights[key]
+		if !busy {
+			// Recording stands in the map as nil: the flight is made only
+			// when a render comes to wait for it.
 			if p.flights == nil {
 				p.flights = map[listKey]*listFlight{}
 			}
-			p.flights[key] = f
+			p.flights[key] = nil
 			p.mu.Unlock()
-			return p.recordList(key, lim, f), false
+			return p.recordList(key, lim, true), false
+		}
+		if f == nil {
+			f = &listFlight{done: make(chan struct{})}
+			p.flights[key] = f
 		}
 		f.waiters++
 		p.mu.Unlock()
 		if !p.wait(key, f, lim) {
 			// The limit ended: recording stops at once, with an
 			// incomplete list of this render's own.
-			return p.recordList(key, lim, nil), false
+			return p.recordList(key, lim, false), false
 		}
 		if f.dl != nil && f.dl.complete {
 			return f.dl, true
@@ -447,7 +452,7 @@ type listKey struct {
 	overprint bool
 }
 
-// listFlight is a recording in progress.
+// listFlight is a recording in progress that renders wait for.
 type listFlight struct {
 	done chan struct{} // closed when the recording ends
 	dl   *displayList  // the list recorded, nil if recording panicked
@@ -484,16 +489,20 @@ func (p *Page) wait(key listKey, f *listFlight, lim *limit) bool {
 }
 
 // recordList records the list for key and, when it is complete, caches
-// it. The renders waiting for f, if not nil, get it too.
-func (p *Page) recordList(key listKey, lim *limit, f *listFlight) (dl *displayList) {
+// it. If it is the recording of p.flights[key], the renders waiting for it
+// get the list too.
+func (p *Page) recordList(key listKey, lim *limit, flight bool) (dl *displayList) {
 	ended := false
-	if f != nil {
+	if flight {
 		defer func() {
 			if !ended { // recording panicked outside the interpreter
 				p.mu.Lock()
+				f := p.flights[key]
 				delete(p.flights, key)
 				p.mu.Unlock()
-				close(f.done)
+				if f != nil {
+					close(f.done)
+				}
 			}
 		}()
 	}
@@ -522,9 +531,12 @@ func (p *Page) recordList(key listKey, lim *limit, f *listFlight) (dl *displayLi
 
 	p.mu.Lock()
 	dl.refs++
-	if f != nil {
-		dl.refs += f.waiters
-		f.dl = dl
+	var f *listFlight
+	if flight {
+		if f = p.flights[key]; f != nil {
+			dl.refs += f.waiters
+			f.dl = dl
+		}
 		delete(p.flights, key)
 	}
 	if dl.complete {
@@ -534,8 +546,8 @@ func (p *Page) recordList(key listKey, lim *limit, f *listFlight) (dl *displayLi
 		p.dl = dl
 	}
 	p.mu.Unlock()
+	ended = true
 	if f != nil {
-		ended = true
 		close(f.done)
 	}
 	return dl
