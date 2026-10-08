@@ -160,8 +160,10 @@ func (w *worker) render(i int, scale float64, workers int) (int64, *image.RGBA, 
 	return int64(ns), dst, err
 }
 
-// all renders every page on threads cores: pages concurrently, and the
-// cores left over draw bands of each page.
+// all renders every page on threads cores: pages concurrently, each with
+// the default workers (all cores), so the bands of the pages still being
+// drawn take the cores of those done. Each page draws on fewer workers
+// when it is cheap (RenderOptions.Workers).
 func (w *worker) all(scale float64, threads int) []string {
 	n := w.doc.NumPages()
 	g := min(threads, n)
@@ -179,7 +181,7 @@ func (w *worker) all(scale float64, threads int) []string {
 	)
 	pages := func() {
 		for i := range next {
-			if _, _, err := w.render(i, scale, max(1, threads/g)); err != nil {
+			if _, _, err := w.render(i, scale, 0); err != nil {
 				mu.Lock()
 				first = cmpErr(first, err)
 				mu.Unlock()

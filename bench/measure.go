@@ -308,7 +308,7 @@ func measureFile(f *file, engines []*engine) *fileResult {
 
 // measureAllCores times drawing the whole document on all cores, each
 // engine in its own best way: an engine with threads of its own uses them
-// (cera: pages concurrently, bands of a page on the cores left over);
+// (cera: pages concurrently, each drawn in bands on all cores);
 // the others run one process per core, as their documentation advises.
 // Each run on all cores is paired with the same run on one core (one
 // thread, or one process), taking turns, for the engine's gain.

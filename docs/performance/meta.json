@@ -11,9 +11,9 @@
  "corpus": "359fe26ef817",
  "files": 41,
  "versions": {
-  "cera": "cera v0.5.0-32-g484701e",
-  "cera-v8-wasm": "cera v0.5.0-32-g484701e",
-  "cera-wasm": "cera v0.5.0-32-g484701e",
+  "cera": "cera v0.5.0-35-g161fe64",
+  "cera-v8-wasm": "cera v0.5.0-35-g161fe64",
+  "cera-wasm": "cera v0.5.0-35-g161fe64",
   "hayro": "hayro 0.8.0",
   "mupdf": "mupdf 1.28.2 (PyMuPDF 1.28.2)",
   "pdfium": "pdfium 156.0.8076.0 (pypdfium2 5.14.0)",
