@@ -31,16 +31,16 @@ type tool struct {
 	threads bool
 }
 
-var toolOrder = []string{"mupdf", "cera", "cera-encode", "cera-stdlib", "poppler", "ghostscript"}
+var toolOrder = []string{"mupdf", "cera", "cera-stream", "cera-stdlib", "poppler", "ghostscript"}
 
 // ceraPNG is how each variant of cmd/cera writes its PNGs (its -png flag),
 // all at the fastest compression level. The variants differ in more than
 // speed: calamus compresses bands on their own, which makes files larger
 // than one stream (the size ratio is reported next to the time).
 var ceraPNG = map[string]struct{ mode, label string }{
-	"cera":        {"stream", "cera (`cmd/cera`, calamus, bands compressed while drawn)"},
-	"cera-encode": {"encode", "cera (calamus after drawing, bands on all cores)"},
-	"cera-stdlib": {"stdlib", "cera (image/png after drawing, one core)"},
+	"cera":        {"encode", "cera (`cmd/cera`: calamus after drawing, bands on all cores)"},
+	"cera-stream": {"stream", "cera (`-png stream`: calamus, bands while drawn)"},
+	"cera-stdlib": {"stdlib", "cera (`-png stdlib`: image/png, one core)"},
 }
 
 func setupTools(cache string) ([]*tool, []string) {
@@ -52,7 +52,7 @@ func setupTools(cache string) ([]*tool, []string) {
 		t := &tool{name: name}
 		var err error
 		switch name {
-		case "cera", "cera-encode", "cera-stdlib":
+		case "cera", "cera-stream", "cera-stdlib":
 			exe := ""
 			if runtime.GOOS == "windows" {
 				exe = ".exe"

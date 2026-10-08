@@ -351,6 +351,8 @@ jobs:
             GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null . || exit 1
           done
           GOOS=js GOARCH=wasm go build -tags cera_nogyre -o /dev/null .
+      - name: Test
+        run: go test -race ./...
 
   # The CJK fonts are a module of their own (ADR 0008), so that no binary
   # links tens of megabytes of glyphs without asking for them.

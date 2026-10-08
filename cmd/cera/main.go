@@ -5,12 +5,11 @@
 //	cera -field name=Ada -field agree=Yes -page 1 form.pdf
 //	cera -cmyk-profile CoatedFOGRA39.icc -page 1 print.pdf
 //
-// PNGs are written at the fastest compression level. With -png stream
-// (the default) each band of a page is compressed by calamus as soon as
-// it is drawn, while the others are still drawn; -png encode compresses
-// the page with calamus after drawing it, in bands on all cores; -png
-// stdlib with image/png, on one core. Compressing bands on their own
-// makes the files somewhat larger than one stream would.
+// PNGs are written at the fastest compression level, which makes them
+// larger than other tools' (see docs/performance.md). With -png encode
+// (the default) calamus compresses a page after drawing it, in bands on
+// all cores; with -png stream each band as soon as it is drawn, while
+// the others are still drawn; -png stdlib uses image/png, on one core.
 package main
 
 import (
@@ -44,7 +43,7 @@ func main() {
 	imageFilter := flag.String("image-filter", "nearest", "how magnified images without /Interpolate are sampled: nearest or smooth (bilinearly below 2× magnification)")
 	cmykProfile := flag.String("cmyk-profile", "", "ICC profile `file` DeviceCMYK is converted through instead of the bundled SWOP profile")
 	naiveCMYK := flag.Bool("naive-cmyk", false, "convert CMYK naively, as device values, without a profile")
-	pngMode := flag.String("png", "stream", "how PNGs are compressed: stream (calamus, bands while they are drawn), encode (calamus, after drawing) or stdlib (image/png)")
+	pngMode := flag.String("png", "encode", "how PNGs are compressed: encode (calamus, after drawing), stream (calamus, bands while they are drawn) or stdlib (image/png)")
 	var fields []string
 	flag.Func("field", "set a form field, `name=value` (repeatable); a check box or radio button takes the name of its state", func(s string) error {
 		if !strings.Contains(s, "=") {
