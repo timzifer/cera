@@ -31,8 +31,11 @@ type fileResult struct {
 	// first is opening the file and drawing its first page in a fresh
 	// process, the wait before a viewer shows something.
 	first map[string]int64
-	// all is drawing every page on all cores, one per run.
+	// all is drawing every page on all cores, one per run; one is the
+	// same on one core, each timed right before or after the run of all
+	// with the same index, so that the gain is a paired ratio.
 	all     map[string][]int64
+	one     map[string][]int64
 	allErr  map[string]string
 	pooled  map[string]bool // all cores as one process per core
 	rss     map[string]uint64
@@ -148,7 +151,7 @@ func rotate[T any](s []T, k int) []T {
 // page and run by run, so a change of load on the machine falls on all of
 // them alike.
 func measureFile(f *file, engines []*engine) *fileResult {
-	fr := &fileResult{f: f, first: map[string]int64{}, all: map[string][]int64{}, allErr: map[string]string{},
+	fr := &fileResult{f: f, first: map[string]int64{}, all: map[string][]int64{}, one: map[string][]int64{}, allErr: map[string]string{},
 		pooled: map[string]bool{}, rss: map[string]uint64{}, openErr: map[string]string{}}
 	scale := strconv.FormatFloat(*dpi/72, 'g', -1, 64)
 
@@ -307,11 +310,13 @@ func measureFile(f *file, engines []*engine) *fileResult {
 // engine in its own best way: an engine with threads of its own uses them
 // (cera: pages concurrently, bands of a page on the cores left over);
 // the others run one process per core, as their documentation advises.
+// Each run on all cores is paired with the same run on one core (one
+// thread, or one process), taking turns, for the engine's gain.
 func measureAllCores(fr *fileResult, slots []*slot, scale string) {
 	type runner struct {
-		name string
-		run  func() (int64, error)
-		stop func()
+		name     string
+		run, one func() (int64, error)
+		stop     func()
 	}
 	var runners []runner
 	for _, s := range slots {
@@ -329,17 +334,20 @@ func measureAllCores(fr *fileResult, slots []*slot, scale string) {
 		}
 		threads := strconv.Itoa(*cores)
 		if _, err := w.call("all", scale, threads); err == nil {
-			runners = append(runners, runner{s.e.name, func() (int64, error) {
-				w, err := s.get()
-				if err != nil {
-					return 0, err
+			all := func(threads string) func() (int64, error) {
+				return func() (int64, error) {
+					w, err := s.get()
+					if err != nil {
+						return 0, err
+					}
+					r, err := w.call("all", scale, threads)
+					if err != nil {
+						return 0, err
+					}
+					return parseInt(r[0]), nil
 				}
-				r, err := w.call("all", scale, threads)
-				if err != nil {
-					return 0, err
-				}
-				return parseInt(r[0]), nil
-			}, func() {}})
+			}
+			runners = append(runners, runner{s.e.name, all(threads), all("1"), func() {}})
 			continue
 		} else if !errors.Is(err, errUnsupported) {
 			fr.allErr[s.e.name] = err.Error()
@@ -350,22 +358,47 @@ func measureAllCores(fr *fileResult, slots []*slot, scale string) {
 			fr.allErr[s.e.name] = err.Error()
 			continue
 		}
+		single, err := startPool(s.e, s.f, 1)
+		if err != nil {
+			pool.close()
+			fr.allErr[s.e.name] = err.Error()
+			continue
+		}
 		fr.pooled[s.e.name] = true
 		pages := fr.pages
 		pool.run(pages, scale) // warm every process
-		runners = append(runners, runner{s.e.name, func() (int64, error) { return pool.run(pages, scale) }, pool.close})
+		single.run(pages, scale)
+		runners = append(runners, runner{s.e.name,
+			func() (int64, error) { return pool.run(pages, scale) },
+			func() (int64, error) { return single.run(pages, scale) },
+			func() { pool.close(); single.close() }})
 	}
 	for k := range *multiRuns {
 		for _, r := range rotate(runners, k) {
 			if _, failed := fr.allErr[r.name]; failed {
 				continue
 			}
-			t, err := r.run()
+			// One core and all cores take turns at going first.
+			runs := []func() (int64, error){r.run, r.one}
+			if k%2 == 1 {
+				runs[0], runs[1] = runs[1], runs[0]
+			}
+			var t [2]int64
+			var err error
+			for i, run := range runs {
+				if t[i], err = run(); err != nil {
+					break
+				}
+			}
 			if err != nil {
 				fr.allErr[r.name] = err.Error()
 				continue
 			}
-			fr.all[r.name] = append(fr.all[r.name], t)
+			if k%2 == 1 {
+				t[0], t[1] = t[1], t[0]
+			}
+			fr.all[r.name] = append(fr.all[r.name], t[0])
+			fr.one[r.name] = append(fr.one[r.name], t[1])
 		}
 	}
 	for _, r := range runners {

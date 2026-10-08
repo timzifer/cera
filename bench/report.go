@@ -165,19 +165,18 @@ func writeReport(dir string, m *meta, engines []*engine, results []*fileResult) 
 				}
 				multiR = median(paired)
 				multiS = iqr(paired) / multiR
-				// One core: the sum of the page medians, timed the same way
-				// (wall clock), against all cores.
-				var one float64
-				complete := true
-				for _, pr := range fr.results {
-					if len(pr.times[name]) != *runs {
-						complete = false
-						break
+				// The gain: each run on all cores against the same run on
+				// one core next to it.
+				if ot := fr.one[name]; len(ot) == len(at) {
+					gain := make([]float64, 0, len(at))
+					for k := range at {
+						if at[k] > 0 {
+							gain = append(gain, float64(ot[k])/float64(at[k]))
+						}
 					}
-					one += medianInt(pr.times[name])
-				}
-				if complete && medianInt(at) > 0 {
-					speed = one / medianInt(at)
+					if len(gain) == len(at) {
+						speed = median(gain)
+					}
 				}
 			}
 			mb := math.NaN()
