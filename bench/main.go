@@ -32,7 +32,7 @@ var (
 	match     = flag.String("match", "", "only files whose path below the directory contains this")
 	dpi       = flag.Float64("dpi", 150, "resolution")
 	runs      = flag.Int("runs", 5, "timed renders per page and engine (0: one untimed pass, for robustness)")
-	multiRuns = flag.Int("multiruns", 3, "timed renders of the whole document on all cores")
+	multiRuns = flag.Int("multiruns", 3, "timed renders of the whole document on all cores, at least (more for short documents)")
 	cores     = flag.Int("cores", runtime.NumCPU(), "cores for the multi-core comparison (0: none)")
 	maxPages  = flag.Int("pages", 0, "pages per file at most (0: all)")
 	enginesF  = flag.String("engines", strings.Join(engineOrder, ","), "engines to compare, if available")
@@ -45,6 +45,7 @@ var (
 	cliMode   = flag.Bool("cli", false, "compare command-line tools end to end instead of libraries")
 	verbose   = flag.Bool("v", false, "show the workers' stderr")
 	charts    = flag.Bool("charts", false, "only recompute the summary, its tables and charts from the report's CSV files")
+	ceraFresh = flag.Bool("cera-fresh", false, "give cera a new bitmap for every page instead of reusing one")
 )
 
 // file is one corpus file.

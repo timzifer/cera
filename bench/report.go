@@ -25,6 +25,7 @@ type meta struct {
 	DPI         float64           `json:"dpi"`
 	Runs        int               `json:"runs"`
 	MultiRuns   int               `json:"multi_runs"`
+	CeraFresh   bool              `json:"cera_fresh_bitmaps,omitempty"` // -cera-fresh
 	Ref         string            `json:"ref"`
 	Corpus      string            `json:"corpus"` // SHA-256 prefix over the files' hashes
 	Files       int               `json:"files"`
@@ -47,6 +48,7 @@ func newMeta(files []*file) *meta {
 		DPI:       *dpi,
 		Runs:      *runs,
 		MultiRuns: *multiRuns,
+		CeraFresh: *ceraFresh,
 		Corpus:    shortHash(strings.Join(keys, "\n")),
 		Files:     len(files),
 		Versions:  map[string]string{},
@@ -158,7 +160,7 @@ func writeReport(dir string, m *meta, engines []*engine, results []*fileResult) 
 				}
 			}
 			at, rt := fr.all[name], fr.all[refName]
-			if len(at) == *multiRuns && len(rt) == *multiRuns && *multiRuns > 0 {
+			if len(at) >= *multiRuns && len(rt) == len(at) && *multiRuns > 0 {
 				paired := make([]float64, len(at))
 				for k := range at {
 					paired[k] = float64(at[k]) / float64(rt[k])

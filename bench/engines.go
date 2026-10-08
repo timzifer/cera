@@ -116,7 +116,11 @@ func setup(name, cache string) (*engine, error) {
 
 // goBuild builds ./ceraworker to out.
 func goBuild(out string, env []string) error {
-	cmd := exec.Command("go", "build", "-trimpath", "-o", out, "./ceraworker")
+	args := []string{"build", "-trimpath", "-o", out}
+	if *ceraFresh {
+		args = append(args, "-ldflags=-X main.fresh=1")
+	}
+	cmd := exec.Command("go", append(args, "./ceraworker")...)
 	cmd.Env = append(os.Environ(), env...)
 	if b, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("go build %s: %v: %s", filepath.Base(out), err, b)
