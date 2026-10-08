@@ -146,6 +146,7 @@ jobs:
           - { name: FuzzFilters, pkg: ./internal/pdf }
           - { name: FuzzReaderAt, pkg: ./internal/pdf }
           - { name: FuzzToUnicode, pkg: ./internal/pdffont }
+          - { name: FuzzExtract, pkg: ./pdfedit }
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -165,6 +166,7 @@ jobs:
             internal/cmap/testdata/fuzz
             internal/pdf/testdata/fuzz
             internal/pdffont/testdata/fuzz
+            pdfedit/testdata/fuzz
 
   # cera's own reader against go-pdfkit/reader v0.6.0, the one it replaces
   # (ADR 0012): every object, decoded stream and page of the pinned corpus
