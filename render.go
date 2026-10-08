@@ -224,7 +224,15 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 	if !opt.Region.Empty() {
 		region = region.Intersect(opt.Region)
 	}
-	fillRegion(dst, region, opt.Background)
+	// The display list fills the background band by band, each just
+	// before it is drawn; until it takes over, an early return or a panic
+	// leaves the region filled here.
+	fill := true
+	defer func() {
+		if fill {
+			fillRegion(dst, region, opt.Background)
+		}
+	}()
 	st := opt.Stats
 	if st == nil {
 		st = new(Stats)
@@ -269,7 +277,8 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 		}
 	}
 	iso := dl.blends && opt.Background.A != 0
-	if derr := dl.render(dst, region, opt.Workers, vis, &pageAF, lim, iso, opt.ImageFilter); derr != nil && err == nil {
+	fill = false
+	if derr := dl.render(dst, region, opt.Background, true, opt.Workers, vis, &pageAF, lim, iso, opt.ImageFilter); derr != nil && err == nil {
 		err = derr
 	}
 	if len(overlays) > 0 {
@@ -278,7 +287,7 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 		}
 	}
 	for _, ol := range overlays {
-		if derr := ol.render(dst, region, opt.Workers, vis, &af, lim, false, opt.ImageFilter); derr != nil && err == nil {
+		if derr := ol.render(dst, region, color.RGBA{}, false, opt.Workers, vis, &af, lim, false, opt.ImageFilter); derr != nil && err == nil {
 			err = derr
 		}
 	}
@@ -642,37 +651,47 @@ func (p *Page) Release() {
 // touch it. With iso set, each band is drawn onto a transparent image
 // first and then composited onto dst, which holds the background. Images
 // are magnified with filter.
-func (l *displayList) render(dst *image.RGBA, region image.Rectangle, workers int, vis *Visibility, af *annotFilter, lim *limit, iso bool, filter ImageFilter) error {
+func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.RGBA, fill bool, workers int, vis *Visibility, af *annotFilter, lim *limit, iso bool, filter ImageFilter) error {
 	b0, b1 := l.bandRange(region)
-	if b0 >= b1 {
-		return nil
-	}
 	// The periodic checks come after hundreds of items; a short list
 	// would otherwise be drawn whole after the deadline.
-	if lim.expired() {
+	if b0 >= b1 || lim.expired() {
+		if fill {
+			fillRegion(dst, region, bg)
+		}
+		if b0 >= b1 {
+			return nil
+		}
 		return ErrDeadline
 	}
-	if workers <= 0 {
-		workers = runtime.GOMAXPROCS(0)
+	if fill {
+		// The bands cover the page; the rest of region is filled now.
+		fillOutside(dst, region, l.bounds, bg)
 	}
-	if workers > 1 && adaptWorkers {
-		workers = min(workers, l.workersFor(region))
-	}
+	workers, whole := l.plan(region, b0, b1, workers)
 	j := jobs.Get().(*job)
 	if vis == nil {
 		vis = &noLayers
 	}
-	*j = job{l: l, dst: dst, region: region, lim: lim, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf}
-	if workers = min(workers, b1-b0); workers == 1 {
+	*j = job{l: l, dst: dst, region: region, bg: bg, fill: fill, lim: lim, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf}
+	if whole {
 		j.idx, j.buf = l.regionItems(j.buf, b0, b1)
 		j.work(true)
 	} else {
+		// The caller draws bands too.
 		j.next.Store(int32(b0))
-		j.wg.Add(workers)
-		for range workers {
-			go j.work(false)
+		j.wg.Add(workers - 1)
+		for range workers - 1 {
+			go j.helper()
 		}
+		j.work(false)
 		j.wg.Wait()
+		if fill {
+			// Bands left after a deadline or a panic get the background.
+			for b := int(j.next.Load()); b < b1; b++ {
+				fillRegion(dst, l.band(b).Intersect(region), bg)
+			}
+		}
 	}
 	err := j.err
 	if err == nil && lim.hit.Load() {
@@ -712,11 +731,39 @@ func (l *displayList) workersFor(region image.Rectangle) int {
 	return max(2, int(est/perWorker))
 }
 
+// plan returns how many workers draw region, bands [b0, b1), given at
+// most workers (0: GOMAXPROCS), and whether they draw it in one pass.
+//
+// A page that is not cheap is drawn band by band even by one worker if
+// few items span bands: a band filled with the background just before it
+// is drawn is still in the cache, the whole page filled first is not, and
+// pages drawn at once wait on memory (#63). Items spanning bands are
+// replayed in each, which costs more than that on pages of large images,
+// clips and shadings.
+func (l *displayList) plan(region image.Rectangle, b0, b1, workers int) (int, bool) {
+	if workers <= 0 {
+		workers = runtime.GOMAXPROCS(0)
+	}
+	workers = min(workers, b1-b0)
+	if !adaptWorkers {
+		return workers, workers == 1
+	}
+	w := l.workersFor(region)
+	if w == 1 {
+		return 1, true
+	}
+	workers = min(workers, w)
+	replays := int(l.bandStart[b1] - l.bandStart[b0])
+	return workers, workers == 1 && replays > 2*len(l.allItems)
+}
+
 // job is one render of a display list, shared by its workers.
 type job struct {
 	l      *displayList
 	dst    *image.RGBA
 	region image.Rectangle
+	bg     color.RGBA // with fill, set in each part before it is drawn
+	fill   bool
 	lim    *limit
 	b1     int
 	vis    []bool  // per tag of the list: drawn
@@ -740,6 +787,12 @@ func (j *job) report(err error) {
 	j.mu.Unlock()
 }
 
+// helper draws bands beside the caller.
+func (j *job) helper() {
+	defer j.wg.Done()
+	j.work(false)
+}
+
 // work draws the whole region in one pass, or bands until none are left.
 func (j *job) work(whole bool) {
 	pt := painters.Get().(*painter)
@@ -754,9 +807,6 @@ func (j *job) work(whole bool) {
 			pt.dev.glyphs = nil
 			painters.Put(pt)
 		}
-		if !whole {
-			j.wg.Done()
-		}
 	}()
 	if pt.canvas == nil {
 		pt.canvas = stilus.NewCanvas(noImage)
@@ -767,9 +817,9 @@ func (j *job) work(whole bool) {
 		j.paint(pt, -1, j.region)
 		return
 	}
-	for {
+	for !j.lim.hit.Load() {
 		b := int(j.next.Add(1)) - 1
-		if b >= j.b1 || j.lim.hit.Load() {
+		if b >= j.b1 {
 			return
 		}
 		j.paint(pt, b, j.l.band(b).Intersect(j.region))
@@ -778,6 +828,9 @@ func (j *job) work(whole bool) {
 
 // paint draws r, band b of the list or, if b < 0, the items j.idx.
 func (j *job) paint(pt *painter, b int, r image.Rectangle) {
+	if j.fill {
+		fillRegion(j.dst, r, j.bg)
+	}
 	dst := j.dst
 	if j.iso {
 		n := 4 * r.Dx() * r.Dy()
@@ -840,6 +893,19 @@ func (p *Page) deviceMatrix(scale float64) Matrix {
 		return Matrix{0, -s, -s, 0, b.Y1 * s, b.X1 * s}
 	}
 	return Matrix{s, 0, 0, -s, -b.X0 * s, b.Y1 * s}
+}
+
+// fillOutside fills the parts of r outside in with c.
+func fillOutside(dst *image.RGBA, r, in image.Rectangle, c color.RGBA) {
+	in = in.Intersect(r)
+	if in.Empty() {
+		fillRegion(dst, r, c)
+		return
+	}
+	fillRegion(dst, image.Rect(r.Min.X, r.Min.Y, r.Max.X, in.Min.Y), c)
+	fillRegion(dst, image.Rect(r.Min.X, in.Max.Y, r.Max.X, r.Max.Y), c)
+	fillRegion(dst, image.Rect(r.Min.X, in.Min.Y, in.Min.X, in.Max.Y), c)
+	fillRegion(dst, image.Rect(in.Max.X, in.Min.Y, r.Max.X, in.Max.Y), c)
 }
 
 // fillRegion sets every pixel of r in dst to c by doubling copies.

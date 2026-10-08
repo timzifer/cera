@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -636,5 +637,130 @@ func TestWorkersFor(t *testing.T) {
 	}
 	if n := big.workersFor(image.Rect(-100, -100, -1, -1)); n != 1 {
 		t.Errorf("outside the page: %d workers", n)
+	}
+}
+
+// errAfter is a context that reports cancellation from the n+1st call of
+// Err on, to end a render at a known point.
+type errAfter struct {
+	context.Context
+	n     int64
+	calls atomic.Int64
+}
+
+func (c *errAfter) Err() error {
+	if k := c.calls.Add(1); c.n >= 0 && k > c.n {
+		return context.Canceled
+	}
+	return nil
+}
+
+// The background is filled band by band as the bands are drawn; a render
+// that ends early still leaves every pixel of the region filled, also
+// beside the page and in bands no worker got to (#63).
+func TestBandFillCoversRegion(t *testing.T) {
+	adaptWorkers = true
+	defer func() { adaptWorkers = false }()
+	const scale = 8 // 1600×800 px
+	garbage := color.RGBA{1, 2, 3, 4}
+	bg := color.RGBA{255, 255, 255, 255}
+	for _, tc := range []struct {
+		name    string
+		content string
+		workers int
+		bands   bool
+	}{
+		{"cheap", "0 g 10 10 20 20 re f", 1, false},
+		{"page-wide, one worker", pageFills(2000), 1, false},
+		{"page-wide, four workers", pageFills(2000), 4, true},
+		{"stripes, one worker", stripes(2000), 1, true},
+	} {
+		doc, err := Open(buildPDF([]string{tc.content}, ""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, _ := doc.Page(0)
+		page := p.Bounds(scale)
+		if err := p.Render(context.Background(), image.NewRGBA(page), RenderOptions{Scale: scale}); err != nil {
+			t.Fatal(err)
+		}
+		b0, b1 := p.dl.bandRange(page)
+		if _, whole := p.dl.plan(page, b0, b1, tc.workers); whole == tc.bands {
+			t.Fatalf("%s: drawn in one pass: %v", tc.name, whole)
+		}
+		full := &errAfter{Context: context.Background(), n: -1}
+		if err := p.Render(full, image.NewRGBA(page), RenderOptions{Scale: scale, Workers: tc.workers}); err != nil {
+			t.Fatal(err)
+		}
+		calls := full.calls.Load()
+		for _, n := range []int64{0, calls / 2, calls} {
+			dst := image.NewRGBA(page.Inset(-10))
+			for i := 0; i < len(dst.Pix); i += 4 {
+				copy(dst.Pix[i:], []uint8{garbage.R, garbage.G, garbage.B, garbage.A})
+			}
+			err := p.Render(&errAfter{Context: context.Background(), n: n}, dst, RenderOptions{Scale: scale, Workers: tc.workers, Background: bg})
+			if (n < calls) != errors.Is(err, ErrDeadline) {
+				t.Errorf("%s, cancelled after %d checks: err = %v", tc.name, n, err)
+			}
+			for y := dst.Rect.Min.Y; y < dst.Rect.Max.Y; y++ {
+				for x := dst.Rect.Min.X; x < dst.Rect.Max.X; x++ {
+					if dst.RGBAAt(x, y) == garbage {
+						t.Fatalf("%s, cancelled after %d checks: (%d, %d) not filled", tc.name, n, x, y)
+					}
+				}
+			}
+			if out := dst.RGBAAt(page.Min.X-5, page.Min.Y-5); out != bg {
+				t.Errorf("%s, cancelled after %d checks: beside the page %v", tc.name, n, out)
+			}
+		}
+	}
+}
+
+// pageFills is n fills of the whole page, each in every band.
+func pageFills(n int) string {
+	var c strings.Builder
+	for i := range n {
+		fmt.Fprintf(&c, "%d g 0 0 200 100 re f\n", i%2)
+	}
+	return c.String()
+}
+
+// stripes is n thin page-wide fills from bottom to top, most in one band.
+func stripes(n int) string {
+	var c strings.Builder
+	for i := range n {
+		fmt.Fprintf(&c, "%d g 0 %g 200 0.03 re f\n", i%2, float64(i)*100/float64(n))
+	}
+	return c.String()
+}
+
+// A page drawn band by band by one worker looks as it does drawn in one
+// pass, up to rounding at the band edges.
+func TestOneWorkerBands(t *testing.T) {
+	doc, err := Open(buildPDF([]string{stripes(2000) + "/H gs 1 0 0 rg 20 10 160 80 re f\n"}, "/Resources << /ExtGState << /H << /ca 0.5 >> >> >>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := doc.Page(0)
+	const scale = 7
+	render := func(adapt bool) *image.RGBA {
+		adaptWorkers = adapt
+		defer func() { adaptWorkers = false }()
+		dst := image.NewRGBA(p.Bounds(scale))
+		if err := p.Render(context.Background(), dst, RenderOptions{Scale: scale, Workers: 1, Background: color.RGBA{255, 255, 255, 255}}); err != nil {
+			t.Fatal(err)
+		}
+		return dst
+	}
+	pass := render(false)
+	adaptWorkers = true
+	b0, b1 := p.dl.bandRange(pass.Rect)
+	_, whole := p.dl.plan(pass.Rect, b0, b1, 1)
+	adaptWorkers = false
+	if whole {
+		t.Fatalf("one worker draws the page in one pass (cost %.0f ns)", p.dl.cost)
+	}
+	if d := maxDiff(t, pass, render(true), pass.Rect); d > 2 {
+		t.Errorf("bands drawn by one worker differ from one pass by %d", d)
 	}
 }
