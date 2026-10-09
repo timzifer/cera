@@ -26,3 +26,35 @@ func ExampleExtract() {
 		log.Fatal(err)
 	}
 }
+
+// A file with a page of another file appended, its outline, form and the
+// rest kept.
+func ExampleDocument_ImportPages() {
+	data, err := os.ReadFile("report.pdf")
+	if err != nil {
+		log.Fatal(err)
+	}
+	cover, err := os.ReadFile("cover.pdf")
+	if err != nil {
+		log.Fatal(err)
+	}
+	doc, err := pdfedit.Open(data)
+	if err != nil {
+		log.Fatal(err)
+	}
+	src, err := pdfedit.OpenSource(cover)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := doc.ImportPages(src, []pdfedit.Page{{Index: 0}}); err != nil {
+		log.Fatal(err)
+	}
+	f, err := os.Create("out.pdf")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	if err := doc.Save(f, pdfedit.SaveOptions{}); err != nil {
+		log.Fatal(err)
+	}
+}

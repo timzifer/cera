@@ -80,10 +80,15 @@ go build -C cmd/cera -o "$PWD/cera" .   # a module of its own: it writes PNGs wi
 ./cera -dpi 150 -o 'page-%d.png' input.pdf
 ```
 
-Pages into a new file ([`pdfedit`](https://pkg.go.dev/github.com/timzifer/cera/pdfedit)): copied as they are, in any order, turned by quarters:
+Pages into a new file ([`pdfedit`](https://pkg.go.dev/github.com/timzifer/cera/pdfedit)): copied as they are, in any order, turned by quarters, from one file or several:
 
 ```go
 err = pdfedit.Extract(w, data, []pdfedit.Page{{Index: 2}, {Index: 0, Rotate: 90}})
+
+doc, err := pdfedit.Open(data)            // or pdfedit.New() for an empty one
+src, err := pdfedit.OpenSource(other)
+err = doc.ImportPages(src, []pdfedit.Page{{Index: 0}})
+err = doc.Save(w, pdfedit.SaveOptions{})
 ```
 
 ## Documentation

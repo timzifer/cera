@@ -188,7 +188,7 @@ func TestStructure(t *testing.T) {
 			for k := range cat.All() {
 				keys = append(keys, k)
 			}
-			if fmt.Sprint(keys) != "[Type Pages OCProperties Lang]" {
+			if fmt.Sprint(keys) != "[Type Pages Lang OCProperties]" {
 				t.Errorf("catalogue keys %v", keys)
 			}
 			info, _ := d.GetDict(d.Trailer(), "Info")
