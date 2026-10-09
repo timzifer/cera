@@ -17,3 +17,5 @@ require (
 	github.com/ajroetker/go-highway v0.0.12 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 )
+
+replace github.com/ajroetker/go-highway => github.com/timzifer/go-highway v0.0.13-timzifer.1

@@ -45,3 +45,5 @@ require (
 // Until a release of cera carries the form API (ADR 0006), the adapter
 // builds against the cera next to it.
 replace github.com/timzifer/cera => ../..
+
+replace github.com/ajroetker/go-highway => github.com/timzifer/go-highway v0.0.13-timzifer.1
