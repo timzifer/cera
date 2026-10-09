@@ -24,3 +24,5 @@ require (
 )
 
 replace github.com/timzifer/cera => ../
+
+replace github.com/ajroetker/go-highway => github.com/timzifer/go-highway v0.0.13-timzifer.1
