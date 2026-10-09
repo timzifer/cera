@@ -306,8 +306,8 @@ func (in *interp) replayCells(p *tilingPattern, pm Matrix, base *colorSpace, com
 		in.dev.BeginGroup(Rect{float64(box.Min.X), float64(box.Min.Y), float64(box.Max.X), float64(box.Max.Y)}, stilus.Identity, &g)
 	}
 	in.pushObject()
-	td := in.td
-	in.td = nil // cells are not text of the page
+	td, mcd := in.td, in.mcd
+	in.td, in.mcd = nil, nil // cells are not text of the page
 	in.patDepth++
 	for j := j0; j <= j1 && in.err == nil; j++ {
 		for i := i0; i <= i1 && in.err == nil; i++ {
@@ -324,7 +324,7 @@ func (in *interp) replayCells(p *tilingPattern, pm Matrix, base *colorSpace, com
 		}
 	}
 	in.patDepth--
-	in.td = td
+	in.td, in.mcd = td, mcd
 	in.popObject()
 	if grouped {
 		in.dev.EndGroup()

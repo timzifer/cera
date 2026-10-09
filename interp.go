@@ -105,6 +105,11 @@ type interp struct {
 	mc     []int32 // ocCur before each open BMC or BDC
 	mcBase int     // len(mc) when the running content stream started
 
+	// mcd, when the device is a MarkedContentDevice, is told of every
+	// sequence on mc; mcBuf is the MarkedContent passed to it.
+	mcd   MarkedContentDevice
+	mcBuf MarkedContent
+
 	annotBuf []byte // generated appearance streams
 	// formVals are the field values that differ from the saved ones, for
 	// the appearances of widgets (RenderOptions.Form).
@@ -124,6 +129,7 @@ func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
 	}
 	in.path.Reset()
 	in.td, _ = dev.(TextDevice)
+	in.mcd, _ = dev.(MarkedContentDevice)
 	in.rec, _ = dev.(*displayList)
 	in.mute.d = dev
 }
@@ -133,7 +139,7 @@ func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
 func (in *interp) release() {
 	clear(in.stack[:cap(in.stack)]) // popped states hold fonts too
 	in.stack = in.stack[:0]
-	in.doc, in.dev, in.st, in.lim, in.td = nil, nil, nil, nil, nil
+	in.doc, in.dev, in.st, in.lim, in.td, in.mcd = nil, nil, nil, nil, nil, nil
 	in.out, in.rec, in.mute.d, in.ocVis = nil, nil, nil, nil
 	in.formVals = nil
 	in.tiles = nil
@@ -384,8 +390,14 @@ func (in *interp) do(sc *content.Scanner, op []byte, res pdf.Dict, depth int) {
 			o := in.lookupRef(res, "Properties", sc, sc.Arg(1))
 			in.enterOC(o)
 		}
+		if in.mcd != nil {
+			in.beginMarked(sc, res)
+		}
 	case "BMC":
 		in.mc = append(in.mc, in.ocCur)
+		if in.mcd != nil {
+			in.beginMarked(sc, res)
+		}
 	case "EMC":
 		if len(in.mc) > in.mcBase {
 			in.endMarked(len(in.mc) - 1)
@@ -757,6 +769,11 @@ func (in *interp) enterOC(o pdf.Object) {
 // endMarked closes the marked content mc[n:].
 func (in *interp) endMarked(n int) {
 	if n < len(in.mc) {
+		if in.mcd != nil {
+			for range len(in.mc) - n {
+				in.mcd.EndMarkedContent()
+			}
+		}
 		in.setOC(in.mc[n])
 		in.mc = in.mc[:n]
 	}
@@ -821,7 +838,9 @@ func (in *interp) xobject(o pdf.Object, res pdf.Dict, depth int) {
 		if in.rec != nil || in.ocCur == 0 {
 			in.drawXObject(ref, s, res, depth)
 		}
-		in.endMarked(n)
+		// Not a marked-content sequence: the device was not told of it.
+		in.setOC(in.mc[n])
+		in.mc = in.mc[:n]
 		return
 	}
 	in.drawXObject(ref, s, res, depth)

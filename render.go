@@ -968,6 +968,13 @@ func compositeOver(dst, src *image.RGBA) {
 	}
 }
 
+// DisplayMatrix maps default user space to points of the displayed page:
+// y down, origin at the top-left corner of Box, rotated clockwise by
+// /Rotate and scaled by /UserUnit. Text, links and the boxes of the text
+// API are in these points; a viewer scales them by its zoom. Its inverse
+// maps them back to user space.
+func (p *Page) DisplayMatrix() Matrix { return p.deviceMatrix(1) }
+
 // deviceMatrix maps default user space to device pixels: y down, origin at
 // the top-left corner of the visible box, rotated clockwise by /Rotate.
 func (p *Page) deviceMatrix(scale float64) Matrix {

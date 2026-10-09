@@ -152,7 +152,8 @@ type Page struct {
 	dict  pdf.Dict
 
 	// Box is the visible area in default user space: CropBox clipped to
-	// MediaBox, scaled by UserUnit.
+	// MediaBox. Its units are /UserUnit points; Size and DisplayMatrix
+	// apply it.
 	Box Rect
 	// Rotate is the clockwise display rotation: 0, 90, 180 or 270.
 	Rotate int

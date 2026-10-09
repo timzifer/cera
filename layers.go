@@ -635,6 +635,11 @@ func textString(o pdf.Object) string {
 	if !ok {
 		return ""
 	}
+	return decodeTextString(b)
+}
+
+// decodeTextString decodes the bytes of a text string; see textString.
+func decodeTextString(b []byte) string {
 	switch {
 	case len(b) >= 2 && b[0] == 0xfe && b[1] == 0xff:
 		u := make([]uint16, 0, len(b)/2-1)

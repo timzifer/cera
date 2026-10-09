@@ -36,8 +36,11 @@
 // outlines in em units with their device matrices. The raster device keeps
 // a coverage mask per glyph, size and subpixel position. Page.Run drives
 // any Device without a display list, and a device implementing TextDevice
-// also receives the text shown in every render mode; Page.Text extracts
-// the characters of a page with their boxes.
+// also receives the text shown in every render mode, one implementing
+// MarkedContentDevice the marked-content sequences around it. Page.Text
+// extracts the characters of a page with their quads, in points of the
+// displayed page (Page.DisplayMatrix), and the structure element and
+// artifact each belongs to.
 //
 // # Images
 //
