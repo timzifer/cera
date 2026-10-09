@@ -45,7 +45,7 @@ func Extract(w io.Writer, src []byte, pages []Page) error {
 	}
 	sel := make([]cera.EditPage, len(pages))
 	for i, p := range pages {
-		sel[i] = cera.EditPage(p)
+		sel[i] = cera.EditPage{Index: p.Index, Rotate: p.Rotate}
 	}
 	e := cera.NewEditor()
 	if err := e.ImportPages(0, d, sel...); err != nil {

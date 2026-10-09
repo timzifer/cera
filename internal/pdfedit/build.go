@@ -23,6 +23,7 @@ type Page struct {
 	Index  int
 	Rotate int
 	Own    bool
+	Fields bool // an imported page brings its fields
 }
 
 // Doc is what is written: the pages of the edited document Base (nil for
@@ -123,6 +124,10 @@ type builder struct {
 	bySrc   map[srcKey]*source
 
 	catalog, pages, info pdfwrite.Ref
+	// form is the interactive form when imported pages bring fields,
+	// names the root field names the output has.
+	form  pdf.Object
+	names map[string]bool
 }
 
 type srcKey struct {
@@ -151,6 +156,8 @@ type source struct {
 	// holds too: an update frees it.
 	skip map[int32]bool
 	dead map[int32]bool
+	// fields is what pages imported with their fields bring.
+	fields *fieldCopy
 }
 
 func newBuilder(doc Doc, upd *pdf.UpdateBase) *builder {
@@ -314,12 +321,18 @@ func (b *builder) build() error {
 	// Pages are made once every page has its number, so links between
 	// them can point at the copies.
 	for i, p := range b.doc.Pages {
-		dict, err := b.bySrc[srcKey{p.Src, p.Own}].page(p)
+		x := b.bySrc[srcKey{p.Src, p.Own}]
+		r, _ := x.d.PageRef(p.Index + 1)
+		dict, err := x.page(p, x.pageOut[r.Num] == out[i])
 		if err != nil {
 			return err
 		}
 		b.w.Set(out[i], dict.Object())
 	}
+	for _, x := range b.sources {
+		x.finishFields()
+	}
+	b.form = b.formDict()
 
 	b.w.Set(b.pages, pdf.NewDict(
 		pdf.Entry{Key: "Type", Val: pdf.Name("Pages").Object()},
@@ -504,6 +517,10 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 			switch k {
 			case "Type", "Pages", "OCProperties":
 				continue
+			case "AcroForm":
+				if !b.form.IsNull() {
+					continue // below
+				}
 			}
 			entries = append(entries, pdf.Entry{Key: k, Val: x.im.Map(v)})
 		}
@@ -521,6 +538,9 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 	}
 	if oc := b.ocProperties(); !oc.IsNull() {
 		entries = append(entries, pdf.Entry{Key: "OCProperties", Val: oc})
+	}
+	if !b.form.IsNull() {
+		entries = append(entries, pdf.Entry{Key: "AcroForm", Val: b.form})
 	}
 	if b.upd != nil {
 		// An update keeps the header: a newer version goes into the
@@ -587,7 +607,7 @@ var (
 )
 
 // page makes the dictionary of one output page.
-func (x *source) page(p Page) (pdf.Dict, error) {
+func (x *source) page(p Page, first bool) (pdf.Dict, error) {
 	src, err := x.d.Page(p.Index + 1) // with the inherited attributes
 	if err != nil {
 		return pdf.Dict{}, fmt.Errorf("page %d: %w", p.Index, err)
@@ -625,7 +645,7 @@ func (x *source) page(p Page) (pdf.Dict, error) {
 		entries = append(entries, pdf.Entry{Key: "Rotate", Val: pdf.Integer(int64(rot))})
 	}
 	if !x.own {
-		if annots := x.annots(src.Get("Annots")); len(annots) > 0 {
+		if annots := x.annots(src.Get("Annots"), p.Fields && first); len(annots) > 0 {
 			entries = append(entries, pdf.Entry{Key: "Annots", Val: annots.Object()})
 		}
 	}

@@ -22,11 +22,13 @@ func Rotation(o pdf.Object, extra int) int {
 // annots copies the annotations of a page that still make sense alone.
 // Each copy of a page gets copies of its annotations, since an annotation
 // belongs to one page.
-func (x *source) annots(o pdf.Object) pdf.Array {
+func (x *source) annots(o pdf.Object, fields bool) pdf.Array {
 	arr, _ := x.d.Resolve(o).Array()
 	type kept struct {
-		dict pdf.Dict
-		num  pdfwrite.Ref // output number; 0 for an annotation written in place
+		dict   pdf.Dict
+		num    pdfwrite.Ref // output number; 0 for an annotation written in place
+		widget bool         // the widget of a field it brings
+		parent pdf.Ref      // its field in the tree; zero at the root
 	}
 	var keep []kept
 	local := map[int32]pdfwrite.Ref{} // source annotation → its copy on this page
@@ -46,6 +48,11 @@ func (x *source) annots(o pdf.Object) pdf.Array {
 			}
 			k.num = x.b.w.Alloc()
 			local[r.Num] = k.num
+			if fields && x.fieldWidget(r) {
+				k.widget = true
+				k.parent = x.tree()[r.Num]
+				x.fieldCopy().widgets[r.Num] = k.num
+			}
 		}
 		keep = append(keep, k)
 	}
@@ -56,7 +63,12 @@ func (x *source) annots(o pdf.Object) pdf.Array {
 			switch key {
 			case "P", "StructParent":
 				continue
-			case "Parent", "Popup", "IRT":
+			case "Parent":
+				if k.widget {
+					continue // from the tree, below
+				}
+				fallthrough
+			case "Popup", "IRT":
 				// Only references between annotations of this page
 				// survive.
 				r, ok := v.Ref()
@@ -68,10 +80,23 @@ func (x *source) annots(o pdf.Object) pdf.Array {
 					continue
 				}
 				v = n.Object()
+			case "T":
+				if k.widget && k.parent.Num == 0 {
+					continue // a root field: rootEntries writes it
+				}
+				v = x.im.Map(v)
 			default:
 				v = x.im.Map(v)
 			}
 			entries = append(entries, pdf.Entry{Key: key, Val: v})
+		}
+		switch {
+		case k.widget && k.parent.Num != 0:
+			entries = append(entries, pdf.Entry{Key: "Parent", Val: x.fieldRef(k.parent).Object()})
+		case k.widget:
+			// A field that is its own widget, at the root.
+			entries = append(entries, x.rootEntries(k.dict)...)
+			x.fieldCopy().roots = append(x.fieldCopy().roots, k.num)
 		}
 		dict := pdf.NewDict(entries...)
 		if k.num == 0 {

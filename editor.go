@@ -18,9 +18,10 @@ import (
 // another document bring only what is on the page: their content and
 // resources, their annotations, and links to other pages imported from
 // the same document; their widgets stay as plain annotations, no longer
-// fields. Importing a page of the edited document itself makes such a
-// copy too. Layers of imported pages are added to the document's, so
-// layers hidden in the source stay hidden.
+// fields, unless the page is imported with them ([EditPage.Fields]).
+// Importing a page of the edited document itself makes such a copy too.
+// Layers of imported pages are added to the document's, so layers hidden
+// in the source stay hidden.
 //
 // Deleting a page removes what hangs on it alone: its annotations, and
 // form fields whose widgets were all on deleted pages. Outline entries,
@@ -52,6 +53,12 @@ var ErrNotPermitted = errors.New("cera: the document's permissions do not allow 
 type EditPage struct {
 	Index  int // 0-based page index in the source document
 	Rotate int // extra clockwise rotation in degrees, a multiple of 90 (added to the page's /Rotate)
+	// Fields brings the page's form fields with it: the part of its
+	// document's field tree that leads to the page's widgets, a root
+	// renamed name_2 and so on when the result has its name. They come
+	// with the first copy of the page; signature fields stay plain
+	// annotations. Without it, widgets stay as plain annotations.
+	Fields bool
 }
 
 // Editor records the pages of a document being edited or put together.
@@ -71,6 +78,7 @@ type editPage struct {
 	index  int
 	rotate int
 	own    bool
+	fields bool
 }
 
 // Edit returns an editor of d with all its pages.
@@ -106,7 +114,7 @@ func (e *Editor) ImportPages(at int, src *Document, pages ...EditPage) error {
 		if p.Index < 0 || p.Index >= n {
 			return fmt.Errorf("cera: page %d of the selection: index %d is out of range [0, %d)", i, p.Index, n)
 		}
-		add[i] = editPage{src: src, index: p.Index, rotate: p.Rotate}
+		add[i] = editPage{src: src, index: p.Index, rotate: p.Rotate, fields: p.Fields}
 	}
 	e.pages = append(e.pages[:at], append(add, e.pages[at:]...)...)
 	return nil
@@ -211,7 +219,7 @@ func (e *Editor) plan() pdfedit.Doc {
 		doc.Base = e.base.r
 	}
 	for i, p := range e.pages {
-		doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own}
+		doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own, Fields: p.fields}
 	}
 	doc.Patches, doc.Objects = e.fieldPatches()
 	return doc

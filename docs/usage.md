@@ -166,7 +166,10 @@ Everything at the level of the document (outline, names, structure tree,
 form, layers, page labels, metadata) belongs to the edited document. Pages
 imported from another document bring only what is on the page: content,
 resources, annotations and links to other pages imported with them; their
-widgets stay as plain annotations. Layers of imported pages are added, so
+widgets stay as plain annotations — unless the page is imported with
+`EditPage{Index: i, Fields: true}`: then the fields reaching its widgets
+come too, with their values, a root renamed `name_2` where the result has
+the name (signature fields stay behind). Layers of imported pages are added, so
 hidden layers stay hidden. Deleting a page removes its annotations and the
 form fields whose widgets were all on deleted pages; outline entries and
 links to it lose their target.
