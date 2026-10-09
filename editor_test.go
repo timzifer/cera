@@ -489,7 +489,7 @@ func FuzzEdit(f *testing.F) {
 		if n > 1 {
 			_ = e.DeletePages(int(a) % n)
 		}
-		_ = e.ImportPages(0, d, EditPage{Index: int(b) % n, Rotate: int(a%4) * 90})
+		_ = e.ImportPages(0, d, EditPage{Index: int(b) % n, Rotate: int(a%4) * 90, Fields: b%2 == 0})
 		_ = e.MovePage(0, e.NumPages()-1)
 		if form := d.Form(); form != nil {
 			state := form.NewState()
