@@ -17,7 +17,8 @@ import (
 // TestEditCorpus edits every file of the pinned corpus, when it has been
 // fetched (go run ./cmd/corpus fetch): saved as it is, its pages render as
 // before, annotations and form fields included, and the form keeps its
-// fields; with its first page deleted, the others still do.
+// fields; with its first page deleted, by a new file or an incremental
+// update, the others still do.
 func TestEditCorpus(t *testing.T) {
 	dir := filepath.Join("testdata", "corpus")
 	if testing.Short() {
@@ -102,6 +103,25 @@ func editCorpusFile(t *testing.T, path string) {
 	}
 	for i := 1; i < min(n, 3); i++ {
 		same(od, i, i-1)
+	}
+
+	// The same delete as an incremental update.
+	var upd bytes.Buffer
+	if err := e.Update(&upd); err != nil {
+		if errors.Is(err, ErrNoUpdate) {
+			return
+		}
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(upd.Bytes(), data) {
+		t.Fatal("the update does not start with the file")
+	}
+	ud := editOpen(t, upd.Bytes())
+	if ud.r.Repaired() || ud.NumPages() != n-1 {
+		t.Fatalf("update: repaired %v, %d pages", ud.r.Repaired(), ud.NumPages())
+	}
+	for i := 1; i < min(n, 3); i++ {
+		same(ud, i, i-1)
 	}
 }
 

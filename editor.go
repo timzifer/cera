@@ -36,6 +36,11 @@ import (
 // new file, and its pages may not be imported.
 var ErrNoAssembly = errors.New("cera: the document's permissions do not allow reassembling it")
 
+// ErrNoUpdate is returned by [Editor.Update] for a document that cannot
+// be updated incrementally: a new one, one whose structure needed a
+// repair, and, for now, an encrypted one.
+var ErrNoUpdate = errors.New("cera: the document cannot be updated incrementally")
+
 // EditPage selects a page to import.
 type EditPage struct {
 	Index  int // 0-based page index in the source document
@@ -151,21 +156,52 @@ func (e *Editor) check(i int) error {
 	return nil
 }
 
+// Update writes the edited document's file to w as it was read, followed
+// by an incremental update that makes it the result (PDF 2.0, 7.5.6). The
+// original bytes stay as they are, so signatures over them stay valid, and
+// the update holds only what changed: the pages of the document keep
+// their objects, deleted pages and what hung on them alone are freed, and
+// imported pages are copied in. An unchanged document is written as it
+// is. It returns [ErrNoUpdate] for an editor made with [NewEditor], for a
+// document that needed a repair and for an encrypted one. The editor may
+// be updated again. Nothing is written when Update fails, but for an error
+// of w itself.
+func (e *Editor) Update(w io.Writer) (err error) {
+	defer recoverPanic(&err)
+	if e.base == nil {
+		return fmt.Errorf("%w: %v", ErrNoUpdate, pdfedit.ErrNoBase)
+	}
+	err = pdfedit.Update(w, e.plan())
+	switch {
+	case errors.Is(err, pdfedit.ErrRepaired), errors.Is(err, pdfedit.ErrEncrypted):
+		return fmt.Errorf("%w: %v", ErrNoUpdate, err)
+	case err != nil:
+		return fmt.Errorf("cera: %w", err)
+	}
+	return nil
+}
+
+// plan describes the result for the internal writer.
+func (e *Editor) plan() pdfedit.Doc {
+	doc := pdfedit.Doc{Pages: make([]pdfedit.Page, len(e.pages))}
+	if e.base != nil {
+		doc.Base = e.base.r
+	}
+	for i, p := range e.pages {
+		doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own}
+	}
+	return doc
+}
+
 // Save writes the result to w as a new file, which is never encrypted: an
 // encrypted document is written decrypted when its permissions allow
 // reassembling it. The editor may be saved again. Nothing is written when
 // Save fails, but for an error of w itself.
 func (e *Editor) Save(w io.Writer) (err error) {
 	defer recoverPanic(&err)
-	doc := pdfedit.Doc{Pages: make([]pdfedit.Page, len(e.pages))}
-	if e.base != nil {
-		doc.Base = e.base.r
-		if !pdfedit.MayAssemble(doc.Base) {
-			return ErrNoAssembly
-		}
-	}
-	for i, p := range e.pages {
-		doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own}
+	doc := e.plan()
+	if doc.Base != nil && !pdfedit.MayAssemble(doc.Base) {
+		return ErrNoAssembly
 	}
 	if err := pdfedit.Write(w, doc); err != nil {
 		return fmt.Errorf("cera: %w", err)

@@ -45,17 +45,72 @@ func Write(w io.Writer, doc Doc) error {
 	if len(doc.Pages) == 0 {
 		return errors.New("the document has no pages")
 	}
-	b := newBuilder(doc)
+	b := newBuilder(doc, nil)
 	if err := b.build(); err != nil {
 		return err
 	}
 	return b.write(w)
 }
 
+// Errors of Update.
+var (
+	ErrNoBase    = errors.New("a new document has no file to update")
+	ErrRepaired  = errors.New("the file needed a repair")
+	ErrEncrypted = errors.New("the file is encrypted")
+)
+
+// Update writes the file of doc.Base to w and appends to it what makes it
+// doc (PDF 2.0, 7.5.6): the pages of the edited document keep their
+// objects and numbers, deleted ones and what hung on them alone are freed,
+// so that references to them read as null, and imported pages are copied
+// in. A document whose pages are unchanged is written as it is. Nothing is
+// written when it fails, but for an error of w itself.
+func Update(w io.Writer, doc Doc) error {
+	base := doc.Base
+	if base == nil {
+		return ErrNoBase
+	}
+	ub, ok := base.UpdateBase()
+	if !ok {
+		return ErrRepaired
+	}
+	if base.Encrypted() {
+		return ErrEncrypted
+	}
+	if len(doc.Pages) == 0 {
+		return errors.New("the document has no pages")
+	}
+	if unchanged(doc) {
+		return base.WriteSource(w)
+	}
+	b := newBuilder(doc, &ub)
+	if err := b.build(); err != nil {
+		return err
+	}
+	return b.write(w)
+}
+
+// unchanged reports whether doc has the pages of its base, in their order
+// and turned as they are.
+func unchanged(doc Doc) bool {
+	if len(doc.Pages) != doc.Base.PageCount() {
+		return false
+	}
+	for i, p := range doc.Pages {
+		if !p.Own || p.Index != i || p.Rotate%360 != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // A builder puts the objects of one output together.
 type builder struct {
 	doc Doc
 	w   *pdfwrite.Writer
+	// upd describes the edited file for an incremental update; nil when
+	// a new file is written.
+	upd *pdf.UpdateBase
 
 	// sources are the sources of the pages, the base first, then in the
 	// order their first page comes, by document and whether their pages
@@ -92,8 +147,14 @@ type source struct {
 	skip map[int32]bool
 }
 
-func newBuilder(doc Doc) *builder {
-	b := &builder{doc: doc, w: pdfwrite.New(), bySrc: map[srcKey]*source{}}
+func newBuilder(doc Doc, upd *pdf.UpdateBase) *builder {
+	b := &builder{doc: doc, w: pdfwrite.New(), upd: upd, bySrc: map[srcKey]*source{}}
+	if upd != nil {
+		b.w = pdfwrite.NewUpdate(pdfwrite.Base{
+			Size: upd.Size, Prev: upd.Startxref, Next: upd.Next, Stream: upd.XrefStream,
+			Gen: doc.Base.Generation,
+		})
+	}
 	if doc.Base != nil {
 		b.source(doc.Base, true)
 	}
@@ -121,7 +182,7 @@ func (b *builder) source(d *pdf.Document, own bool) *source {
 	x.im.MapRef = x.ref
 	if own {
 		// Fields of deleted pages leave holes in the lists of fields.
-		x.im.Compact = map[pdf.Name]bool{"Fields": true, "Kids": true, "CO": true}
+		x.im.Compact = map[pdf.Name]bool{"Fields": true, "Kids": true, "CO": true, "Annots": true}
 	} else {
 		// /Parent leads up a tree the output does not have: the page
 		// tree, a field's parents. Only the links the builder makes
@@ -149,6 +210,13 @@ func (b *builder) source(d *pdf.Document, own bool) *source {
 func (x *source) ref(r pdf.Ref) pdfwrite.Ref {
 	if r.Num <= 0 || x.skip[r.Num] {
 		return 0
+	}
+	if x.own && x.b.upd != nil {
+		// An update keeps the edited file's objects where they are.
+		if r.Num >= x.b.upd.Next {
+			return 0
+		}
+		return pdfwrite.Ref(r.Num)
 	}
 	if n, ok := x.pageOut[r.Num]; ok {
 		return n
@@ -186,21 +254,37 @@ func (x *source) ref(r pdf.Ref) pdfwrite.Ref {
 
 // build makes the catalogue, the page tree and the pages.
 func (b *builder) build() error {
-	b.catalog = b.w.Alloc() // filled in below
+	if b.upd != nil {
+		r, ok := b.doc.Base.Trailer().Get("Root").Ref()
+		if !ok {
+			return ErrRepaired
+		}
+		b.catalog = pdfwrite.Ref(r.Num) // replaced below
+	} else {
+		b.catalog = b.w.Alloc() // filled in below
+	}
 	b.pages = b.w.Alloc()
 	out := make([]pdfwrite.Ref, len(b.doc.Pages))
 	kids := make(pdf.Array, len(out))
 	for i, p := range b.doc.Pages {
-		out[i] = b.w.Alloc()
-		kids[i] = out[i].Object()
 		x := b.bySrc[srcKey{p.Src, p.Own}]
-		r, _ := x.d.PageRef(p.Index + 1)
+		r, ok := x.d.PageRef(p.Index + 1)
+		if b.upd != nil && p.Own && ok && r.Num > 0 {
+			out[i] = pdfwrite.Ref(r.Num) // replaced below
+		} else {
+			out[i] = b.w.Alloc()
+		}
+		kids[i] = out[i].Object()
 		if _, ok := x.pageOut[r.Num]; !ok {
 			x.pageOut[r.Num] = out[i]
 		}
 	}
 	if b.doc.Base != nil {
-		b.bySrc[srcKey{b.doc.Base, true}].pruneDeleted()
+		x := b.bySrc[srcKey{b.doc.Base, true}]
+		x.pruneDeleted()
+		if b.upd != nil {
+			x.freeDeleted()
+		}
 	}
 	// Pages are made once every page has its number, so links between
 	// them can point at the copies.
@@ -235,6 +319,55 @@ func (b *builder) build() error {
 	}
 	b.w.Version = b.version()
 	return nil
+}
+
+// freeDeleted frees, in an update, the deleted pages of the edited file
+// and what hung on them alone, and replaces what listed them: the form
+// and the fields that keep some of their kids.
+func (x *source) freeDeleted() {
+	for i := range x.d.PageCount() {
+		if r, ok := x.d.PageRef(i + 1); ok {
+			if _, kept := x.pageOut[r.Num]; !kept {
+				x.b.w.Free(r.Num)
+			}
+		}
+	}
+	if len(x.skip) == 0 {
+		return
+	}
+	for n := range x.skip {
+		x.b.w.Free(n)
+	}
+	cat, _ := x.d.Catalog()
+	if r, ok := cat.Get("AcroForm").Ref(); ok {
+		x.b.w.Set(pdfwrite.Ref(r.Num), x.im.Map(x.d.Resolve(r.Object())))
+	}
+	form, _ := x.d.GetDict(cat, "AcroForm")
+	fields, _ := x.d.Resolve(form.Get("Fields")).Array()
+	seen := map[int32]bool{}
+	var walk func(o pdf.Object)
+	walk = func(o pdf.Object) {
+		r, ok := o.Ref()
+		if !ok || x.skip[r.Num] || seen[r.Num] || len(seen) >= maxFieldNodes {
+			return
+		}
+		seen[r.Num] = true
+		node, _ := x.d.Resolve(o).Dict()
+		kids, _ := x.d.Resolve(node.Get("Kids")).Array()
+		lost := false
+		for _, k := range kids {
+			if kr, ok := k.Ref(); ok && x.skip[kr.Num] {
+				lost = true
+			}
+			walk(k)
+		}
+		if lost {
+			x.b.w.Set(pdfwrite.Ref(r.Num), x.im.Map(node.Object()))
+		}
+	}
+	for _, f := range fields {
+		walk(f)
+	}
 }
 
 // maxFieldNodes bounds the walk of a form's field tree.
@@ -357,13 +490,23 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 	if oc := b.ocProperties(); !oc.IsNull() {
 		entries = append(entries, pdf.Entry{Key: "OCProperties", Val: oc})
 	}
+	if b.upd != nil {
+		// An update keeps the header: a newer version goes into the
+		// catalogue.
+		if v := b.version(); v > b.doc.Base.Version() {
+			entries = append(entries, pdf.Entry{Key: "Version", Val: pdf.Name(v).Object()})
+		}
+	}
 	return pdf.NewDict(entries...), nil
 }
 
 // version returns the newest version of the sources, by their headers and
-// catalogues, and at least 1.7.
+// catalogues, and at least 1.7 for a new file.
 func (b *builder) version() string {
 	v := "1.7"
+	if b.upd != nil {
+		v = "1.0"
+	}
 	for _, x := range b.sources {
 		if h := x.d.Version(); validVersion(h) && h > v {
 			v = h
@@ -384,6 +527,11 @@ func validVersion(v string) bool {
 // write writes the output.
 func (b *builder) write(w io.Writer) error {
 	t := pdfwrite.Trailer{Root: b.catalog, Info: b.info}
+	if b.upd != nil {
+		if err := b.doc.Base.WriteSource(w); err != nil {
+			return err
+		}
+	}
 	if x := b.sources[0]; x.own {
 		// The output stands for the edited file.
 		if id, ok := x.d.Resolve(x.d.Trailer().Get("ID")).Array(); ok && len(id) == 2 {
@@ -421,9 +569,15 @@ func (x *source) page(p Page) (pdf.Dict, error) {
 		dropped = ownDropped
 	}
 	for k, v := range src.All() {
-		if !dropped[k] {
-			entries = append(entries, pdf.Entry{Key: k, Val: x.im.Map(v)})
+		if dropped[k] {
+			continue
 		}
+		if k == "Annots" {
+			// Written in place, without the annotations of deleted
+			// pages.
+			v = x.d.Resolve(v)
+		}
+		entries = append(entries, pdf.Entry{Key: k, Val: x.im.Map(v)})
 	}
 	if rot := Rotation(x.d.Resolve(src.Get("Rotate")), p.Rotate); rot != 0 {
 		entries = append(entries, pdf.Entry{Key: "Rotate", Val: pdf.Integer(int64(rot))})

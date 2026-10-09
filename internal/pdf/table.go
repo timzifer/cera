@@ -89,7 +89,11 @@ type table struct {
 
 	trailer  Dict
 	repaired bool
-	dec      *decryptor
+	// startxref is the offset of the newest cross-reference section and
+	// xrefStream whether it is a stream; unset when repaired.
+	startxref  int64
+	xrefStream bool
+	dec        *decryptor
 
 	stmMu   sync.Mutex
 	objStms map[int32]map[int32]*Object // parsed object streams

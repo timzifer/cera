@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"sync/atomic"
 )
@@ -133,6 +134,60 @@ func (d *Document) Trailer() Dict { return d.tab.Load().trailer }
 // Repaired reports whether the document's structure was rebuilt by scanning
 // the file rather than read from its cross-reference tables.
 func (d *Document) Repaired() bool { return d.tab.Load().repaired }
+
+// UpdateBase is what an incremental update of a file builds on.
+type UpdateBase struct {
+	Size       int64 // the file's length in bytes
+	Startxref  int64 // the offset of its newest cross-reference section
+	XrefStream bool  // that section is a cross-reference stream
+	// Next is the first object number an update may give a new object:
+	// the trailer's /Size, or one past the highest object if more.
+	Next int32
+}
+
+// UpdateBase describes the file for an incremental update. It reports
+// false for a file whose structure was rebuilt by a repair: its offsets
+// cannot be trusted to chain an update to.
+func (d *Document) UpdateBase() (UpdateBase, bool) {
+	t := d.tab.Load()
+	if t.repaired || t.startxref <= 0 {
+		return UpdateBase{}, false
+	}
+	next := int32(0)
+	if n, ok := t.trailer.Get("Size").Int(); ok && n > 0 && n <= math.MaxInt32 {
+		next = int32(n)
+	}
+	if len(t.nums) > 0 {
+		next = max(next, t.nums[len(t.nums)-1]+1)
+	}
+	return UpdateBase{Size: d.src.size(), Startxref: t.startxref, XrefStream: t.xrefStream, Next: next}, true
+}
+
+// Generation returns the generation number of object num as the file
+// defines it now, and false for an object it does not define.
+func (d *Document) Generation(num int32) (int32, bool) {
+	x := d.tab.Load().entry(num)
+	if x == nil || x.kind == 'f' {
+		return 0, false
+	}
+	if x.kind == 'o' {
+		return 0, true // objects in object streams have generation 0
+	}
+	return x.gen, true
+}
+
+// WriteSource writes the bytes of the file, as they were read, to w.
+func (d *Document) WriteSource(w io.Writer) error {
+	switch s := d.src.(type) {
+	case memSource:
+		_, err := w.Write(s)
+		return err
+	case readerSource:
+		_, err := io.Copy(w, io.NewSectionReader(s.r, 0, s.n))
+		return err
+	}
+	return fmt.Errorf("pdf: unknown source %T", d.src)
+}
 
 // Encrypted reports whether the file declares an /Encrypt dictionary.
 func (d *Document) Encrypted() bool { return !d.Trailer().Get("Encrypt").IsNull() }

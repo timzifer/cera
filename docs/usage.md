@@ -156,7 +156,8 @@ err = e.ImportPages(at, other, cera.EditPage{Index: 2, Rotate: 90})
 err = e.DeletePages(3, 4)
 err = e.MovePage(from, to)
 err = e.RotatePage(i, 90)
-err = e.Save(w)
+err = e.Save(w)          // a new file
+err = e.Update(w)        // the file as it was, and an incremental update
 ```
 
 Everything at the level of the document (outline, names, structure tree,
@@ -174,6 +175,14 @@ encrypted document is written decrypted when its permissions allow
 reassembling it, else `Save` and `ImportPages` return `ErrNoAssembly`.
 `Save` may be called again; documents an editor uses may be rendered
 meanwhile.
+
+`Update` writes the edited file unchanged and appends only what changed
+(PDF 2.0, 7.5.6), so signatures over the original bytes stay valid: the
+document's pages keep their objects, deleted pages and what hung on them
+alone are freed, imported pages are copied in. An unchanged document is
+written as it is. It returns `ErrNoUpdate` for an editor made with
+`NewEditor`, for a file that needed a repair and, for now, for an
+encrypted one.
 
 ## Command line
 

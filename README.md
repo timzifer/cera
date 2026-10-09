@@ -80,13 +80,13 @@ go build -C cmd/cera -o "$PWD/cera" .   # a module of its own: it writes PNGs wi
 ./cera -dpi 150 -o 'page-%d.png' input.pdf
 ```
 
-Editing ([ADR 0013](docs/adr/0013-editing-documents.md)): delete, move and turn pages, import pages of other files, save as a new file:
+Editing ([ADR 0013](docs/adr/0013-editing-documents.md)): delete, move and turn pages, import pages of other files, save as a new file or as an incremental update:
 
 ```go
 e := doc.Edit()                            // or cera.NewEditor() for an empty document
 err = e.ImportPages(0, cover, cera.EditPage{Index: 0})
 err = e.DeletePages(e.NumPages() - 1)
-err = e.Save(w)
+err = e.Save(w)                            // a new file, or e.Update(w): the file and an incremental update
 ```
 
 ## Documentation
