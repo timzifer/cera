@@ -306,6 +306,14 @@ func measureFile(f *file, engines []*engine) *fileResult {
 	return fr
 }
 
+// A document is drawn in pairs on all cores and on one at least
+// -multiruns times, and more, up to maxPairs, until the pairs of all
+// engines have taken minPairTime.
+const (
+	maxPairs    = 31
+	minPairTime = int64(2e9) // ns
+)
+
 // measureAllCores times drawing the whole document on all cores, each
 // engine in its own best way: an engine with threads of its own uses them
 // (cera: pages concurrently, each drawn in bands on all cores);
@@ -373,7 +381,10 @@ func measureAllCores(fr *fileResult, slots []*slot, scale string) {
 			func() (int64, error) { return single.run(pages, scale) },
 			func() { pool.close(); single.close() }})
 	}
-	for k := range *multiRuns {
+	// A document drawn in microseconds gets more pairs: a few runs of it
+	// measure the scheduler more than the engines (#63).
+	var spent int64
+	for k := 0; k < *multiRuns || k < maxPairs && spent < minPairTime; k++ {
 		for _, r := range rotate(runners, k) {
 			if _, failed := fr.allErr[r.name]; failed {
 				continue
@@ -397,6 +408,7 @@ func measureAllCores(fr *fileResult, slots []*slot, scale string) {
 			if k%2 == 1 {
 				t[0], t[1] = t[1], t[0]
 			}
+			spent += t[0] + t[1]
 			fr.all[r.name] = append(fr.all[r.name], t[0])
 			fr.one[r.name] = append(fr.one[r.name], t[1])
 		}

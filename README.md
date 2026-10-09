@@ -24,20 +24,23 @@ the pinned corpus of 113 pages:
 | | all pages | papers | text, fonts | shadings | transparency | scans |
 |---|---|---|---|---|---|---|
 | MuPDF | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× | 1.00× |
-| **cera** | **0.65×** | **0.83×** | **0.85×** | **0.48×** | **0.71×** | **0.79×** |
-| PDFium | 1.14× | 1.26× | 1.31× | 1.73× | 0.66× | 1.60× |
-| hayro | 1.35× | 1.96× | 1.65× | 1.66× | 0.53× | 1.28× |
-| pdf.js | 3.73× | 6.24× | 5.63× | 0.93× | 1.95× | 3.58× |
+| **cera** | **0.65×** | **0.82×** | **0.83×** | **0.48×** | **0.73×** | **0.70×** |
+| PDFium | 1.14× | 1.25× | 1.31× | 1.80× | 0.69× | 1.62× |
+| hayro | 1.38× | 2.01× | 1.70× | 1.70× | 0.55× | 1.28× |
+| pdf.js | 3.80× | 6.25× | 5.86× | 0.98× | 2.07× | 3.54× |
 
-- All 16 cores: 0.18× MuPDF on one-page files (cera splits a page into
-  bands), 0.56× on documents of several pages.
+- All 16 cores: 0.19× MuPDF on one-page files (cera splits a page into
+  bands), 0.54× on documents of several pages.
+- Drawing into the bitmap of the page before, as a viewer does: 0.49× on
+  one core, 0.12× and 0.36× on 16. The table gives cera a new bitmap per
+  page, as the other engines' bindings give them a new pixmap.
 - Command line, PDF to PNG: `cmd/cera` 0.55× `mutool draw` on one core, 0.47×
   on 16 (PNGs written with [calamus](https://github.com/timzifer/calamus) at
   the fastest level, 1.27× the size of MuPDF's; with `image/png` 0.62× and
   0.73×; compressing bands while drawing, `-png stream`, 0.55× and 0.48×);
   Poppler 2.64×, Ghostscript 3.88×.
-- WebAssembly, against native MuPDF: cera 1.64× on V8 (Chrome, Node), 3.71×
-  on wazero; PDFium 2.05× on wazero (its module runs on wazero only).
+- WebAssembly, against native MuPDF: cera 1.66× on V8 (Chrome, Node), 3.74×
+  on wazero; PDFium 2.02× on wazero (its module runs on wazero only).
 - One allocation per page (median), 38 MB peak memory per file (median).
 
 cera's own synthetic drawings, on which MuPDF is unusually slow (cera

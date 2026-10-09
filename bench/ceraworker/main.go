@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/timzifer/cera/bench/internal/clock"
 
@@ -21,6 +22,44 @@ import (
 )
 
 var white = color.RGBA{255, 255, 255, 255}
+
+// reuse, set at build time (the engine cera-reuse), draws into bitmaps
+// drawn into before, as a viewer draws into its framebuffer: Render fills
+// the page with the background, so a bitmap needs no clearing. Without
+// it every render gets a new bitmap, as the other engines' bindings give
+// them a new pixmap; it is zeroed by the allocator, then filled, and on
+// all cores its garbage collections cost more than a page of tens of
+// microseconds (#63).
+var reuse string
+
+// bitmaps are the bitmaps to draw into again, with reuse.
+var bitmaps struct {
+	sync.Mutex
+	free []*image.RGBA
+}
+
+func getBitmap(r image.Rectangle) *image.RGBA {
+	if reuse != "" {
+		bitmaps.Lock()
+		defer bitmaps.Unlock()
+		n := 4 * r.Dx() * r.Dy()
+		for k, b := range bitmaps.free {
+			if cap(b.Pix) >= n {
+				bitmaps.free = append(bitmaps.free[:k], bitmaps.free[k+1:]...)
+				return &image.RGBA{Pix: b.Pix[:n], Stride: 4 * r.Dx(), Rect: r}
+			}
+		}
+	}
+	return image.NewRGBA(r)
+}
+
+func putBitmap(b *image.RGBA) {
+	if reuse != "" && b != nil {
+		bitmaps.Lock()
+		bitmaps.free = append(bitmaps.free, b)
+		bitmaps.Unlock()
+	}
+}
 
 // worker holds the open document. Commands come one at a time.
 type worker struct {
@@ -85,6 +124,7 @@ func (w *worker) do(f []string) (r []string) {
 		if len(f) > 3 && f[3] == "1" {
 			r = append(r, strconv.FormatFloat(ink(img), 'f', 5, 64))
 		}
+		putBitmap(img)
 		return r
 	case "again":
 		// A page rendered again from its display list (a scrolled
@@ -144,16 +184,16 @@ func (w *worker) do(f []string) (r []string) {
 	return []string{"unsupported"}
 }
 
-// render draws page i into a new bitmap, as a viewer showing the page for
-// the first time does: the page is released afterwards, so the next render
-// interprets it again.
+// render draws page i as a viewer showing the page for the first time
+// does, into a new bitmap or one drawn into before (getBitmap): the page
+// is released afterwards, so the next render interprets it again.
 func (w *worker) render(i int, scale float64, workers int) (int64, *image.RGBA, error) {
 	t0 := clock.Now()
 	p, err := w.doc.Page(i)
 	if err != nil {
 		return 0, nil, err
 	}
-	dst := image.NewRGBA(p.Bounds(scale))
+	dst := getBitmap(p.Bounds(scale))
 	err = p.Render(context.Background(), dst, cera.RenderOptions{Scale: scale, Background: white, Workers: workers})
 	ns := clock.Since(t0)
 	p.Release()
@@ -169,6 +209,7 @@ func (w *worker) all(scale float64, threads int) []string {
 	g := min(threads, n)
 	runtime.GOMAXPROCS(threads)
 	defer runtime.GOMAXPROCS(1)
+	settle()
 	next := make(chan int, n)
 	for i := range n {
 		next <- i
@@ -181,7 +222,9 @@ func (w *worker) all(scale float64, threads int) []string {
 	)
 	pages := func() {
 		for i := range next {
-			if _, _, err := w.render(i, scale, 0); err != nil {
+			_, img, err := w.render(i, scale, 0)
+			putBitmap(img)
+			if err != nil {
 				mu.Lock()
 				first = cmpErr(first, err)
 				mu.Unlock()
@@ -202,6 +245,13 @@ func (w *worker) all(scale float64, threads int) []string {
 		return errReply(first)
 	}
 	return []string{"ok", itoa(int64(ns))}
+}
+
+// settle lets the runtime come to rest after GOMAXPROCS changed, before
+// a timed render: the threads it wakes for the new Ps look for work for
+// a while, on the cores the render runs on.
+func settle() {
+	time.Sleep(10 * time.Millisecond)
 }
 
 func cmpErr(a, b error) error {

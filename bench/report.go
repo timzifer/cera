@@ -158,7 +158,7 @@ func writeReport(dir string, m *meta, engines []*engine, results []*fileResult) 
 				}
 			}
 			at, rt := fr.all[name], fr.all[refName]
-			if len(at) == *multiRuns && len(rt) == *multiRuns && *multiRuns > 0 {
+			if len(at) >= *multiRuns && len(rt) == len(at) && *multiRuns > 0 {
 				paired := make([]float64, len(at))
 				for k := range at {
 					paired[k] = float64(at[k]) / float64(rt[k])
