@@ -57,6 +57,8 @@ type PageText struct {
 	// Blocks are the blocks of lines, such as paragraphs or table cells,
 	// in reading order.
 	Blocks []TextBlock
+
+	plain *plainText // String and offsets, made on first use
 }
 
 // TextLine is a line of text: characters on one baseline, close enough to
@@ -129,39 +131,7 @@ func (t *PageText) String() string {
 	if len(t.Lines) == 0 && len(t.Chars) > 0 {
 		return layoutText(slices.Clone(t.Chars), nil).String() // made by hand
 	}
-	var b strings.Builder
-	sep := "" // written before the next text
-	for _, bl := range t.Blocks {
-		if b.Len() > 0 {
-			sep = "\n\n"
-		}
-		for li := bl.Start; li < bl.End; li++ {
-			l := &t.Lines[li]
-			wrote := false // on this line
-			for i := l.Start; i < l.End; i++ {
-				c := &t.Chars[i]
-				if c.Text == "" && c.group != 0 || !wrote && isSpace(c.Text) {
-					continue // replaced by the /ActualText before, or indenting
-				}
-				wrote = true
-				if sep != "" {
-					b.WriteString(sep)
-					sep = ""
-				} else if i > l.Start && t.spaceBefore(i) {
-					b.WriteByte(' ')
-				}
-				if c.Text == "" {
-					b.WriteRune('�')
-				} else {
-					b.WriteString(c.Text)
-				}
-			}
-			if b.Len() > 0 && sep == "" {
-				sep = "\n"
-			}
-		}
-	}
-	return b.String()
+	return t.plainText().s
 }
 
 // spaceBefore reports whether a word space stands between Chars[i-1] and

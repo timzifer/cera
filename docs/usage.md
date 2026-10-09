@@ -144,6 +144,25 @@ broken across lines. `String` separates lines by a line break and blocks
 by an empty line. `Page.TextWith` selects layers, annotations and form
 values, and can ignore the structure tree.
 
+Selection works on the `PageText` alone, in points of the displayed page;
+a viewer divides its pointer positions by its zoom:
+
+```go
+a := text.PosAt(x0, y0)                       // where the drag started
+b := text.PosAt(x1, y1)                       // where the pointer is
+sel := text.Select(a, b, cera.SelectWords)    // SelectChars, SelectWords, SelectLines, SelectBlocks
+for _, q := range text.Quads(sel) { /* highlight q, scaled by the zoom */ }
+copied := text.TextOf(sel, cera.TextFormat{JoinHyphenated: true})
+```
+
+`WordAt` and `LineAt` give the word and line for a double and triple
+click, `CharAt` the character under the pointer, and `InRect` the
+characters in a rectangle (a column of a table). A selection is a
+`TextRange` of indices into `Chars`: keep as many as there are marks.
+To store a mark, keep bytes of the text instead, which outlive changes to
+the layout: `Offset` maps a position to its byte offset in `String`, and
+`RangeOfOffsets` maps a byte range back.
+
 ## Metadata
 
 ```go
