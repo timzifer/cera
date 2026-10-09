@@ -186,6 +186,14 @@ made as cera draws it (the form's `/DA` font, or Helvetica when that cannot
 show the text), so every viewer shows the values without regenerating
 them; check boxes and radio buttons switch between their appearances.
 
+Signatures are not checked, but what they declare is kept: a signed
+document is not saved as a new file (`ErrSigned`, use `Update`), a field a
+signature locks (`/Lock`) does not change (`ErrLocked`), and a
+certification's DocMDP permissions allow no change with P 1 and no change
+of the pages with P 2 and 3 (`ErrCertified`). Writing values removes an
+XFA form, which would show the old ones. Calculated fields are not
+computed again: cera runs no JavaScript.
+
 `Update` writes the edited file unchanged and appends only what changed
 (PDF 2.0, 7.5.6), so signatures over the original bytes stay valid: the
 document's pages keep their objects, deleted pages and what hung on them

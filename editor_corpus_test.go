@@ -55,7 +55,7 @@ func editCorpusFile(t *testing.T, path string) {
 	save := func(e *Editor) *Document {
 		var out bytes.Buffer
 		if err := e.Save(&out); err != nil {
-			if errors.Is(err, ErrNoAssembly) {
+			if errors.Is(err, ErrNoAssembly) || errors.Is(err, ErrSigned) {
 				t.Skip(err)
 			}
 			t.Fatal(err)
@@ -109,7 +109,7 @@ func editCorpusFile(t *testing.T, path string) {
 	// The same delete as an incremental update.
 	var upd bytes.Buffer
 	if err := e.Update(&upd); err != nil {
-		if errors.Is(err, ErrNoUpdate) {
+		if errors.Is(err, ErrNoUpdate) || errors.Is(err, ErrCertified) {
 			return
 		}
 		t.Fatal(err)
@@ -182,7 +182,7 @@ func editCorpusFields(t *testing.T, d *Document, data []byte) {
 	var out bytes.Buffer
 	if err := e.Save(&out); err == nil {
 		check("save", out.Bytes())
-	} else if !errors.Is(err, ErrNoAssembly) {
+	} else if !errors.Is(err, ErrNoAssembly) && !errors.Is(err, ErrSigned) {
 		t.Fatal(err)
 	}
 	out.Reset()
@@ -191,7 +191,7 @@ func editCorpusFields(t *testing.T, d *Document, data []byte) {
 			t.Fatal("the update does not start with the file")
 		}
 		check("update", out.Bytes())
-	} else if !errors.Is(err, ErrNoUpdate) {
+	} else if !errors.Is(err, ErrNoUpdate) && !errors.Is(err, ErrCertified) {
 		t.Fatal(err)
 	}
 }

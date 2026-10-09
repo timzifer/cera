@@ -36,6 +36,12 @@ import (
 // what the document holds, to be written by [Editor.Save] and
 // [Editor.Update]. state must be of the form of the edited document. A
 // later call replaces what an earlier one recorded.
+//
+// It returns [ErrCertified] for a document whose certification allows no
+// change, and [ErrLocked] for a field a signature locks. Writing values
+// removes an XFA form (/XFA), which would show the old ones. Calculated
+// and formatted fields ([Field.HasActions]) are not computed again: cera
+// runs no JavaScript.
 func (e *Editor) SetFields(state *FormState) error {
 	if e.base == nil {
 		return errors.New("cera: a new document has no form")
@@ -53,6 +59,17 @@ func (e *Editor) SetFields(state *FormState) error {
 			return fmt.Errorf("cera: field %q is a direct object and cannot be written", f.Name)
 		}
 		values[f] = state.Value(f)
+	}
+	if len(values) > 0 {
+		sg := e.base.signing()
+		if sg.mdp == 1 {
+			return ErrCertified
+		}
+		for f := range values {
+			if sg.locked(f.Name) {
+				return fmt.Errorf("%w: %q", ErrLocked, f.Name)
+			}
+		}
 	}
 	e.fields = values
 	return nil
@@ -98,6 +115,11 @@ func (e *Editor) fieldPatches() ([]pdfedit.Patch, []pdf.Object) {
 			if wp, ok := e.widgetPatch(w, v, &objs); ok {
 				out = append(out, wp)
 			}
+		}
+	}
+	if len(out) > 0 {
+		if p, ok := e.xfaPatch(); ok {
+			out = append(out, p)
 		}
 	}
 	return out, objs
