@@ -55,7 +55,10 @@ e.Update(w)               // d's bytes and the changes appended (#91)
   metadata) belongs to the document being edited. Pages imported from
   another document bring only what is on the page: content, resources,
   annotations, links to other pages imported from the same document; their
-  widgets stay as plain annotations. Importing a page of the edited
+  widgets stay as plain annotations, unless the page is imported with its
+  fields (`EditPage.Fields`): then the part of its field tree that leads
+  to its widgets comes too, renamed at the root where the result has the
+  name. Importing a page of the edited
   document itself gives such a copy too.
 - **Deleting a page** removes what hangs on it alone: its annotations, and
   form fields whose widgets were all on deleted pages. Outline entries,
