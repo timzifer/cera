@@ -43,6 +43,7 @@ import (
 	"math"
 
 	"github.com/timzifer/cera/internal/pdf"
+	"github.com/timzifer/cera/internal/pdfwrite"
 )
 
 // ErrEncrypted is returned for an encrypted file that does not open with
@@ -92,46 +93,33 @@ func Extract(w io.Writer, src []byte, pages []Page) error {
 	return err
 }
 
-// Output objects 1 and 2 are the catalogue and the page tree; the pages
-// follow from 3 on.
-const (
-	catalogNum = 1
-	pagesNum   = 2
-)
-
-// outRef is a reference to object num of the output. Source references are
-// positive, so the objects Extract makes itself refer to each other with
-// negative numbers, which the source never resolves.
-func outRef(num int32) pdf.Object { return pdf.Ref{Num: -num}.Object() }
-
 // An extractor copies pages of one document.
 type extractor struct {
 	d *pdf.Document
+	w *pdfwrite.Writer
 
-	// objs are the output objects by number less one: objects Extract made
-	// (with source and output references) or source objects to copy.
-	objs []pdf.Object
-	// copied maps source object numbers to output numbers.
-	copied map[int32]int32
 	// isPage holds the object numbers of every source page, pageOut the
 	// output number of the first copy of each selected one.
 	isPage  map[int32]bool
-	pageOut map[int32]int32
+	pageOut map[int32]pdfwrite.Ref
 	// skip holds source objects never copied: the /Encrypt dictionary.
 	skip map[int32]bool
 
-	infoNum int32
-	buf     bytes.Buffer
+	catalog, pages, info pdfwrite.Ref
 }
 
 func newExtractor(d *pdf.Document) *extractor {
 	x := &extractor{
 		d:       d,
-		copied:  map[int32]int32{},
+		w:       pdfwrite.New(d),
 		isPage:  map[int32]bool{},
-		pageOut: map[int32]int32{},
+		pageOut: map[int32]pdfwrite.Ref{},
 		skip:    map[int32]bool{},
 	}
+	// /Parent leads up a tree the output does not have: the page tree, a
+	// field's parents. Only the links Extract makes itself stay.
+	x.w.Drop = map[pdf.Name]bool{"Parent": true}
+	x.w.MapRef = x.ref
 	for i := range d.PageCount() {
 		if r, ok := d.PageRef(i + 1); ok {
 			x.isPage[r.Num] = true
@@ -143,10 +131,39 @@ func newExtractor(d *pdf.Document) *extractor {
 	return x
 }
 
-// alloc adds an output object and returns its number.
-func (x *extractor) alloc(o pdf.Object) int32 {
-	x.objs = append(x.objs, o)
-	return int32(len(x.objs))
+// ref returns the output number of a source object, numbering it for
+// copying when it is first met, or 0 when the reference is written as
+// null: a page that is not copied, a page tree node, a missing object.
+func (x *extractor) ref(r pdf.Ref) pdfwrite.Ref {
+	if r.Num <= 0 || x.skip[r.Num] {
+		return 0
+	}
+	if n, ok := x.pageOut[r.Num]; ok {
+		return n
+	}
+	if x.isPage[r.Num] {
+		return 0
+	}
+	if n, ok := x.w.Copied(r); ok {
+		return n
+	}
+	o, err := x.d.Get(r)
+	if err != nil || o.IsNull() {
+		return 0
+	}
+	if d, ok := o.Dict(); ok {
+		// Reached other than through /Parent: still not part of a page.
+		switch t, _ := d.Get("Type").Name(); t {
+		case "Page", "Pages", "Catalog", "XRef", "ObjStm":
+			return 0
+		}
+	}
+	return x.w.Copy(r)
+}
+
+// write serialises the output.
+func (x *extractor) write() []byte {
+	return x.w.Bytes(pdfwrite.Trailer{Root: x.catalog, Info: x.info})
 }
 
 // build makes the catalogue, the page tree and the pages.
@@ -155,16 +172,16 @@ func (x *extractor) build(pages []Page) error {
 	if err != nil {
 		return fmt.Errorf("pdfedit: %w", err)
 	}
-	x.alloc(pdf.Null) // the catalogue, filled in below
-	x.alloc(pdf.Null) // the page tree
-	first := int32(len(x.objs) + 1)
+	x.catalog = x.w.Alloc() // filled in below
+	x.pages = x.w.Alloc()
+	out := make([]pdfwrite.Ref, len(pages))
 	kids := make(pdf.Array, len(pages))
 	for i, p := range pages {
-		num := x.alloc(pdf.Null)
-		kids[i] = outRef(num)
+		out[i] = x.w.Alloc()
+		kids[i] = out[i].Object()
 		r, _ := x.d.PageRef(p.Index + 1)
 		if _, ok := x.pageOut[r.Num]; !ok {
-			x.pageOut[r.Num] = num
+			x.pageOut[r.Num] = out[i]
 		}
 	}
 	// Pages are made once every selected page has its number, so links
@@ -174,33 +191,31 @@ func (x *extractor) build(pages []Page) error {
 		if err != nil {
 			return err
 		}
-		x.objs[first+int32(i)-1] = dict.Object()
+		x.w.Set(out[i], dict.Object())
 	}
 
-	x.objs[pagesNum-1] = pdf.NewDict(
+	x.w.Set(x.pages, pdf.NewDict(
 		pdf.Entry{Key: "Type", Val: pdf.Name("Pages").Object()},
 		pdf.Entry{Key: "Kids", Val: kids.Object()},
 		pdf.Entry{Key: "Count", Val: pdf.Integer(int64(len(pages)))},
-	).Object()
+	).Object())
 
 	entries := []pdf.Entry{
 		{Key: "Type", Val: pdf.Name("Catalog").Object()},
-		{Key: "Pages", Val: outRef(pagesNum)},
+		{Key: "Pages", Val: x.pages.Object()},
 	}
 	for _, k := range [...]pdf.Name{"OCProperties", "Lang"} {
 		if v := cat.Get(k); !v.IsNull() {
-			entries = append(entries, pdf.Entry{Key: k, Val: v})
+			entries = append(entries, pdf.Entry{Key: k, Val: x.w.Map(v)})
 		}
 	}
-	x.objs[catalogNum-1] = pdf.NewDict(entries...).Object()
+	x.w.Set(x.catalog, pdf.NewDict(entries...).Object())
 
-	// The information dictionary is numbered now: the trailer is written
-	// after the objects.
 	info := x.d.Trailer().Get("Info")
 	if r, ok := info.Ref(); ok {
-		x.infoNum = x.ref(r)
-	} else if dict, ok := info.Dict(); ok && info.Kind() == pdf.KindDict {
-		x.infoNum = x.alloc(dict.Object())
+		x.info = x.ref(r)
+	} else if info.Kind() == pdf.KindDict {
+		x.info = x.w.Add(x.w.Map(info))
 	}
 	return nil
 }
@@ -221,11 +236,11 @@ func (x *extractor) page(p Page) (pdf.Dict, error) {
 	}
 	entries := []pdf.Entry{
 		{Key: "Type", Val: pdf.Name("Page").Object()},
-		{Key: "Parent", Val: outRef(pagesNum)},
+		{Key: "Parent", Val: x.pages.Object()},
 	}
 	for k, v := range src.All() {
 		if !pageDropped[k] {
-			entries = append(entries, pdf.Entry{Key: k, Val: v})
+			entries = append(entries, pdf.Entry{Key: k, Val: x.w.Map(v)})
 		}
 	}
 	if rot := rotation(x.d.Resolve(src.Get("Rotate")), p.Rotate); rot != 0 {
@@ -255,10 +270,10 @@ func (x *extractor) annots(o pdf.Object) pdf.Array {
 	arr, _ := x.d.Resolve(o).Array()
 	type kept struct {
 		dict pdf.Dict
-		num  int32 // output number; 0 for an annotation written in place
+		num  pdfwrite.Ref // output number; 0 for an annotation written in place
 	}
 	var keep []kept
-	local := map[int32]int32{} // source annotation → its copy on this page
+	local := map[int32]pdfwrite.Ref{} // source annotation → its copy on this page
 	for _, e := range arr {
 		ad, ok := x.d.Resolve(e).Dict()
 		if !ok || x.d.Resolve(e).Kind() == pdf.KindStream {
@@ -273,7 +288,7 @@ func (x *extractor) annots(o pdf.Object) pdf.Array {
 			if _, dup := local[r.Num]; dup {
 				continue
 			}
-			k.num = x.alloc(pdf.Null)
+			k.num = x.w.Alloc()
 			local[r.Num] = k.num
 		}
 		keep = append(keep, k)
@@ -296,7 +311,9 @@ func (x *extractor) annots(o pdf.Object) pdf.Array {
 				if !ok {
 					continue
 				}
-				v = outRef(n)
+				v = n.Object()
+			default:
+				v = x.w.Map(v)
 			}
 			entries = append(entries, pdf.Entry{Key: key, Val: v})
 		}
@@ -305,8 +322,8 @@ func (x *extractor) annots(o pdf.Object) pdf.Array {
 			out = append(out, dict.Object())
 			continue
 		}
-		x.objs[k.num-1] = dict.Object()
-		out = append(out, outRef(k.num))
+		x.w.Set(k.num, dict.Object())
+		out = append(out, k.num.Object())
 	}
 	return out
 }

@@ -366,27 +366,6 @@ func TestErrors(t *testing.T) {
 	}
 }
 
-func TestEscapes(t *testing.T) {
-	x := &extractor{}
-	x.name("A B#(c)/é")
-	x.buf.WriteByte(' ')
-	x.str([]byte("a(b)\\c\r\nd"))
-	const want = `/A#20B#23#28c#29#2F#C3#A9 (a\(b\)\\c\r\nd)`
-	if got := x.buf.String(); got != want {
-		t.Fatalf("got %s, want %s", got, want)
-	}
-	o, _, err := pdf.ParseObject([]byte("[" + want + "]"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, _ := o.Array()
-	n, _ := a[0].Name()
-	s, _ := a[1].Str()
-	if n != "A B#(c)/é" || string(s) != "a(b)\\c\r\nd" {
-		t.Fatalf("read back %q %q", n, s)
-	}
-}
-
 func FuzzExtract(f *testing.F) {
 	f.Add(sampleFile(false), uint8(0), uint8(1))
 	f.Add(sampleFile(true), uint8(3), uint8(0))

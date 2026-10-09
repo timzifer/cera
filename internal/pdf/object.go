@@ -297,3 +297,8 @@ type Stream struct {
 // NewStream returns a stream with the given dictionary and raw bytes, which
 // are not encrypted.
 func NewStream(d Dict, raw []byte) *Stream { return &Stream{Dict: d, raw: raw} }
+
+// Unencrypted returns the raw bytes of a stream that is not encrypted: one
+// made by [NewStream], or read from a file without encryption. It reports
+// false for an encrypted stream, whose bytes [Document.Raw] decrypts.
+func (s *Stream) Unencrypted() ([]byte, bool) { return s.raw, s.dec == nil }
