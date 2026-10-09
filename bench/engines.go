@@ -21,11 +21,12 @@ type engine struct {
 }
 
 // engineOrder is the fixed order of engines in reports.
-var engineOrder = []string{"mupdf", "cera", "pdfium", "hayro", "pdfjs", "cera-wasm", "cera-v8-wasm", "pdfium-wasm"}
+var engineOrder = []string{"mupdf", "cera", "cera-reuse", "pdfium", "hayro", "pdfjs", "cera-wasm", "cera-v8-wasm", "pdfium-wasm"}
 
 var engineLabels = map[string]string{
 	"mupdf":        "MuPDF",
 	"cera":         "cera",
+	"cera-reuse":   "cera (bitmap reused)",
 	"pdfium":       "PDFium",
 	"hayro":        "hayro",
 	"pdfjs":        "pdf.js",
@@ -50,6 +51,15 @@ func setup(name, cache string) (*engine, error) {
 	case "cera":
 		bin := filepath.Join(cache, "ceraworker"+exe)
 		if err := goBuild(bin, nil); err != nil {
+			return nil, err
+		}
+		e.argv = []string{bin}
+	case "cera-reuse":
+		// The other engines' bindings give them a new pixmap per page, and
+		// cera gets a new bitmap too; this one draws into the last one, as
+		// a viewer does.
+		bin := filepath.Join(cache, "ceraworker-reuse"+exe)
+		if err := goBuild(bin, nil, "-ldflags=-X main.reuse=1"); err != nil {
 			return nil, err
 		}
 		e.argv = []string{bin}
@@ -108,18 +118,15 @@ func setup(name, cache string) (*engine, error) {
 		return nil, fmt.Errorf("%s: %v", name, err)
 	}
 	e.version = v[0]
-	if name == "cera" || name == "cera-wasm" || name == "cera-v8-wasm" {
+	if name == "cera" || name == "cera-reuse" || name == "cera-wasm" || name == "cera-v8-wasm" {
 		e.version = "cera " + ceraVersion()
 	}
 	return e, nil
 }
 
 // goBuild builds ./ceraworker to out.
-func goBuild(out string, env []string) error {
-	args := []string{"build", "-trimpath", "-o", out}
-	if *ceraFresh {
-		args = append(args, "-ldflags=-X main.fresh=1")
-	}
+func goBuild(out string, env []string, flags ...string) error {
+	args := append([]string{"build", "-trimpath", "-o", out}, flags...)
 	cmd := exec.Command("go", append(args, "./ceraworker")...)
 	cmd.Env = append(os.Environ(), env...)
 	if b, err := cmd.CombinedOutput(); err != nil {

@@ -25,7 +25,6 @@ type meta struct {
 	DPI         float64           `json:"dpi"`
 	Runs        int               `json:"runs"`
 	MultiRuns   int               `json:"multi_runs"`
-	CeraFresh   bool              `json:"cera_fresh_bitmaps,omitempty"` // -cera-fresh
 	Ref         string            `json:"ref"`
 	Corpus      string            `json:"corpus"` // SHA-256 prefix over the files' hashes
 	Files       int               `json:"files"`
@@ -48,7 +47,6 @@ func newMeta(files []*file) *meta {
 		DPI:       *dpi,
 		Runs:      *runs,
 		MultiRuns: *multiRuns,
-		CeraFresh: *ceraFresh,
 		Corpus:    shortHash(strings.Join(keys, "\n")),
 		Files:     len(files),
 		Versions:  map[string]string{},

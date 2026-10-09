@@ -23,22 +23,23 @@ import (
 
 var white = color.RGBA{255, 255, 255, 255}
 
-// fresh, set at build time (bench -cera-fresh), gives every render a new
-// bitmap instead of one drawn before.
-var fresh string
+// reuse, set at build time (the engine cera-reuse), draws into bitmaps
+// drawn into before, as a viewer draws into its framebuffer: Render fills
+// the page with the background, so a bitmap needs no clearing. Without
+// it every render gets a new bitmap, as the other engines' bindings give
+// them a new pixmap; it is zeroed by the allocator, then filled, and on
+// all cores its garbage collections cost more than a page of tens of
+// microseconds (#63).
+var reuse string
 
-// bitmaps are bitmaps drawn into before, to draw into again, as a viewer
-// draws into its framebuffer: Render fills the page with the background,
-// so a bitmap needs no clearing. A new one each page is zeroed by the
-// allocator, then filled, and on all cores its garbage collections cost
-// more than a page of tens of microseconds (#63).
+// bitmaps are the bitmaps to draw into again, with reuse.
 var bitmaps struct {
 	sync.Mutex
 	free []*image.RGBA
 }
 
 func getBitmap(r image.Rectangle) *image.RGBA {
-	if fresh == "" {
+	if reuse != "" {
 		bitmaps.Lock()
 		defer bitmaps.Unlock()
 		n := 4 * r.Dx() * r.Dy()
@@ -53,7 +54,7 @@ func getBitmap(r image.Rectangle) *image.RGBA {
 }
 
 func putBitmap(b *image.RGBA) {
-	if fresh == "" && b != nil {
+	if reuse != "" && b != nil {
 		bitmaps.Lock()
 		bitmaps.free = append(bitmaps.free, b)
 		bitmaps.Unlock()
@@ -184,8 +185,8 @@ func (w *worker) do(f []string) (r []string) {
 }
 
 // render draws page i as a viewer showing the page for the first time
-// does, into a bitmap drawn into before (getBitmap): the page is released
-// afterwards, so the next render interprets it again.
+// does, into a new bitmap or one drawn into before (getBitmap): the page
+// is released afterwards, so the next render interprets it again.
 func (w *worker) render(i int, scale float64, workers int) (int64, *image.RGBA, error) {
 	t0 := clock.Now()
 	p, err := w.doc.Page(i)

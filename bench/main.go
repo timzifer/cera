@@ -45,7 +45,6 @@ var (
 	cliMode   = flag.Bool("cli", false, "compare command-line tools end to end instead of libraries")
 	verbose   = flag.Bool("v", false, "show the workers' stderr")
 	charts    = flag.Bool("charts", false, "only recompute the summary, its tables and charts from the report's CSV files")
-	ceraFresh = flag.Bool("cera-fresh", false, "give cera a new bitmap for every page instead of reusing one")
 )
 
 // file is one corpus file.
