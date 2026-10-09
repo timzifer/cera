@@ -483,11 +483,12 @@ func FuzzEdit(f *testing.F) {
 		}
 		n := d.NumPages()
 		e := d.Edit()
+		// The calls may fail; the editor is then unchanged.
 		if n > 1 {
-			e.DeletePages(int(a) % n)
+			_ = e.DeletePages(int(a) % n)
 		}
-		e.ImportPages(0, d, EditPage{Index: int(b) % n, Rotate: int(a%4) * 90})
-		e.MovePage(0, e.NumPages()-1)
+		_ = e.ImportPages(0, d, EditPage{Index: int(b) % n, Rotate: int(a%4) * 90})
+		_ = e.MovePage(0, e.NumPages()-1)
 		var out bytes.Buffer
 		if e.Save(&out) != nil {
 			return

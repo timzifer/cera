@@ -41,19 +41,29 @@ func (c *counter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// sink writes through a buffer. The buffer keeps its first error, which
+// Write reports when it flushes, so the calls here do not return it.
+type sink struct{ b *bufio.Writer }
+
+func (o sink) str(s string)              { _, _ = o.b.WriteString(s) }
+func (o sink) byte(c byte)               { _ = o.b.WriteByte(c) }
+func (o sink) bytes(p []byte)            { _, _ = o.b.Write(p) }
+func (o sink) printf(f string, a ...any) { _, _ = fmt.Fprintf(o.b, f, a...) }
+
 // Write writes the file to out: the header, the output objects in order,
 // mapping source objects as it goes (which may copy more), and the
 // cross-reference table and trailer. An object is dropped from memory once
 // it is written. The writer must not be used after it.
 func (w *Writer) Write(out io.Writer, t Trailer) error {
 	c := &counter{w: out, h: md5.New()}
-	b := bufio.NewWriterSize(c, 64<<10)
+	bw := bufio.NewWriterSize(c, 64<<10)
+	b := sink{bw}
 	e := &encoder{b: b, w: w}
 	version := w.Version
 	if version == "" {
 		version = "1.7"
 	}
-	fmt.Fprintf(b, "%%PDF-%s\n%%\xe2\xe3\xcf\xd3\n", version)
+	b.printf("%%PDF-%s\n%%\xe2\xe3\xcf\xd3\n", version)
 	var offs []int64
 	for i := 0; i < len(w.objs) && c.err == nil; i++ {
 		s := w.objs[i]
@@ -61,17 +71,17 @@ func (w *Writer) Write(out io.Writer, t Trailer) error {
 		if s.imp != nil {
 			s.o = s.imp.Map(s.o)
 		}
-		offs = append(offs, c.n+int64(b.Buffered()))
-		fmt.Fprintf(b, "%d 0 obj\n", i+1)
+		offs = append(offs, c.n+int64(bw.Buffered()))
+		b.printf("%d 0 obj\n", i+1)
 		e.value(s.o, 0)
-		b.WriteString("\nendobj\n")
+		b.str("\nendobj\n")
 	}
-	xref := c.n + int64(b.Buffered())
-	fmt.Fprintf(b, "xref\n0 %d\n0000000000 65535 f\r\n", len(offs)+1)
+	xref := c.n + int64(bw.Buffered())
+	b.printf("xref\n0 %d\n0000000000 65535 f\r\n", len(offs)+1)
 	for _, off := range offs {
-		fmt.Fprintf(b, "%010d 00000 n\r\n", off)
+		b.printf("%010d 00000 n\r\n", off)
 	}
-	if err := b.Flush(); err != nil {
+	if err := bw.Flush(); err != nil {
 		return err
 	}
 	sum := c.h.Sum(nil)
@@ -79,17 +89,17 @@ func (w *Writer) Write(out io.Writer, t Trailer) error {
 	if first == nil {
 		first = sum
 	}
-	fmt.Fprintf(b, "trailer\n<</Size %d /Root %d 0 R", len(offs)+1, t.Root)
+	b.printf("trailer\n<</Size %d /Root %d 0 R", len(offs)+1, t.Root)
 	if t.Info != 0 {
-		fmt.Fprintf(b, " /Info %d 0 R", t.Info)
+		b.printf(" /Info %d 0 R", t.Info)
 	}
-	fmt.Fprintf(b, " /ID [<%x> <%x>]>>\nstartxref\n%d\n%%%%EOF\n", first, sum, xref)
-	return b.Flush()
+	b.printf(" /ID [<%x> <%x>]>>\nstartxref\n%d\n%%%%EOF\n", first, sum, xref)
+	return bw.Flush()
 }
 
 // An encoder writes output-space objects.
 type encoder struct {
-	b *bufio.Writer
+	b sink
 	w *Writer
 }
 
@@ -99,22 +109,22 @@ type encoder struct {
 func (e *encoder) value(o pdf.Object, depth int) {
 	b := e.b
 	if depth > maxDepth {
-		b.WriteString("null")
+		b.str("null")
 		return
 	}
 	switch o.Kind() {
 	case pdf.KindBool:
 		v, _ := o.Bool()
-		b.WriteString(strconv.FormatBool(v))
+		b.str(strconv.FormatBool(v))
 	case pdf.KindInteger:
 		v, _ := o.Int()
-		b.WriteString(strconv.FormatInt(v, 10))
+		b.str(strconv.FormatInt(v, 10))
 	case pdf.KindReal:
 		v, _ := o.Float()
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			v = 0
 		}
-		b.WriteString(strconv.FormatFloat(v, 'f', -1, 64))
+		b.str(strconv.FormatFloat(v, 'f', -1, 64))
 	case pdf.KindString:
 		s, _ := o.Str()
 		writeString(b, s)
@@ -123,14 +133,14 @@ func (e *encoder) value(o pdf.Object, depth int) {
 		writeName(b, n)
 	case pdf.KindArray:
 		a, _ := o.Array()
-		b.WriteByte('[')
+		b.byte('[')
 		for i, x := range a {
 			if i > 0 {
-				b.WriteByte(' ')
+				b.byte(' ')
 			}
 			e.value(x, depth+1)
 		}
-		b.WriteByte(']')
+		b.byte(']')
 	case pdf.KindDict:
 		d, _ := o.Dict()
 		e.dict(d, depth, -1)
@@ -138,22 +148,22 @@ func (e *encoder) value(o pdf.Object, depth int) {
 		s, _ := o.Stream()
 		data, ok := s.Unencrypted()
 		if depth > 0 || !ok {
-			b.WriteString("null")
+			b.str("null")
 			return
 		}
 		e.dict(s.Dict, depth, len(data))
-		b.WriteString("\nstream\n")
-		b.Write(data)
-		b.WriteString("\nendstream")
+		b.str("\nstream\n")
+		b.bytes(data)
+		b.str("\nendstream")
 	case pdf.KindRef:
 		r, _ := o.Ref()
 		if r.Num <= 0 || int(r.Num) > len(e.w.objs) {
-			b.WriteString("null")
+			b.str("null")
 			return
 		}
-		fmt.Fprintf(b, "%d 0 R", r.Num)
+		b.printf("%d 0 R", r.Num)
 	default:
-		b.WriteString("null")
+		b.str("null")
 	}
 }
 
@@ -161,31 +171,31 @@ func (e *encoder) value(o pdf.Object, depth int) {
 // replaced by it.
 func (e *encoder) dict(d pdf.Dict, depth, length int) {
 	b := e.b
-	b.WriteString("<<")
+	b.str("<<")
 	for k, v := range d.All() {
 		if length >= 0 && k == "Length" {
 			continue
 		}
 		writeName(b, k)
-		b.WriteByte(' ')
+		b.byte(' ')
 		e.value(v, depth+1)
 	}
 	if length >= 0 {
-		fmt.Fprintf(b, "/Length %d", length)
+		b.printf("/Length %d", length)
 	}
-	b.WriteString(">>")
+	b.str(">>")
 }
 
 // writeName writes a name, escaping what may not appear in it literally.
-func writeName(b *bufio.Writer, n pdf.Name) {
-	b.WriteByte('/')
+func writeName(b sink, n pdf.Name) {
+	b.byte('/')
 	for i := 0; i < len(n); i++ {
 		c := n[i]
 		if c < 0x21 || c > 0x7e || c == '#' || isDelim(c) {
-			fmt.Fprintf(b, "#%02X", c)
+			b.printf("#%02X", c)
 			continue
 		}
-		b.WriteByte(c)
+		b.byte(c)
 	}
 }
 
@@ -199,20 +209,20 @@ func isDelim(c byte) bool {
 
 // writeString writes a literal string. Parentheses and backslashes are
 // escaped, and line ends, which a reader would normalise.
-func writeString(b *bufio.Writer, s []byte) {
-	b.WriteByte('(')
+func writeString(b sink, s []byte) {
+	b.byte('(')
 	for _, c := range s {
 		switch c {
 		case '(', ')', '\\':
-			b.WriteByte('\\')
-			b.WriteByte(c)
+			b.byte('\\')
+			b.byte(c)
 		case '\r':
-			b.WriteString(`\r`)
+			b.str(`\r`)
 		case '\n':
-			b.WriteString(`\n`)
+			b.str(`\n`)
 		default:
-			b.WriteByte(c)
+			b.byte(c)
 		}
 	}
-	b.WriteByte(')')
+	b.byte(')')
 }

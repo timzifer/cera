@@ -201,11 +201,14 @@ func TestDropCrypt(t *testing.T) {
 
 func TestEscapes(t *testing.T) {
 	var out bytes.Buffer
-	b := bufio.NewWriter(&out)
+	bw := bufio.NewWriter(&out)
+	b := sink{bw}
 	writeName(b, "A B#(c)/é")
-	b.WriteByte(' ')
+	b.byte(' ')
 	writeString(b, []byte("a(b)\\c\r\nd"))
-	b.Flush()
+	if err := bw.Flush(); err != nil {
+		t.Fatal(err)
+	}
 	const want = `/A#20B#23#28c#29#2F#C3#A9 (a\(b\)\\c\r\nd)`
 	if got := out.String(); got != want {
 		t.Fatalf("got %s, want %s", got, want)
