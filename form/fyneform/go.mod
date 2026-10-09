@@ -1,6 +1,6 @@
 module github.com/timzifer/cera/form/fyneform
 
-go 1.26.4
+go 1.27.1
 
 require (
 	fyne.io/fyne/v2 v2.8.1
@@ -16,10 +16,10 @@ require (
 	github.com/fyne-io/gl-js v0.2.1-0.20260315212741-029c47fd27e8 // indirect
 	github.com/fyne-io/oksvg v0.2.0 // indirect
 	github.com/go-gl/gl v0.0.0-20260331235117-4566fea9a276 // indirect
-	github.com/go-images/jpeg v0.2.0 // indirect
-	github.com/go-images/jpeg2000 v0.13.2 // indirect
-	github.com/go-opentype/fonts v0.10.0 // indirect
-	github.com/go-opentype/opentype v0.13.0 // indirect
+	github.com/go-images/jpeg v0.3.0 // indirect
+	github.com/go-images/jpeg2000 v0.13.3 // indirect
+	github.com/go-opentype/fonts v0.12.0 // indirect
+	github.com/go-opentype/opentype v0.15.0 // indirect
 	github.com/go-text/render v0.2.1 // indirect
 	github.com/go-text/typesetting v0.3.4 // indirect
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect
@@ -37,8 +37,8 @@ require (
 	github.com/yuin/goldmark v1.8.2 // indirect
 	golang.org/x/image v0.24.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
