@@ -164,13 +164,18 @@ func (e *Editor) check(i int) error {
 // their objects, deleted pages and what hung on them alone are freed, and
 // imported pages are copied in. An unchanged document is written as it
 // is. It returns [ErrNoUpdate] for an editor made with [NewEditor], for a
-// document that needed a repair and for an encrypted one. The editor may
+// document that needed a repair and for an encrypted one, and
+// [ErrCertified] for changes a certification signature does not allow:
+// any with DocMDP permissions 1, changes of the pages with 2 and 3. The editor may
 // be updated again. Nothing is written when Update fails, but for an error
 // of w itself.
 func (e *Editor) Update(w io.Writer) (err error) {
 	defer recoverPanic(&err)
 	if e.base == nil {
 		return fmt.Errorf("%w: %v", ErrNoUpdate, pdfedit.ErrNoBase)
+	}
+	if sg := e.base.signing(); sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged()) || sg.mdp > 1 && e.pagesChanged() {
+		return ErrCertified
 	}
 	err = pdfedit.Update(w, e.plan())
 	switch {
@@ -197,13 +202,18 @@ func (e *Editor) plan() pdfedit.Doc {
 
 // Save writes the result to w as a new file, which is never encrypted: an
 // encrypted document is written decrypted when its permissions allow
-// reassembling it. The editor may be saved again. Nothing is written when
-// Save fails, but for an error of w itself.
+// reassembling it. A signed document is refused with [ErrSigned]: a new
+// file invalidates its signatures, and [Editor.Update] keeps them. The
+// editor may be saved again. Nothing is written when Save fails, but for
+// an error of w itself.
 func (e *Editor) Save(w io.Writer) (err error) {
 	defer recoverPanic(&err)
 	doc := e.plan()
 	if doc.Base != nil && !pdfedit.MayAssemble(doc.Base) {
 		return ErrNoAssembly
+	}
+	if e.base != nil && e.base.signing().signed {
+		return ErrSigned
 	}
 	if err := pdfedit.Write(w, doc); err != nil {
 		return fmt.Errorf("cera: %w", err)

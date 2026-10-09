@@ -485,6 +485,11 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 		if err != nil {
 			return pdf.Dict{}, err
 		}
+		if r, ok := x.d.Trailer().Get("Root").Ref(); ok {
+			if p, ok := x.obj(r).Dict(); ok && x.obj(r).Kind() == pdf.KindDict {
+				cat = p // patched
+			}
+		}
 		for k, v := range cat.All() {
 			switch k {
 			case "Type", "Pages", "OCProperties":
