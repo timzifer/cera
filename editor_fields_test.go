@@ -189,7 +189,7 @@ func TestSetFieldsErrors(t *testing.T) {
 
 func TestEncodeText(t *testing.T) {
 	// ESC is left out: in a text string it starts a language mark.
-	for _, s := range []string{"", "plain", "Zoë €", "漢字", "þÿx", "ï»¿x", "­"} {
+	for _, s := range []string{"", "plain", "Zoë €", "漢字", "þÿx", "ï»¿x", "\u00ad"} {
 		got := textString(pdf.String(encodeText(s)))
 		if got != s {
 			t.Errorf("%q: read back %q (%x)", s, got, encodeText(s))
