@@ -26,4 +26,3 @@ func ExampleExtract() {
 		log.Fatal(err)
 	}
 }
-
