@@ -191,7 +191,7 @@ func (e *Editor) plan() pdfedit.Doc {
 	for i, p := range e.pages {
 		doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own}
 	}
-	doc.Patches, doc.NeedAppearances = e.fieldPatches()
+	doc.Patches, doc.Objects = e.fieldPatches()
 	return doc
 }
 

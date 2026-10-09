@@ -10,6 +10,7 @@ import (
 
 	"github.com/timzifer/cera/internal/pdf"
 	"github.com/timzifer/cera/internal/pdfedit"
+	"github.com/timzifer/cera/internal/pdfwrite"
 )
 
 // Saving form values (ADR 0013, PDF 2.0, 12.7.4). A value is written on
@@ -24,10 +25,12 @@ import (
 //     and for a list box the indices of the options (/I); the text of an
 //     editable combo box as a string.
 //
-// Until cera writes appearance streams for new values (#93), the form is
-// marked /NeedAppearances when a text or choice changes, so viewers make
-// them; check boxes and radio buttons switch between the appearances they
-// have.
+// Every widget of a text or choice field that changes gets an appearance
+// stream of the new value (12.7.4.3), made as cera draws it: a form
+// XObject in the widget's box, turned by /MK /R, with the /DA font of the
+// form, or Helvetica when that cannot show the text. It replaces the
+// widget's /AP. Check boxes and radio buttons switch between the
+// appearances they have; one is made for a state they lack.
 
 // SetFields records the values of the fields of state that differ from
 // what the document holds, to be written by [Editor.Save] and
@@ -57,9 +60,15 @@ func (e *Editor) SetFields(state *FormState) error {
 
 // fieldPatches encodes the recorded values as changes of the edited
 // document's objects, and reports whether viewers must make appearances.
-func (e *Editor) fieldPatches() ([]pdfedit.Patch, bool) {
+func (e *Editor) fieldPatches() ([]pdfedit.Patch, []pdf.Object) {
 	var out []pdfedit.Patch
-	needAP := false
+	// Object 0 is Helvetica, written only when an appearance uses it.
+	objs := []pdf.Object{pdf.NewDict(
+		pdf.Entry{Key: "Type", Val: pdf.Name("Font").Object()},
+		pdf.Entry{Key: "Subtype", Val: pdf.Name("Type1").Object()},
+		pdf.Entry{Key: "BaseFont", Val: pdf.Name("Helvetica").Object()},
+		pdf.Entry{Key: "Encoding", Val: pdf.Name("WinAnsiEncoding").Object()},
+	).Object()}
 	fields := make([]*Field, 0, len(e.fields))
 	for f := range e.fields {
 		fields = append(fields, f)
@@ -75,7 +84,6 @@ func (e *Editor) fieldPatches() ([]pdfedit.Patch, bool) {
 		case FieldText:
 			p.Set = []pdf.Entry{{Key: "V", Val: pdf.String(encodeText(v.Text()))}}
 			p.Del = []pdf.Name{"RV"}
-			needAP = true
 		case FieldCheckBox, FieldRadio:
 			state := v.State()
 			if state == "" {
@@ -84,20 +92,87 @@ func (e *Editor) fieldPatches() ([]pdfedit.Patch, bool) {
 			p.Set = []pdf.Entry{{Key: "V", Val: pdf.Name(state).Object()}}
 		case FieldComboBox, FieldListBox:
 			p.Set, p.Del = choiceEntries(f, v)
-			needAP = true
 		}
 		out = append(out, p)
-		if f.Type == FieldCheckBox || f.Type == FieldRadio {
-			for _, w := range f.Widgets {
-				as := pdf.Name("Off")
-				if w.OnState == v.State() {
-					as = pdf.Name(w.OnState)
-				}
-				out = append(out, pdfedit.Patch{Ref: w.ref, Set: []pdf.Entry{{Key: "AS", Val: as.Object()}}})
+		for _, w := range f.Widgets {
+			if wp, ok := e.widgetPatch(w, v, &objs); ok {
+				out = append(out, wp)
 			}
 		}
 	}
-	return out, needAP
+	return out, objs
+}
+
+// widgetPatch returns the change of widget w for the value v of its field:
+// the state it shows, or a new appearance.
+func (e *Editor) widgetPatch(w *Widget, v Value, objs *[]pdf.Object) (pdfedit.Patch, bool) {
+	p := pdfedit.Patch{Ref: w.ref}
+	switch w.Field.Type {
+	case FieldCheckBox, FieldRadio:
+		as := pdf.Name("Off")
+		if w.OnState == v.State() {
+			as = pdf.Name(w.OnState)
+		}
+		p.Set = []pdf.Entry{{Key: "AS", Val: as.Object()}}
+		d := e.base
+		ap := d.dict(w.dict.Get("AP"))
+		n := d.dict(ap.Get("N"))
+		if as == "Off" || n.Has(as) {
+			return p, true
+		}
+		// A state without an appearance: one is made, the others kept.
+		ref, ok := e.appearance(w, v, objs)
+		if !ok {
+			return p, true
+		}
+		entries := []pdf.Entry{{Key: as, Val: ref.Object()}}
+		for k, s := range n.All() {
+			entries = append(entries, pdf.Entry{Key: k, Val: s})
+		}
+		apEntries := []pdf.Entry{{Key: "N", Val: pdf.NewDict(entries...).Object()}}
+		for k, s := range ap.All() {
+			if k != "N" {
+				apEntries = append(apEntries, pdf.Entry{Key: k, Val: s})
+			}
+		}
+		p.Set = append(p.Set, pdf.Entry{Key: "AP", Val: pdf.NewDict(apEntries...).Object()})
+		return p, true
+	case FieldText, FieldComboBox, FieldListBox:
+		ref, ok := e.appearance(w, v, objs)
+		if !ok {
+			return p, false
+		}
+		p.Set = []pdf.Entry{{Key: "AP", Val: pdf.NewDict(pdf.Entry{Key: "N", Val: ref.Object()}).Object()}}
+		return p, true
+	}
+	return p, false
+}
+
+// appearance makes the appearance stream of w showing v, a new object.
+func (e *Editor) appearance(w *Widget, v Value, objs *[]pdf.Object) (pdf.Ref, bool) {
+	_, W, H := widgetMatrix(w)
+	if W <= 0 || H <= 0 {
+		return pdf.Ref{}, false
+	}
+	content, res := e.base.widgetContent(nil, w, v, W, H, pdfedit.NewRef(0).Object())
+	turn := map[int]pdf.Array{
+		0:   {pdf.Integer(1), pdf.Integer(0), pdf.Integer(0), pdf.Integer(1), pdf.Integer(0), pdf.Integer(0)},
+		90:  {pdf.Integer(0), pdf.Integer(1), pdf.Integer(-1), pdf.Integer(0), pdf.Integer(0), pdf.Integer(0)},
+		180: {pdf.Integer(-1), pdf.Integer(0), pdf.Integer(0), pdf.Integer(-1), pdf.Integer(0), pdf.Integer(0)},
+		270: {pdf.Integer(0), pdf.Integer(-1), pdf.Integer(1), pdf.Integer(0), pdf.Integer(0), pdf.Integer(0)},
+	}[w.Rotation]
+	if res.IsZero() {
+		res = pdf.NewDict()
+	}
+	dict := pdf.NewDict(
+		pdf.Entry{Key: "Type", Val: pdf.Name("XObject").Object()},
+		pdf.Entry{Key: "Subtype", Val: pdf.Name("Form").Object()},
+		pdf.Entry{Key: "BBox", Val: pdf.Array{pdf.Integer(0), pdf.Integer(0), pdf.Real(W), pdf.Real(H)}.Object()},
+		pdf.Entry{Key: "Matrix", Val: turn.Object()},
+		pdf.Entry{Key: "Resources", Val: res.Object()},
+	)
+	*objs = append(*objs, pdfwrite.Flate(dict, content).Object())
+	return pdfedit.NewRef(len(*objs) - 1), true
 }
 
 // choiceEntries encodes the value of a choice field: /V and /I set or

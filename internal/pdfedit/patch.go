@@ -1,6 +1,8 @@
 package pdfedit
 
 import (
+	"math"
+
 	"github.com/timzifer/cera/internal/pdf"
 )
 
@@ -13,49 +15,31 @@ type Patch struct {
 	Del []pdf.Name
 }
 
-// patches applies the patches of doc, and /NeedAppearances, to the
-// dictionaries of the edited document they change. It returns them by
-// object number, and the interactive form to write into the catalogue
-// when it is a direct object there and changes.
-func patches(doc Doc) (map[int32]pdf.Object, pdf.Object) {
+// newGen marks the references of patches to Doc.Objects. No file has
+// it: the reader never makes a negative generation but -1.
+const newGen = math.MinInt32
+
+// NewRef returns the reference that stands for Doc.Objects[i] in patches
+// and in other new objects.
+func NewRef(i int) pdf.Ref { return pdf.Ref{Num: int32(i), Gen: newGen} }
+
+// patches applies the patches of doc to the dictionaries of the edited
+// document they change, and returns them by object number.
+func patches(doc Doc) map[int32]pdf.Object {
 	d := doc.Base
 	out := map[int32]pdf.Object{}
-	dict := func(r pdf.Ref) (pdf.Dict, bool) {
-		if o, ok := out[r.Num]; ok {
-			return o.Dict()
-		}
-		o, err := d.Get(r)
-		if err != nil {
-			return pdf.Dict{}, false
-		}
-		dd, ok := o.Dict()
-		return dd, ok && o.Kind() == pdf.KindDict
-	}
 	for _, p := range doc.Patches {
-		dd, ok := dict(p.Ref)
-		if !ok {
+		var dd pdf.Dict
+		if o, ok := out[p.Ref.Num]; ok {
+			dd, _ = o.Dict()
+		} else if o, err := d.Get(p.Ref); err == nil && o.Kind() == pdf.KindDict {
+			dd, _ = o.Dict()
+		} else {
 			continue
 		}
 		out[p.Ref.Num] = apply(dd, p).Object()
 	}
-	if !doc.NeedAppearances {
-		return out, pdf.Null
-	}
-	cat, err := d.Catalog()
-	if err != nil {
-		return out, pdf.Null
-	}
-	set := Patch{Set: []pdf.Entry{{Key: "NeedAppearances", Val: pdf.Boolean(true)}}}
-	if r, ok := cat.Get("AcroForm").Ref(); ok {
-		if dd, ok := dict(r); ok {
-			out[r.Num] = apply(dd, set).Object()
-		}
-		return out, pdf.Null
-	}
-	if dd, ok := cat.Get("AcroForm").Dict(); ok {
-		return out, apply(dd, set).Object()
-	}
-	return out, pdf.Null
+	return out
 }
 
 // apply returns d changed by p.

@@ -180,9 +180,11 @@ meanwhile.
 `SetFields` records the values of a `FormState` of the edited document
 that differ from what the file holds: a text as a text string (its rich
 text value removed), a button state as a name with every widget's `/AS`,
-a selection as export values with `/I` for list boxes. Until cera writes
-appearance streams for them, the form is marked `/NeedAppearances` when a
-text or choice changes, so viewers draw the new values.
+a selection as export values with `/I` for list boxes. Every widget of a
+changed text or choice field gets an appearance stream of its new value,
+made as cera draws it (the form's `/DA` font, or Helvetica when that cannot
+show the text), so every viewer shows the values without regenerating
+them; check boxes and radio buttons switch between their appearances.
 
 `Update` writes the edited file unchanged and appends only what changed
 (PDF 2.0, 7.5.6), so signatures over the original bytes stay valid: the
