@@ -16,7 +16,7 @@ err = page.Render(ctx, dst, cera.RenderOptions{
 })
 page.Release() // drop the cached display list when the page leaves the view
 
-text, err := page.Text(ctx) // characters with quads, including invisible text
+text, err := page.Text(ctx) // characters, lines and blocks in reading order
 fmt.Println(text.String())
 ```
 
@@ -132,6 +132,17 @@ marked-content sequences (tag, MCID, `/ActualText`, `/Alt`, `/Lang`).
 box, its baseline direction and advance, its MCID and whether it is an
 artifact. Its coordinates are points of the displayed page, y down, after
 `/Rotate` and `/UserUnit`; `Page.DisplayMatrix` maps user space to them.
+
+`Page.Text` lays the characters out for reading: `PageText.Chars` are in
+reading order, `Lines` and `Blocks` index into them. It drops the copies
+fake bold draws on top of a character, splits ligatures (also U+FB00 to
+U+FB06) into one character each, puts `/ActualText` on the first glyph it
+replaces, joins text shown out of order on one baseline, and orders blocks
+by the structure tree of a tagged PDF, the rest by an XY cut: columns,
+rows, text in other directions last. `TextLine.Hyphenated` marks a word
+broken across lines. `String` separates lines by a line break and blocks
+by an empty line. `Page.TextWith` selects layers, annotations and form
+values, and can ignore the structure tree.
 
 ## Metadata
 
