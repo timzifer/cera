@@ -721,8 +721,9 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.R
 		vis = &noLayers
 	}
 	// A cheap page drawn in one pass touches few of its pixels after the
-	// fill; a large one is filled past the caches.
-	stream := whole && 4*region.Dx()*region.Dy() >= streamFill && l.workersFor(region) == 1
+	// fill; a large one is filled past the caches. A list drawn over
+	// another (a widget showing a form value) fills nothing.
+	stream := fill && whole && 4*region.Dx()*region.Dy() >= streamFill && l.workersFor(region) == 1
 	*j = job{l: l, dst: dst, region: region, bg: bg, fill: fill, stream: stream, band: band, lim: lim, b0: b0, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf, told: j.told}
 	if whole {
 		j.idx, j.buf = l.regionItems(j.buf, b0, b1)

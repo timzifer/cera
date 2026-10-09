@@ -2,6 +2,9 @@ package cera
 
 import (
 	"bytes"
+	"context"
+	"image"
+	"image/color"
 	"testing"
 
 	"github.com/timzifer/cera/internal/pdf"
@@ -13,9 +16,11 @@ func fieldsFile(objStm bool) []byte {
 	ap := "/AP <</N <</%s 30 0 R /Off 31 0 R>>>>"
 	return testpdf.File{
 		Objs: map[int]string{
-			1:  "<</Type /Catalog /Pages 2 0 R /AcroForm <</Fields [10 0 R 11 0 R 12 0 R 13 0 R 14 0 R] /DA (/Helv 10 Tf 0 g) /DR <</Font <</Helv 20 0 R>>>>>>>>",
+			1:  "<</Type /Catalog /Pages 2 0 R /AcroForm <</Fields [10 0 R 11 0 R 12 0 R 13 0 R 14 0 R 17 0 R 18 0 R] /DA (/Helv 10 Tf 0 g) /DR <</Font <</Helv 20 0 R>>>>>>>>",
 			2:  "<</Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 200]>>",
-			3:  "<</Type /Page /Parent 2 0 R /Annots [10 0 R 11 0 R 15 0 R 16 0 R 13 0 R 14 0 R]>>",
+			3:  "<</Type /Page /Parent 2 0 R /Annots [10 0 R 11 0 R 15 0 R 16 0 R 13 0 R 14 0 R 17 0 R 18 0 R]>>",
+			17: "<</Type /Annot /Subtype /Widget /FT /Tx /T (turned) /Rect [260 100 290 190] /MK <</R 90 /BG [0.9 0.9 1] /BC [0 0 1]>> /BS <</W 1>>>>",
+			18: "<</Type /Annot /Subtype /Widget /FT /Btn /T (plain) /Rect [70 130 90 150] /MK <</BC [0 0 0]>>>>",
 			10: "<</Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (old) /RV (<p>old</p>) /Rect [10 160 140 180]>>",
 			11: "<</Type /Annot /Subtype /Widget /FT /Btn /T (agree) /V /Off /AS /Off /Rect [10 130 30 150] " + sprintf(ap, "Yes") + ">>",
 			12: "<</FT /Btn /Ff 32768 /T (color) /V /red /Kids [15 0 R 16 0 R]>>",
@@ -30,6 +35,24 @@ func fieldsFile(objStm bool) []byte {
 		Trailer: "/Root 1 0 R",
 		ObjStm:  objStm,
 	}.Bytes()
+}
+
+// renderState renders the first page of d showing state, or the values
+// the file holds when state is nil.
+func renderState(t *testing.T, d *Document, state *FormState) *image.RGBA {
+	t.Helper()
+	p, err := d.Page(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := image.NewRGBA(p.Bounds(2))
+	err = p.Render(context.Background(), dst, RenderOptions{
+		Scale: 2, Background: color.RGBA{255, 255, 255, 255}, Workers: 1, Form: state,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dst
 }
 
 func sprintf(f, s string) string { return string(bytes.ReplaceAll([]byte(f), []byte("%s"), []byte(s))) }
@@ -56,11 +79,13 @@ func TestSetFields(t *testing.T) {
 		values map[string]Value
 	}{
 		{"pdfdoc", map[string]Value{
-			"name":  TextValue("Zoë (€) \\ x"),
-			"agree": StateValue("Yes"),
-			"color": StateValue("blue"),
-			"city":  ChoiceValue(1),
-			"langs": ChoiceValue(0, 2),
+			"name":   TextValue("Zoë (€) \\ x"),
+			"agree":  StateValue("Yes"),
+			"color":  StateValue("blue"),
+			"city":   ChoiceValue(1),
+			"langs":  ChoiceValue(0, 2),
+			"turned": TextValue("up"),
+			"plain":  StateValue("Yes"),
 		}},
 		{"unicode", map[string]Value{
 			"name":  TextValue("漢字 ✓"),
@@ -93,8 +118,17 @@ func TestSetFields(t *testing.T) {
 							t.Errorf("%s: saved %+v, want %+v", name, got, want)
 						}
 					}
-					if !form.NeedAppearances {
-						t.Error("/NeedAppearances is not set")
+					if form.NeedAppearances {
+						t.Error("/NeedAppearances is set")
+					}
+					// The saved appearances look as cera draws the values.
+					want := renderState(t, doc, fill(t, doc, tt.values))
+					got := renderState(t, editOpen(t, out), nil)
+					if !bytes.Equal(want.Pix, got.Pix) {
+						t.Error("the saved file renders unlike the filled form")
+					}
+					if old := renderState(t, doc, nil); bytes.Equal(old.Pix, got.Pix) {
+						t.Error("the saved file renders like the old values")
 					}
 					d, _ := pdf.Open(out)
 					get := func(num int32) pdf.Dict {

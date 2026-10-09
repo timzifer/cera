@@ -30,10 +30,10 @@ type Page struct {
 type Doc struct {
 	Base  *pdf.Document
 	Pages []Page
-	// Patches change objects of the edited document, and
-	// NeedAppearances sets the flag of its interactive form.
-	Patches         []Patch
-	NeedAppearances bool
+	// Patches change objects of the edited document. Objects are new
+	// ones, in its space; patches and they refer to them by NewRef.
+	Patches []Patch
+	Objects []pdf.Object
 }
 
 // MayAssemble reports whether the permissions of d allow reassembling it
@@ -84,7 +84,7 @@ func Update(w io.Writer, doc Doc) error {
 	if len(doc.Pages) == 0 {
 		return errors.New("the document has no pages")
 	}
-	if unchanged(doc) && len(doc.Patches) == 0 && !doc.NeedAppearances {
+	if unchanged(doc) && len(doc.Patches) == 0 {
 		return base.WriteSource(w)
 	}
 	b := newBuilder(doc, &ub)
@@ -115,10 +115,10 @@ type builder struct {
 	// upd describes the edited file for an incremental update; nil when
 	// a new file is written.
 	upd *pdf.UpdateBase
-	// patched holds the changed objects of the edited document, form the
-	// changed interactive form when it is direct in the catalogue.
+	// patched holds the changed objects of the edited document, newOut
+	// the output numbers of its new objects once referred to.
 	patched map[int32]pdf.Object
-	form    pdf.Object
+	newOut  map[int32]pdfwrite.Ref
 
 	// sources are the sources of the pages, the base first, then in the
 	// order their first page comes, by document and whether their pages
@@ -164,7 +164,7 @@ func newBuilder(doc Doc, upd *pdf.UpdateBase) *builder {
 		})
 	}
 	if doc.Base != nil {
-		b.patched, b.form = patches(doc)
+		b.patched, b.newOut = patches(doc), map[int32]pdfwrite.Ref{}
 		b.source(doc.Base, true)
 	}
 	for _, p := range doc.Pages {
@@ -218,6 +218,9 @@ func (b *builder) source(d *pdf.Document, own bool) *source {
 // null: a page that is not in the output, a page tree node, a missing
 // object. The edited document's catalogue is the output's.
 func (x *source) ref(r pdf.Ref) pdfwrite.Ref {
+	if r.Gen == newGen && x.own {
+		return x.newObject(r.Num)
+	}
 	if r.Num <= 0 || x.skip[r.Num] {
 		return 0
 	}
@@ -486,10 +489,6 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 			switch k {
 			case "Type", "Pages", "OCProperties":
 				continue
-			case "AcroForm":
-				if !b.form.IsNull() {
-					v = b.form
-				}
 			}
 			entries = append(entries, pdf.Entry{Key: k, Val: x.im.Map(v)})
 		}
@@ -700,8 +699,7 @@ func (x *source) setPatched() {
 }
 
 // buildPatches makes an update of a document whose pages are unchanged:
-// the patched objects alone, and the catalogue when the interactive form
-// in it changes.
+// the patched objects and the new ones alone.
 func (b *builder) buildPatches() error {
 	x := b.sources[0]
 	r, ok := x.d.Trailer().Get("Root").Ref()
@@ -713,12 +711,21 @@ func (b *builder) buildPatches() error {
 		b.info = x.ref(info)
 	}
 	x.setPatched()
-	if !b.form.IsNull() {
-		cat, err := x.d.Catalog()
-		if err != nil {
-			return err
-		}
-		b.w.Set(b.catalog, x.im.Map(cat.With("AcroForm", b.form).Object()))
-	}
 	return nil
+}
+
+// newObject returns the output number of new object i, numbering it when
+// it is first referred to: new objects nothing refers to are not written.
+func (x *source) newObject(i int32) pdfwrite.Ref {
+	objs := x.b.doc.Objects
+	if i < 0 || int(i) >= len(objs) {
+		return 0
+	}
+	if n, ok := x.b.newOut[i]; ok {
+		return n
+	}
+	n := x.b.w.Alloc()
+	x.b.newOut[i] = n
+	x.b.w.Set(n, x.im.Map(objs[i]))
+	return n
 }

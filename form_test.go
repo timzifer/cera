@@ -511,3 +511,23 @@ func TestFormLayerTabOrder(t *testing.T) {
 		t.Errorf("tab order %q", got)
 	}
 }
+
+// TestFormRenderValuesLarge draws a changed value over a page large enough
+// to be filled in one streaming pass: the widget's list, drawn over the
+// page, must not fill it again.
+func TestFormRenderValuesLarge(t *testing.T) {
+	_, p, f := openForm(t, sampleForm("/MediaBox [0 0 1836 2376]"))
+	s := f.NewState()
+	if err := s.SetValue(f.Field("name"), TextValue("Other")); err != nil {
+		t.Fatal(err)
+	}
+	const scale = 0.5 // 918×1188: past streamFill
+	img := image.NewRGBA(p.Bounds(scale))
+	if err := p.Render(context.Background(), img, RenderOptions{Scale: scale, Background: white, Form: s, Workers: 1}); err != nil {
+		t.Fatal(err)
+	}
+	y := func(v float64) int { return int((2376 - v) * scale) }
+	assertPixel(t, img, int(130*scale), y(70), green)  // the check box, page content
+	assertPixel(t, img, 600, 100, white)               // the background
+	assertPixel(t, img, int(100*scale), y(70), yellow) // the changed field
+}

@@ -137,8 +137,7 @@ func (f *Font) encoding() map[rune]byte {
 
 // genFont returns the font for showing the texts of w and the resources
 // that name it: the /DA font if it can encode all of them, else Helvetica.
-func (in *interp) genFont(w *Widget, texts []string) (encoder, pdf.Dict) {
-	d := in.doc
+func (d *Document) genFont(w *Widget, texts []string, helv pdf.Object) (encoder, pdf.Dict) {
 	form := w.Field.form
 	if o := d.dict(form.dr.Get("Font")).Get(w.fontRes); !o.IsNull() && w.fontRes != "" {
 		if f := d.font(o); f != nil && !f.composite() && !f.Type3() {
@@ -156,7 +155,7 @@ func (in *interp) genFont(w *Widget, texts []string) (encoder, pdf.Dict) {
 		}
 	}
 	e := encoder{d.helvetica(), "CeraHelv"}
-	return e, fontResources(e.name, helvRef.Object())
+	return e, fontResources(e.name, helv)
 }
 
 // fontResources is a resource dictionary naming one font.
@@ -183,12 +182,9 @@ func widgetMatrix(w *Widget) (m Matrix, W, H float64) {
 // List box selections are highlighted in this colour, as in Acrobat.
 var selectionColor = []float64{0.6, 0.75862, 0.86275}
 
-// generateWidget appends the appearance of w showing v to b, and returns
-// the resources it needs.
+// generateWidget appends the appearance of w showing v to b, in default
+// user space, and returns the resources it needs.
 func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, pdf.Dict) {
-	d := in.doc
-	f := w.Field
-	wd := w.dict
 	cw := csw(b)
 	m, W, H := widgetMatrix(w)
 	if W <= 0 || H <= 0 {
@@ -199,6 +195,18 @@ func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, pdf.Dict
 		cw.num(x)
 	}
 	cw.op("cm")
+	cw, res := in.doc.widgetContent(cw, w, v, W, H, helvRef.Object())
+	cw.op("Q")
+	return cw, res
+}
+
+// widgetContent appends the appearance of w showing v to cw, drawn in the
+// widget's box [0 W]×[0 H] with its content upright, and returns the
+// resources it needs. helv stands for Helvetica in them, the font used
+// when the form's font cannot show the text.
+func (d *Document) widgetContent(cw csw, w *Widget, v Value, W, H float64, helv pdf.Object) (csw, pdf.Dict) {
+	f := w.Field
+	wd := w.dict
 
 	mk := d.dict(wd.Get("MK"))
 	bg, _ := d.annotColor(mk.Get("BG"))
@@ -259,7 +267,6 @@ func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, pdf.Dict
 	var res pdf.Dict
 	inner := Rect{inset, inset, W - inset, H - inset}
 	if inner.Dx() <= 0 || inner.Dy() <= 0 {
-		cw.op("Q")
 		return cw, pdf.Dict{}
 	}
 	tc := parseDA(f.da).comps
@@ -296,7 +303,7 @@ func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, pdf.Dict
 		if !multi {
 			text = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(text)
 		}
-		e, r := in.genFont(w, []string{text})
+		e, r := d.genFont(w, []string{text}, helv)
 		res = r
 		clipBox(&cw, inner)
 		switch {
@@ -313,7 +320,7 @@ func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, pdf.Dict
 		if v.kind == ValueChoice && len(v.sel) > 0 {
 			text = f.Options[v.sel[0]].Text
 		}
-		e, r := in.genFont(w, []string{text})
+		e, r := d.genFont(w, []string{text}, helv)
 		res = r
 		clipBox(&cw, inner)
 		textLine(&cw, e, tc, text, inner, a.FontSize, a.Align)
@@ -323,7 +330,7 @@ func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, pdf.Dict
 		for i, o := range f.Options {
 			texts[i] = o.Text
 		}
-		e, r := in.genFont(w, texts)
+		e, r := d.genFont(w, texts, helv)
 		res = r
 		clipBox(&cw, inner)
 		listRows(&cw, e, tc, f, v, inner, a.FontSize, a.Align)
@@ -332,12 +339,11 @@ func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, pdf.Dict
 		if a.Caption == "" {
 			break
 		}
-		e, r := in.genFont(w, []string{a.Caption})
+		e, r := d.genFont(w, []string{a.Caption}, helv)
 		res = r
 		clipBox(&cw, inner)
 		textLine(&cw, e, tc, a.Caption, inner, a.FontSize, AlignCenter)
 	}
-	cw.op("Q")
 	return cw, res
 }
 

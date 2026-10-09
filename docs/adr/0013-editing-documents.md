@@ -66,10 +66,13 @@ e.Update(w)               // d's bytes and the changes appended (#91)
   needed a repair.
 - **The root package keeps a thin API.** The work is done in internal
   packages: `internal/pdfwrite` (objects, serialisation, cross-reference
-  sections), `internal/pdfedit` (what a saved document is made of: page
-  tree, catalogue, imported pages, links, layers), later
-  `internal/appear` and a content stream writer in `internal/content`
-  (#93). They work on `*pdf.Document` and know nothing of rendering.
+  sections) and `internal/pdfedit` (what a saved document is made of: page
+  tree, catalogue, imported pages, links, layers, patches). They work on
+  `*pdf.Document` and know nothing of rendering. Appearance streams of
+  saved form values are made by the generator the renderer uses
+  (`Document.widgetContent`), which stays in the root package: it draws
+  with the document's fonts, and moving it out would take the font layer
+  with it (#93).
 - **An editor records what is to be written**; `Save` builds the file and
   may be called again. The document an editor is based on, and documents
   pages are imported from, stay usable for rendering while it is edited.
