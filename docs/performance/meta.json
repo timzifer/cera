@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-08",
+ "generated": "2026-10-09",
  "cpu": "AMD Ryzen 7 5800H with Radeon Graphics",
  "os": "windows/amd64",
  "cores": 16,
@@ -11,9 +11,10 @@
  "corpus": "359fe26ef817",
  "files": 41,
  "versions": {
-  "cera": "cera v0.5.0-35-g161fe64",
-  "cera-v8-wasm": "cera v0.5.0-35-g161fe64",
-  "cera-wasm": "cera v0.5.0-35-g161fe64",
+  "cera": "cera v0.6.0-2-g8e59a7f",
+  "cera-reuse": "cera v0.6.0-2-g8e59a7f",
+  "cera-v8-wasm": "cera v0.6.0-2-g8e59a7f",
+  "cera-wasm": "cera v0.6.0-2-g8e59a7f",
   "hayro": "hayro 0.8.0",
   "mupdf": "mupdf 1.28.2 (PyMuPDF 1.28.2)",
   "pdfium": "pdfium 156.0.8076.0 (pypdfium2 5.14.0)",
