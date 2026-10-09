@@ -30,6 +30,10 @@ type Page struct {
 type Doc struct {
 	Base  *pdf.Document
 	Pages []Page
+	// Patches change objects of the edited document, and
+	// NeedAppearances sets the flag of its interactive form.
+	Patches         []Patch
+	NeedAppearances bool
 }
 
 // MayAssemble reports whether the permissions of d allow reassembling it
@@ -80,7 +84,7 @@ func Update(w io.Writer, doc Doc) error {
 	if len(doc.Pages) == 0 {
 		return errors.New("the document has no pages")
 	}
-	if unchanged(doc) {
+	if unchanged(doc) && len(doc.Patches) == 0 && !doc.NeedAppearances {
 		return base.WriteSource(w)
 	}
 	b := newBuilder(doc, &ub)
@@ -111,6 +115,10 @@ type builder struct {
 	// upd describes the edited file for an incremental update; nil when
 	// a new file is written.
 	upd *pdf.UpdateBase
+	// patched holds the changed objects of the edited document, form the
+	// changed interactive form when it is direct in the catalogue.
+	patched map[int32]pdf.Object
+	form    pdf.Object
 
 	// sources are the sources of the pages, the base first, then in the
 	// order their first page comes, by document and whether their pages
@@ -156,6 +164,7 @@ func newBuilder(doc Doc, upd *pdf.UpdateBase) *builder {
 		})
 	}
 	if doc.Base != nil {
+		b.patched, b.form = patches(doc)
 		b.source(doc.Base, true)
 	}
 	for _, p := range doc.Pages {
@@ -181,6 +190,7 @@ func (b *builder) source(d *pdf.Document, own bool) *source {
 	}
 	x.im.MapRef = x.ref
 	if own {
+		x.im.Patch = b.patched
 		// Fields of deleted pages leave holes in the lists of fields.
 		x.im.Compact = map[pdf.Name]bool{"Fields": true, "Kids": true, "CO": true, "Annots": true}
 	} else {
@@ -254,6 +264,9 @@ func (x *source) ref(r pdf.Ref) pdfwrite.Ref {
 
 // build makes the catalogue, the page tree and the pages.
 func (b *builder) build() error {
+	if b.upd != nil && unchanged(b.doc) {
+		return b.buildPatches()
+	}
 	if b.upd != nil {
 		r, ok := b.doc.Base.Trailer().Get("Root").Ref()
 		if !ok {
@@ -283,6 +296,7 @@ func (b *builder) build() error {
 		x := b.bySrc[srcKey{b.doc.Base, true}]
 		x.pruneDeleted()
 		if b.upd != nil {
+			x.setPatched()
 			x.freeDeleted()
 		}
 	}
@@ -340,7 +354,7 @@ func (x *source) freeDeleted() {
 	}
 	cat, _ := x.d.Catalog()
 	if r, ok := cat.Get("AcroForm").Ref(); ok {
-		x.b.w.Set(pdfwrite.Ref(r.Num), x.im.Map(x.d.Resolve(r.Object())))
+		x.b.w.Set(pdfwrite.Ref(r.Num), x.im.Map(x.obj(r)))
 	}
 	form, _ := x.d.GetDict(cat, "AcroForm")
 	fields, _ := x.d.Resolve(form.Get("Fields")).Array()
@@ -362,7 +376,7 @@ func (x *source) freeDeleted() {
 			walk(k)
 		}
 		if lost {
-			x.b.w.Set(pdfwrite.Ref(r.Num), x.im.Map(node.Object()))
+			x.b.w.Set(pdfwrite.Ref(r.Num), x.im.Map(x.obj(r)))
 		}
 	}
 	for _, f := range fields {
@@ -472,6 +486,10 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 			switch k {
 			case "Type", "Pages", "OCProperties":
 				continue
+			case "AcroForm":
+				if !b.form.IsNull() {
+					v = b.form
+				}
 			}
 			entries = append(entries, pdf.Entry{Key: k, Val: x.im.Map(v)})
 		}
@@ -660,4 +678,47 @@ func (b *builder) ocProperties() pdf.Object {
 		pdf.Entry{Key: "OCGs", Val: ocgs.Object()},
 		pdf.Entry{Key: "D", Val: pdf.NewDict(d...).Object()},
 	).Object()
+}
+
+// obj returns object r of the edited document as it is to be written:
+// patched, or as the file has it.
+func (x *source) obj(r pdf.Ref) pdf.Object {
+	if o, ok := x.b.patched[r.Num]; ok {
+		return o
+	}
+	return x.d.Resolve(r.Object())
+}
+
+// setPatched replaces, in an update, the objects of the edited document
+// that are patched.
+func (x *source) setPatched() {
+	for num, o := range x.b.patched {
+		if !x.skip[num] {
+			x.b.w.Set(pdfwrite.Ref(num), x.im.Map(o))
+		}
+	}
+}
+
+// buildPatches makes an update of a document whose pages are unchanged:
+// the patched objects alone, and the catalogue when the interactive form
+// in it changes.
+func (b *builder) buildPatches() error {
+	x := b.sources[0]
+	r, ok := x.d.Trailer().Get("Root").Ref()
+	if !ok {
+		return ErrRepaired
+	}
+	b.catalog = pdfwrite.Ref(r.Num)
+	if info, ok := x.d.Trailer().Get("Info").Ref(); ok {
+		b.info = x.ref(info)
+	}
+	x.setPatched()
+	if !b.form.IsNull() {
+		cat, err := x.d.Catalog()
+		if err != nil {
+			return err
+		}
+		b.w.Set(b.catalog, x.im.Map(cat.With("AcroForm", b.form).Object()))
+	}
+	return nil
 }

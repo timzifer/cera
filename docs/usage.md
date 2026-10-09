@@ -156,6 +156,7 @@ err = e.ImportPages(at, other, cera.EditPage{Index: 2, Rotate: 90})
 err = e.DeletePages(3, 4)
 err = e.MovePage(from, to)
 err = e.RotatePage(i, 90)
+err = e.SetFields(state) // values of doc.Form().NewState() the user changed
 err = e.Save(w)          // a new file
 err = e.Update(w)        // the file as it was, and an incremental update
 ```
@@ -175,6 +176,13 @@ encrypted document is written decrypted when its permissions allow
 reassembling it, else `Save` and `ImportPages` return `ErrNoAssembly`.
 `Save` may be called again; documents an editor uses may be rendered
 meanwhile.
+
+`SetFields` records the values of a `FormState` of the edited document
+that differ from what the file holds: a text as a text string (its rich
+text value removed), a button state as a name with every widget's `/AS`,
+a selection as export values with `/I` for list boxes. Until cera writes
+appearance streams for them, the form is marked `/NeedAppearances` when a
+text or choice changes, so viewers draw the new values.
 
 `Update` writes the edited file unchanged and appends only what changed
 (PDF 2.0, 7.5.6), so signatures over the original bytes stay valid: the

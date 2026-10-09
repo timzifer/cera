@@ -90,6 +90,7 @@ func editCorpusFile(t *testing.T, path string) {
 		}
 	}
 
+	editCorpusFields(t, sd, data)
 	if n < 2 {
 		return
 	}
@@ -122,6 +123,76 @@ func editCorpusFile(t *testing.T, path string) {
 	}
 	for i := 1; i < min(n, 3); i++ {
 		same(ud, i, i-1)
+	}
+}
+
+// editCorpusFields fills every field of the form of d it can, writes the
+// values with Save and Update, and reads them back.
+func editCorpusFields(t *testing.T, d *Document, data []byte) {
+	form := d.Form()
+	if form == nil {
+		return
+	}
+	state := form.NewState()
+	for _, f := range form.Fields {
+		var v Value
+		switch f.Type {
+		case FieldText:
+			s := "cera ✓ €"
+			if f.MaxLen > 0 && len([]rune(s)) > f.MaxLen {
+				s = string([]rune(s)[:f.MaxLen])
+			}
+			v = TextValue(s)
+		case FieldCheckBox, FieldRadio:
+			if len(f.Widgets) == 0 {
+				continue
+			}
+			v = StateValue(f.Widgets[len(f.Widgets)-1].OnState)
+			if f.Saved.Equal(v) {
+				v = StateValue("Off")
+			}
+		case FieldComboBox, FieldListBox:
+			if len(f.Options) == 0 {
+				continue
+			}
+			v = ChoiceValue(len(f.Options) - 1)
+		default:
+			continue
+		}
+		_ = state.SetValue(f, v) // read-only fields and the like stay
+	}
+	if len(state.Changed()) == 0 {
+		return
+	}
+	check := func(what string, out []byte) {
+		of := editOpen(t, out).Form()
+		if of == nil || len(of.Fields) != len(form.Fields) {
+			t.Fatalf("%s: form %v", what, of)
+		}
+		for i, f := range form.Fields {
+			if want, got := state.Value(f), of.Fields[i].Saved; !got.Equal(want) {
+				t.Errorf("%s: field %q saved %+v, want %+v", what, f.Name, got, want)
+			}
+		}
+	}
+	e := d.Edit()
+	if err := e.SetFields(state); err != nil {
+		t.Skip(err) // a field cera cannot write
+	}
+	var out bytes.Buffer
+	if err := e.Save(&out); err == nil {
+		check("save", out.Bytes())
+	} else if !errors.Is(err, ErrNoAssembly) {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := e.Update(&out); err == nil {
+		if !bytes.HasPrefix(out.Bytes(), data) {
+			t.Fatal("the update does not start with the file")
+		}
+		check("update", out.Bytes())
+	} else if !errors.Is(err, ErrNoUpdate) {
+		t.Fatal(err)
 	}
 }
 
