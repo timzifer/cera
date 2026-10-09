@@ -50,6 +50,10 @@ type xrefReader struct {
 	acc     xrefAcc
 	sec     int32 // the section being read, counting from 1
 	stm     bool  // reading the /XRefStm part of a hybrid section
+	// last is the offset of the newest section, lastStream whether it
+	// is a cross-reference stream.
+	last       int64
+	lastStream bool
 	trailer []Entry
 	seenKey map[Name]bool
 }
@@ -62,6 +66,7 @@ func (d *Document) loadXref() (*table, error) {
 	x := &xrefReader{d: d, seenKey: map[Name]bool{}}
 	err := x.load()
 	t := newTable(&x.acc)
+	t.startxref, t.xrefStream = x.last, x.lastStream
 	t.trailer = NewDict(x.trailer...)
 	if len(x.trailer) == 0 {
 		t.trailer = Dict{}
@@ -85,6 +90,9 @@ func (x *xrefReader) load() error {
 		seen[off] = true
 		x.sec++
 		x.stm = false
+		if x.sec == 1 {
+			x.last = off
+		}
 		tr, err := x.readSection(off)
 		if err != nil {
 			return err
@@ -162,6 +170,9 @@ func (x *xrefReader) readSection(off int64) (tr Dict, err error) {
 		s, ok := obj.Stream()
 		if !ok {
 			return &SyntaxError{int(off), "neither an xref table nor an xref stream"}
+		}
+		if x.sec == 1 && !x.stm {
+			x.lastStream = true
 		}
 		tr, err = x.readStream(s)
 		return err

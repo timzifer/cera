@@ -500,5 +500,19 @@ func FuzzEdit(f *testing.F) {
 		if o.PageCount() != e.NumPages() || o.Repaired() {
 			t.Fatalf("%d pages, want %d; repaired %v", o.PageCount(), e.NumPages(), o.Repaired())
 		}
+		out.Reset()
+		if e.Update(&out) != nil {
+			return
+		}
+		if !bytes.HasPrefix(out.Bytes(), data) {
+			t.Fatal("the update does not start with the file")
+		}
+		o, err = pdf.Open(out.Bytes())
+		if err != nil {
+			t.Fatalf("the update does not open: %v", err)
+		}
+		if o.PageCount() != e.NumPages() || o.Repaired() {
+			t.Fatalf("update: %d pages, want %d; repaired %v", o.PageCount(), e.NumPages(), o.Repaired())
+		}
 	})
 }

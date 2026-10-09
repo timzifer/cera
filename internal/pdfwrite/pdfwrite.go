@@ -42,26 +42,76 @@ type slot struct {
 	imp *Importer
 }
 
-// A Writer collects the objects of a new file.
+// A Writer collects the objects of a new file, or of an incremental update
+// of an existing one.
 type Writer struct {
-	// Version is the version the header declares; "1.7" when empty.
+	// Version is the version the header declares; "1.7" when empty. An
+	// update writes no header.
 	Version string
 
-	objs []slot
+	objs  []slot // new objects, numbered from first
+	first int32
+
+	// For an update: the file it extends, the existing objects it
+	// replaces and those it frees.
+	base     *Base
+	replaced map[int32]pdf.Object
+	freed    map[int32]bool
 }
 
-// New returns an empty writer.
-func New() *Writer { return &Writer{} }
+// Base is the file an incremental update extends (PDF 2.0, 7.5.6).
+type Base struct {
+	Size   int64 // the file's length in bytes
+	Prev   int64 // the offset of its newest cross-reference section
+	Next   int32 // the first number free for new objects
+	Stream bool  // write a cross-reference stream rather than a table
+	// Gen returns the generation of an existing object, and false for
+	// one the file does not define.
+	Gen func(num int32) (int32, bool)
+}
+
+// New returns an empty writer of a new file.
+func New() *Writer { return &Writer{first: 1} }
+
+// NewUpdate returns a writer of an update of the file b describes. The
+// file's objects keep their numbers: an output reference below b.Next is
+// a reference to one of them, and [Writer.Set] on it replaces it. New
+// objects are numbered from b.Next.
+func NewUpdate(b Base) *Writer {
+	return &Writer{first: max(b.Next, 1), base: &b, replaced: map[int32]pdf.Object{}, freed: map[int32]bool{}}
+}
+
+// last returns the number of the newest object.
+func (w *Writer) last() Ref { return Ref(w.first + int32(len(w.objs)) - 1) }
 
 // Alloc numbers an output object whose value is set later; it is written
 // as null if it never is.
 func (w *Writer) Alloc() Ref {
 	w.objs = append(w.objs, slot{o: pdf.Null})
-	return Ref(len(w.objs))
+	return w.last()
 }
 
-// Set sets the value of output object r to the output-space value o.
-func (w *Writer) Set(r Ref, o pdf.Object) { w.objs[r-1] = slot{o: o} }
+// Set sets the value of output object r to the output-space value o. In an
+// update, setting an existing object replaces it.
+func (w *Writer) Set(r Ref, o pdf.Object) {
+	if int32(r) < w.first {
+		if w.base != nil && r > 0 {
+			w.replaced[int32(r)] = o
+			delete(w.freed, int32(r))
+		}
+		return
+	}
+	w.objs[int32(r)-w.first] = slot{o: o}
+}
+
+// Free removes an existing object in an update: references to it read as
+// null.
+func (w *Writer) Free(num int32) {
+	if w.base != nil && num > 0 && num < w.first {
+		w.freed[num] = true
+		delete(w.replaced, num)
+	}
+}
 
 // Add adds an output object with the output-space value o.
 func (w *Writer) Add(o pdf.Object) Ref {
@@ -127,7 +177,7 @@ func (im *Importer) Copy(r pdf.Ref) Ref {
 	}
 	w := im.w
 	w.objs = append(w.objs, slot{o: o, imp: im})
-	n := Ref(len(w.objs))
+	n := w.last()
 	im.copied[r.Num] = n
 	return n
 }
