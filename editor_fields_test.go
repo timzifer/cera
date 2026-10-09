@@ -16,9 +16,14 @@ func fieldsFile(objStm bool) []byte {
 	ap := "/AP <</N <</%s 30 0 R /Off 31 0 R>>>>"
 	return testpdf.File{
 		Objs: map[int]string{
-			1:  "<</Type /Catalog /Pages 2 0 R /AcroForm <</Fields [10 0 R 11 0 R 12 0 R 13 0 R 14 0 R 17 0 R 18 0 R] /DA (/Helv 10 Tf 0 g) /DR <</Font <</Helv 20 0 R>>>>>>>>",
+			1:  "<</Type /Catalog /Pages 2 0 R /OCProperties <</OCGs [40 0 R] /D <</OFF [40 0 R]>>>> /AcroForm <</Fields [10 0 R 11 0 R 12 0 R 13 0 R 14 0 R 17 0 R 18 0 R 41 0 R 42 0 R] /DA (/Helv 10 Tf 0 g) /DR <</Font <</Helv 20 0 R>>>>>>>>",
 			2:  "<</Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 200]>>",
-			3:  "<</Type /Page /Parent 2 0 R /Annots [10 0 R 11 0 R 15 0 R 16 0 R 13 0 R 14 0 R 17 0 R 18 0 R]>>",
+			3:  "<</Type /Page /Parent 2 0 R /Contents 43 0 R /Annots [10 0 R 11 0 R 15 0 R 16 0 R 13 0 R 14 0 R 17 0 R 18 0 R 41 0 R 42 0 R 44 0 R]>>",
+			40: "<</Type /OCG /Name (Hidden)>>",
+			41: "<</Type /Annot /Subtype /Widget /FT /Tx /T (layered) /V (in a hidden layer) /OC 40 0 R /Rect [150 130 290 150] /MK <</BG [1 0 0]>>>>",
+			42: "<</Type /Annot /Subtype /Widget /FT /Tx /T (hidden) /V (hidden) /F 2 /Rect [150 160 290 180] /MK <</BG [1 0 0]>>>>",
+			43: testpdf.Stream("", []byte("0.9 g 0 0 300 200 re f 1 0 0 1 5 5 cm")),
+			44: "<</Type /Annot /Subtype /Square /Rect [200 100 250 120] /C [0 0 1]>>",
 			17: "<</Type /Annot /Subtype /Widget /FT /Tx /T (turned) /Rect [260 100 290 190] /MK <</R 90 /BG [0.9 0.9 1] /BC [0 0 1]>> /BS <</W 1>>>>",
 			18: "<</Type /Annot /Subtype /Widget /FT /Btn /T (plain) /Rect [70 130 90 150] /MK <</BC [0 0 0]>>>>",
 			10: "<</Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (old) /RV (<p>old</p>) /Rect [10 160 140 180]>>",
