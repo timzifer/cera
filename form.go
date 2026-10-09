@@ -118,8 +118,9 @@ type Field struct {
 	Widgets    []*Widget
 
 	form *Form
-	da   string // the inherited /DA
-	q    int    // the inherited /Q
+	da   string  // the inherited /DA
+	q    int     // the inherited /Q
+	ref  pdf.Ref // the terminal field node, where /V is written; zero if direct
 }
 
 // Widget is a widget annotation of a field: where and how the field is
@@ -143,6 +144,7 @@ type Widget struct {
 	Appearance Appearance
 
 	dict    pdf.Dict
+	ref     pdf.Ref  // the annotation
 	fontRes pdf.Name // the /DA font's resource name
 	oc      *ocExpr  // the /OC membership, nil if always visible
 }
@@ -392,11 +394,12 @@ func (fr *formReader) walk(o pdf.Object, parent string, inh inherited, depth int
 	if len(kids) == 0 {
 		widgets = []pdf.Object{o} // the field is its own widget
 	}
-	fr.field(node, name, inh, widgets)
+	ref, _ := o.Ref()
+	fr.field(node, ref, name, inh, widgets)
 }
 
-// field adds the terminal field node with its widgets.
-func (fr *formReader) field(node pdf.Dict, name string, inh inherited, widgets []pdf.Object) {
+// field adds the terminal field node, the object ref, with its widgets.
+func (fr *formReader) field(node pdf.Dict, ref pdf.Ref, name string, inh inherited, widgets []pdf.Object) {
 	d := fr.d
 	f := &Field{
 		Name:       name,
@@ -408,6 +411,7 @@ func (fr *formReader) field(node pdf.Dict, name string, inh inherited, widgets [
 		form:       fr.f,
 		da:         inh.da,
 		q:          inh.q,
+		ref:        ref,
 	}
 	switch inh.ft {
 	case "Tx":
@@ -446,6 +450,7 @@ func (fr *formReader) field(node pdf.Dict, name string, inh inherited, widgets [
 		if w == nil {
 			continue
 		}
+		w.ref = ref
 		if !d.dict(w.dict.Get("AA")).IsZero() {
 			f.HasActions = true
 		}

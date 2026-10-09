@@ -145,6 +145,9 @@ type Importer struct {
 	// every source dictionary that is mapped: lists that may not have
 	// holes, such as the kids of a form field.
 	Compact map[pdf.Name]bool
+	// Patch holds source objects to copy in place of what the source
+	// has, by object number: objects the caller changed.
+	Patch map[int32]pdf.Object
 
 	copied map[int32]Ref
 }
@@ -172,6 +175,9 @@ func (im *Importer) Copy(r pdf.Ref) Ref {
 		return 0
 	}
 	o, err := im.src.Get(r)
+	if p, ok := im.Patch[r.Num]; ok {
+		o, err = p, nil
+	}
 	if err != nil || o.IsNull() {
 		return 0
 	}

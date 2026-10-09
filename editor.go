@@ -51,8 +51,9 @@ type EditPage struct {
 // It is not safe for concurrent use, but the documents it uses may be
 // rendered while it is. Its methods change nothing when they fail.
 type Editor struct {
-	base  *Document // the edited document; nil for NewEditor
-	pages []editPage
+	base   *Document // the edited document; nil for NewEditor
+	pages  []editPage
+	fields map[*Field]Value // values to write, by SetFields
 }
 
 // editPage is one page of the result: page index of src, turned by rotate
@@ -190,6 +191,7 @@ func (e *Editor) plan() pdfedit.Doc {
 	for i, p := range e.pages {
 		doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own}
 	}
+	doc.Patches, doc.NeedAppearances = e.fieldPatches()
 	return doc
 }
 
