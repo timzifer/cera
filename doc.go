@@ -40,7 +40,9 @@
 // MarkedContentDevice the marked-content sequences around it. Page.Text
 // extracts the characters of a page with their quads, in points of the
 // displayed page (Page.DisplayMatrix), and the structure element and
-// artifact each belongs to.
+// artifact each belongs to, and lays them out in lines and blocks in
+// reading order: by the structure tree of a tagged PDF, else by columns
+// and rows.
 //
 // # Images
 //

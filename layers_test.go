@@ -296,7 +296,7 @@ func TestLayersRun(t *testing.T) {
 	if err := p.RunWith(context.Background(), &td, RunOptions{Layers: &v}); err != nil {
 		t.Fatal(err)
 	}
-	if s := (&PageText{Chars: td.chars}).String(); s != "Hidden\nShown" {
+	if s := (&PageText{Chars: td.chars}).String(); s != "Hidden\n\nShown" {
 		t.Errorf("text with Dims on %q", s)
 	}
 }

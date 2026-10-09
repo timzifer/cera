@@ -283,7 +283,7 @@ func TestAnnotText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := text.String(); s != "Body\nNote" {
+	if s := text.String(); s != "Body\n\nNote" {
 		t.Errorf("text %q", s)
 	}
 	var td textDevice
