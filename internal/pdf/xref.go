@@ -46,16 +46,16 @@ func (d *Document) findStartxref() (int64, error) {
 
 // xrefReader collects the entries of the sections of a /Prev chain.
 type xrefReader struct {
-	d       *Document
-	acc     xrefAcc
-	sec     int32 // the section being read, counting from 1
-	stm     bool  // reading the /XRefStm part of a hybrid section
+	d   *Document
+	acc xrefAcc
+	sec int32 // the section being read, counting from 1
+	stm bool  // reading the /XRefStm part of a hybrid section
 	// last is the offset of the newest section, lastStream whether it
 	// is a cross-reference stream.
 	last       int64
 	lastStream bool
-	trailer []Entry
-	seenKey map[Name]bool
+	trailer    []Entry
+	seenKey    map[Name]bool
 }
 
 // loadXref follows the chain of cross-reference sections from the last one

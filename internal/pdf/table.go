@@ -93,7 +93,7 @@ type table struct {
 	// xrefStream whether it is a stream; unset when repaired.
 	startxref  int64
 	xrefStream bool
-	dec      *decryptor
+	dec        *decryptor
 
 	stmMu   sync.Mutex
 	objStms map[int32]map[int32]*Object // parsed object streams
