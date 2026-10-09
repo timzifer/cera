@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/timzifer/cera/internal/pdf"
 	"github.com/timzifer/cera/internal/pdfedit"
 )
 
@@ -37,9 +38,15 @@ import (
 var ErrNoAssembly = errors.New("cera: the document's permissions do not allow reassembling it")
 
 // ErrNoUpdate is returned by [Editor.Update] for a document that cannot
-// be updated incrementally: a new one, one whose structure needed a
-// repair, and, for now, an encrypted one.
+// be updated incrementally: a new one, and one whose structure needed a
+// repair.
 var ErrNoUpdate = errors.New("cera: the document cannot be updated incrementally")
+
+// ErrNotPermitted is returned by [Editor.Update] for a change the
+// permissions of an encrypted document do not allow: changing the pages
+// needs the permission to modify it or to assemble it, writing form values
+// the permission to fill in forms, to annotate or to modify.
+var ErrNotPermitted = errors.New("cera: the document's permissions do not allow the change")
 
 // EditPage selects a page to import.
 type EditPage struct {
@@ -163,12 +170,14 @@ func (e *Editor) check(i int) error {
 // the update holds only what changed: the pages of the document keep
 // their objects, deleted pages and what hung on them alone are freed, and
 // imported pages are copied in. An unchanged document is written as it
-// is. It returns [ErrNoUpdate] for an editor made with [NewEditor], for a
-// document that needed a repair and for an encrypted one, and
+// is. An encrypted document stays encrypted: what the update writes is
+// encrypted with its key. It returns [ErrNoUpdate] for an editor made with
+// [NewEditor] and for a document that needed a repair, [ErrNotPermitted]
+// for a change an encrypted document's permissions do not allow, and
 // [ErrCertified] for changes a certification signature does not allow:
-// any with DocMDP permissions 1, changes of the pages with 2 and 3. The editor may
-// be updated again. Nothing is written when Update fails, but for an error
-// of w itself.
+// any with DocMDP permissions 1, changes of the pages with 2 and 3. The
+// editor may be updated again. Nothing is written when Update fails, but
+// for an error of w itself.
 func (e *Editor) Update(w io.Writer) (err error) {
 	defer recoverPanic(&err)
 	if e.base == nil {
@@ -177,9 +186,16 @@ func (e *Editor) Update(w io.Writer) (err error) {
 	if sg := e.base.signing(); sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged()) || sg.mdp > 1 && e.pagesChanged() {
 		return ErrCertified
 	}
+	if prot, ok := e.base.r.Protection(); ok && !prot.Owner {
+		perm := prot.Permissions
+		if e.pagesChanged() && perm&(pdf.PermModify|pdf.PermAssemble) == 0 ||
+			len(e.fields) > 0 && perm&(pdf.PermFillForms|pdf.PermAnnotate|pdf.PermModify) == 0 {
+			return ErrNotPermitted
+		}
+	}
 	err = pdfedit.Update(w, e.plan())
 	switch {
-	case errors.Is(err, pdfedit.ErrRepaired), errors.Is(err, pdfedit.ErrEncrypted):
+	case errors.Is(err, pdfedit.ErrRepaired):
 		return fmt.Errorf("%w: %v", ErrNoUpdate, err)
 	case err != nil:
 		return fmt.Errorf("cera: %w", err)

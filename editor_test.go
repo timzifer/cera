@@ -476,6 +476,7 @@ func FuzzEdit(f *testing.F) {
 	f.Add(testpdf.SampleFile(true), uint8(0), uint8(3))
 	f.Add(formFile(), uint8(1), uint8(0))
 	f.Add(fieldsFile(true), uint8(2), uint8(1))
+	f.Add(testpdf.EncryptedWith("aes256", "", -4), uint8(1), uint8(0))
 	f.Add(testpdf.Encrypted("", -4), uint8(0), uint8(1))
 	f.Fuzz(func(t *testing.T, data []byte, a, b uint8) {
 		d, err := Open(data)

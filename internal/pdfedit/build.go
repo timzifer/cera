@@ -58,9 +58,8 @@ func Write(w io.Writer, doc Doc) error {
 
 // Errors of Update.
 var (
-	ErrNoBase    = errors.New("a new document has no file to update")
-	ErrRepaired  = errors.New("the file needed a repair")
-	ErrEncrypted = errors.New("the file is encrypted")
+	ErrNoBase   = errors.New("a new document has no file to update")
+	ErrRepaired = errors.New("the file needed a repair")
 )
 
 // Update writes the file of doc.Base to w and appends to it what makes it
@@ -77,9 +76,6 @@ func Update(w io.Writer, doc Doc) error {
 	ub, ok := base.UpdateBase()
 	if !ok {
 		return ErrRepaired
-	}
-	if base.Encrypted() {
-		return ErrEncrypted
 	}
 	if len(doc.Pages) == 0 {
 		return errors.New("the document has no pages")
@@ -151,17 +147,29 @@ type source struct {
 	isPage  map[int32]bool
 	pageOut map[int32]pdfwrite.Ref
 	// skip holds source objects never copied: the /Encrypt dictionary,
-	// and for own pages what hangs on deleted ones alone.
+	// and for own pages what hangs on deleted ones alone, which dead
+	// holds too: an update frees it.
 	skip map[int32]bool
+	dead map[int32]bool
 }
 
 func newBuilder(doc Doc, upd *pdf.UpdateBase) *builder {
 	b := &builder{doc: doc, w: pdfwrite.New(), upd: upd, bySrc: map[srcKey]*source{}}
 	if upd != nil {
-		b.w = pdfwrite.NewUpdate(pdfwrite.Base{
+		base := pdfwrite.Base{
 			Size: upd.Size, Prev: upd.Startxref, Next: upd.Next, Stream: upd.XrefStream,
-			Gen: doc.Base.Generation,
-		})
+			Gen:   doc.Base.Generation,
+			Crypt: doc.Base.Encryptor(),
+		}
+		if enc := doc.Base.Trailer().Get("Encrypt"); !enc.IsNull() {
+			// The encryption dictionary stays as it is: by reference,
+			// or written again where it is direct.
+			base.Encrypt = enc
+			if r, ok := enc.Ref(); ok {
+				base.Encrypt = pdfwrite.Ref(r.Num).Object()
+			}
+		}
+		b.w = pdfwrite.NewUpdate(base)
 	}
 	if doc.Base != nil {
 		b.patched, b.newOut = patches(doc), map[int32]pdfwrite.Ref{}
@@ -349,10 +357,10 @@ func (x *source) freeDeleted() {
 			}
 		}
 	}
-	if len(x.skip) == 0 {
+	if len(x.dead) == 0 {
 		return
 	}
-	for n := range x.skip {
+	for n := range x.dead {
 		x.b.w.Free(n)
 	}
 	cat, _ := x.d.Catalog()
@@ -428,6 +436,7 @@ func (x *source) pruneDeleted() {
 			}
 		}
 	}
+	x.dead = dead
 	for n := range dead {
 		x.skip[n] = true
 	}
@@ -464,6 +473,7 @@ func (x *source) pruneDeleted() {
 		}
 		if all {
 			x.skip[r.Num] = true
+			x.dead[r.Num] = true
 		}
 		return all
 	}

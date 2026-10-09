@@ -106,6 +106,16 @@ func (w *Writer) Write(out io.Writer, t Trailer) error {
 type encoder struct {
 	b sink
 	w *Writer
+	// crypt, when set, encrypts the strings and stream of object num,
+	// generation gen, the one being written.
+	crypt    *pdf.Encryptor
+	num, gen int32
+}
+
+// object sets the object written next, whose strings and stream crypt
+// encrypts, if set.
+func (e *encoder) object(num, gen int32, crypt *pdf.Encryptor) {
+	e.num, e.gen, e.crypt = num, gen, crypt
 }
 
 // value writes an output-space object. A stream is written in full only at
@@ -132,6 +142,9 @@ func (e *encoder) value(o pdf.Object, depth int) {
 		b.str(strconv.FormatFloat(v, 'f', -1, 64))
 	case pdf.KindString:
 		s, _ := o.Str()
+		if e.crypt != nil {
+			s = e.crypt.String(e.num, e.gen, s)
+		}
 		writeString(b, s)
 	case pdf.KindName:
 		n, _ := o.Name()
@@ -155,6 +168,9 @@ func (e *encoder) value(o pdf.Object, depth int) {
 		if depth > 0 || !ok {
 			b.str("null")
 			return
+		}
+		if e.crypt != nil {
+			data = e.crypt.Stream(e.num, e.gen, s.Dict, data)
 		}
 		e.dict(s.Dict, depth, len(data))
 		b.str("\nstream\n")
@@ -276,6 +292,7 @@ func (w *Writer) writeUpdate(out io.Writer, t Trailer) error {
 		g, _ := base.Gen(num)
 		xs = append(xs, xentry{num: num, off: c.n + int64(bw.Buffered()), gen: g})
 		b.printf("%d %d obj\n", num, g)
+		e.object(num, g, base.Crypt)
 		e.value(w.replaced[num], 0)
 		b.str("\nendobj\n")
 	}
@@ -288,6 +305,7 @@ func (w *Writer) writeUpdate(out io.Writer, t Trailer) error {
 		num := w.first + int32(i)
 		xs = append(xs, xentry{num: num, off: c.n + int64(bw.Buffered())})
 		b.printf("%d 0 obj\n", num)
+		e.object(num, 0, base.Crypt)
 		e.value(s.o, 0)
 		b.str("\nendobj\n")
 	}
@@ -310,7 +328,12 @@ func (w *Writer) writeUpdate(out io.Writer, t Trailer) error {
 	if t.Info != 0 {
 		trailer = append(trailer, pdf.Entry{Key: "Info", Val: t.Info.Object()})
 	}
+	if !base.Encrypt.IsNull() {
+		trailer = append(trailer, pdf.Entry{Key: "Encrypt", Val: base.Encrypt})
+	}
 	trailer = append(trailer, pdf.Entry{Key: "ID", Val: pdf.Array{pdf.String(first), pdf.String(sum)}.Object()})
+	// The cross-reference stream and the trailer are never encrypted.
+	e.object(0, 0, nil)
 
 	xref := c.n + int64(bw.Buffered())
 	byNum := func(a, b xentry) int { return int(a.num - b.num) }

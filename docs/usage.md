@@ -199,8 +199,11 @@ computed again: cera runs no JavaScript.
 document's pages keep their objects, deleted pages and what hung on them
 alone are freed, imported pages are copied in. An unchanged document is
 written as it is. It returns `ErrNoUpdate` for an editor made with
-`NewEditor`, for a file that needed a repair and, for now, for an
-encrypted one.
+`NewEditor` and for a file that needed a repair. An encrypted file stays
+encrypted: what the update appends is encrypted with its key (RC4, AES-128
+or AES-256), and `ErrNotPermitted` refuses what its permissions do not
+allow (page changes need the right to modify or assemble, form values the
+right to fill in forms, annotate or modify).
 
 ## Command line
 

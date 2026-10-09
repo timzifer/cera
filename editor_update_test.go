@@ -223,9 +223,8 @@ func TestUpdateErrors(t *testing.T) {
 	src := testpdf.SampleFile(false)
 	shifted := append([]byte("%PDF-1.7\n\n\n"), src[len("%PDF-1.7\n"):]...) // offsets off by two
 	for name, e := range map[string]*Editor{
-		"new":       ne,
-		"encrypted": editOpen(t, testpdf.Encrypted("", -4)).Edit(),
-		"repaired":  editOpen(t, shifted).Edit(),
+		"new":      ne,
+		"repaired": editOpen(t, shifted).Edit(),
 	} {
 		if err := e.Update(&out); !errors.Is(err, ErrNoUpdate) || out.Len() != 0 {
 			t.Errorf("%s: err %v, %d bytes", name, err, out.Len())
