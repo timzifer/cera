@@ -16,7 +16,7 @@ err = page.Render(ctx, dst, cera.RenderOptions{
 })
 page.Release() // drop the cached display list when the page leaves the view
 
-text, err := page.Text(ctx) // characters with boxes, including invisible text
+text, err := page.Text(ctx) // characters with quads, including invisible text
 fmt.Println(text.String())
 ```
 
@@ -126,7 +126,12 @@ content never stop a page; a non-nil error means a partial image
 
 `Page.Run` drives any `Device` directly, without a display list; a device
 that also implements `TextDevice` receives every string shown, in every
-render mode. `Page.Text` is built on it.
+render mode, and one that implements `MarkedContentDevice` the
+marked-content sequences (tag, MCID, `/ActualText`, `/Alt`, `/Lang`).
+`Page.Text` is built on both: each `TextChar` has the `Quad` of its em
+box, its baseline direction and advance, its MCID and whether it is an
+artifact. Its coordinates are points of the displayed page, y down, after
+`/Rotate` and `/UserUnit`; `Page.DisplayMatrix` maps user space to them.
 
 ## Metadata
 

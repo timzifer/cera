@@ -159,6 +159,35 @@ type TextDevice interface {
 	ShowText(run *GlyphRun, mode TextMode)
 }
 
+// MarkedContentDevice is implemented by devices that want to know the
+// marked-content sequences of a page (PDF 2.0, 14.6): the structure of a
+// tagged PDF, replacement text, artifacts. The interpreter calls
+// BeginMarkedContent at BMC and BDC and EndMarkedContent at the matching
+// EMC; sequences still open at the end of a content stream are ended
+// there. Content hidden by optional content is inside its sequences too.
+type MarkedContentDevice interface {
+	Device
+	BeginMarkedContent(mc *MarkedContent)
+	EndMarkedContent()
+}
+
+// MarkedContent is a marked-content sequence. It is reused: devices must
+// not keep it.
+type MarkedContent struct {
+	// Tag is the sequence's tag, such as P, Span or Artifact.
+	Tag string
+	// MCID identifies the sequence in the structure tree of the page; -1
+	// when it has none.
+	MCID int
+	// ActualText replaces the text of the content inside, when
+	// HasActualText; it may be empty, to drop that text.
+	ActualText    string
+	HasActualText bool
+	// Alt is an alternate description and Lang the language, empty when
+	// the sequence has none.
+	Alt, Lang string
+}
+
 // TextMode is a text render mode (Tr, PDF 2.0 9.3.6).
 type TextMode uint8
 

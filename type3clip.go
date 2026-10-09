@@ -156,12 +156,12 @@ func (c *t3Clip) EndMask()                          { c.masks-- }
 func (in *interp) type3Clip(f *Font, code int, mu Matrix, res pdf.Dict, depth int) {
 	c := &in.t3c
 	c.in, c.dst, c.n, c.masks = in, &in.text.clip, 0, 0
-	dev, out, mute, td, rec, oc := in.dev, in.out, in.mute.d, in.td, in.rec, in.ocCur
-	in.dev, in.out, in.mute.d, in.td, in.rec, in.ocCur = c, c, c, nil, nil, 0
+	dev, out, mute, td, mcd, rec, oc := in.dev, in.out, in.mute.d, in.td, in.mcd, in.rec, in.ocCur
+	in.dev, in.out, in.mute.d, in.td, in.mcd, in.rec, in.ocCur = c, c, c, nil, nil, nil, 0
 	st := *in.st
 	in.type3Glyph(f, code, mu, res, depth, true)
 	in.st.Fills, in.st.Strokes, in.st.Clips, in.st.Glyphs = st.Fills, st.Strokes, st.Clips, st.Glyphs
 	in.st.Images, in.st.Groups, in.st.Shadings = st.Images, st.Groups, st.Shadings
-	in.dev, in.out, in.mute.d, in.td, in.rec, in.ocCur = dev, out, mute, td, rec, oc
+	in.dev, in.out, in.mute.d, in.td, in.mcd, in.rec, in.ocCur = dev, out, mute, td, mcd, rec, oc
 	c.in, c.dst = nil, nil
 }

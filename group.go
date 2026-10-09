@@ -159,15 +159,15 @@ func (in *interp) drawSoftMask(r Rect, m Matrix) {
 	default:
 		in.maskDepth++
 		in.pushObject()
-		td := in.td
-		in.td = nil // mask content is not text of the page
+		td, mcd := in.td, in.mcd
+		in.td, in.mcd = nil, nil // mask content is not text of the page
 		in.stack = append(in.stack, in.gs)
 		base := len(in.stack)
 		in.initState(sm.ctm)
 		in.runForm(sm.form, sm.res, depth)
 		in.unwind(base)
 		in.restore()
-		in.td = td
+		in.td, in.mcd = td, mcd
 		in.popObject()
 		in.maskDepth--
 	}
