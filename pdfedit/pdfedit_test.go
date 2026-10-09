@@ -11,6 +11,8 @@ import (
 
 	"github.com/timzifer/cera"
 	"github.com/timzifer/cera/internal/pdf"
+	ipdfedit "github.com/timzifer/cera/internal/pdfedit"
+	"github.com/timzifer/cera/internal/testpdf"
 )
 
 func extract(t *testing.T, src []byte, pages ...Page) []byte {
@@ -95,7 +97,7 @@ func sameRenders(t *testing.T, src, out []byte, sel []Page) {
 	for i, p := range sel {
 		want, sp := render(t, sd, p.Index)
 		got, op := render(t, od, i)
-		if op.Rotate != rotation(pdf.Integer(int64(sp.Rotate)), p.Rotate) {
+		if op.Rotate != ipdfedit.Rotation(pdf.Integer(int64(sp.Rotate)), p.Rotate) {
 			t.Errorf("page %d: /Rotate %d, source %d + %d", i, op.Rotate, sp.Rotate, p.Rotate)
 		}
 		wb, gb := want.Bounds(), got.Bounds()
@@ -126,10 +128,10 @@ func TestExtractRenders(t *testing.T) {
 		{"one", pages(2)},
 		{"reorder", pages(3, 0, 2, 1)},
 		{"repeat", pages(2, 2, 0, 2)},
-		{"rotate", []Page{{pageA, 90}, {pageB, 180}, {pageC, 270}, {pageD, -90}, {pageA, 360}, {pageC, -720}}},
+		{"rotate", []Page{{testpdf.PageA, 90}, {testpdf.PageB, 180}, {testpdf.PageC, 270}, {testpdf.PageD, -90}, {testpdf.PageA, 360}, {testpdf.PageC, -720}}},
 	}
 	for _, objStm := range []bool{false, true} {
-		src := sampleFile(objStm)
+		src := testpdf.SampleFile(objStm)
 		for _, tt := range tests {
 			t.Run(fmt.Sprintf("%s/objstm=%v", tt.name, objStm), func(t *testing.T) {
 				out := extract(t, src, tt.sel...)
@@ -141,7 +143,7 @@ func TestExtractRenders(t *testing.T) {
 
 func TestSourceIsCompressed(t *testing.T) {
 	// The builder's object streams are read as such, not repaired.
-	d, err := pdf.Open(sampleFile(true))
+	d, err := pdf.Open(testpdf.SampleFile(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,8 +170,8 @@ func TestRotation(t *testing.T) {
 		{pdf.Integer(0), -450, 270},
 	}
 	for _, tt := range tests {
-		if got := rotation(tt.src, tt.extra); got != tt.want {
-			t.Errorf("rotation(%v, %d) = %d, want %d", tt.src, tt.extra, got, tt.want)
+		if got := ipdfedit.Rotation(tt.src, tt.extra); got != tt.want {
+			t.Errorf("ipdfedit.Rotation(%v, %d) = %d, want %d", tt.src, tt.extra, got, tt.want)
 		}
 	}
 }
@@ -178,7 +180,7 @@ func TestRotation(t *testing.T) {
 func TestStructure(t *testing.T) {
 	for _, objStm := range []bool{false, true} {
 		t.Run(fmt.Sprintf("objstm=%v", objStm), func(t *testing.T) {
-			out := extract(t, sampleFile(objStm), pages(pageA, pageB, pageA)...)
+			out := extract(t, testpdf.SampleFile(objStm), pages(testpdf.PageA, testpdf.PageB, testpdf.PageA)...)
 			d := strict(t, out)
 			cat, err := d.Catalog()
 			if err != nil {
@@ -188,7 +190,7 @@ func TestStructure(t *testing.T) {
 			for k := range cat.All() {
 				keys = append(keys, k)
 			}
-			if fmt.Sprint(keys) != "[Type Pages OCProperties Lang]" {
+			if fmt.Sprint(keys) != "[Type Pages Lang OCProperties]" {
 				t.Errorf("catalogue keys %v", keys)
 			}
 			info, _ := d.GetDict(d.Trailer(), "Info")
@@ -283,9 +285,9 @@ func TestStructure(t *testing.T) {
 // TestLayers checks that optional content stays hidden: without
 // /OCProperties the hidden layer would cover page D in red.
 func TestLayers(t *testing.T) {
-	src := sampleFile(false)
-	out := extract(t, src, pages(pageD)...)
-	sameRenders(t, src, out, pages(pageD))
+	src := testpdf.SampleFile(false)
+	out := extract(t, src, pages(testpdf.PageD)...)
+	sameRenders(t, src, out, pages(testpdf.PageD))
 	cfg := open(t, out).Layers()
 	if cfg == nil || len(cfg.Layers) != 1 || cfg.Layers[0].Name != "Hidden" || cfg.Layers[0].Visible {
 		t.Fatalf("layers %+v", cfg)
@@ -299,7 +301,7 @@ func TestLayers(t *testing.T) {
 func TestEncrypted(t *testing.T) {
 	const all = int32(-4)
 	t.Run("allowed", func(t *testing.T) {
-		src := encrypted("", all)
+		src := testpdf.Encrypted("", all)
 		sel := pages(1, 0)
 		out := extract(t, src, sel...)
 		sameRenders(t, src, out, sel)
@@ -328,7 +330,7 @@ func TestEncrypted(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
-			err := Extract(&out, encrypted(tt.password, tt.perm), pages(0))
+			err := Extract(&out, testpdf.Encrypted(tt.password, tt.perm), pages(0))
 			if !errors.Is(err, ErrEncrypted) {
 				t.Fatalf("err = %v, want ErrEncrypted", err)
 			}
@@ -340,7 +342,7 @@ func TestEncrypted(t *testing.T) {
 }
 
 func TestErrors(t *testing.T) {
-	src := sampleFile(false)
+	src := testpdf.SampleFile(false)
 	tests := []struct {
 		name string
 		src  []byte
@@ -367,9 +369,9 @@ func TestErrors(t *testing.T) {
 }
 
 func FuzzExtract(f *testing.F) {
-	f.Add(sampleFile(false), uint8(0), uint8(1))
-	f.Add(sampleFile(true), uint8(3), uint8(0))
-	f.Add(encrypted("", -4), uint8(1), uint8(2))
+	f.Add(testpdf.SampleFile(false), uint8(0), uint8(1))
+	f.Add(testpdf.SampleFile(true), uint8(3), uint8(0))
+	f.Add(testpdf.Encrypted("", -4), uint8(1), uint8(2))
 	f.Fuzz(func(t *testing.T, b []byte, idx, rot uint8) {
 		var out bytes.Buffer
 		sel := []Page{{Index: int(idx % 4), Rotate: int(rot%4) * 90}, {Index: 0}}

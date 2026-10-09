@@ -64,8 +64,8 @@ func corpusFile(t *testing.T, path string) {
 	strict(t, out.Bytes())
 	od := open(t, out.Bytes())
 	for i, p := range sel {
-		want, werr := renderPlain(sd, p.Index)
-		got, gerr := renderPlain(od, i)
+		want, werr := renderPlain(sd, p.Index, cera.AnnotsNone)
+		got, gerr := renderPlain(od, i, cera.AnnotsNone)
 		if werr != nil || gerr != nil {
 			if (werr == nil) != (gerr == nil) {
 				t.Errorf("page %d: source %v, output %v", p.Index, werr, gerr)
@@ -78,7 +78,7 @@ func corpusFile(t *testing.T, path string) {
 	}
 }
 
-func renderPlain(d *cera.Document, i int) (*image.RGBA, error) {
+func renderPlain(d *cera.Document, i int, annots cera.AnnotMode) (*image.RGBA, error) {
 	p, err := d.Page(i)
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func renderPlain(d *cera.Document, i int) (*image.RGBA, error) {
 	dst := image.NewRGBA(p.Bounds(scale))
 	err = p.Render(context.Background(), dst, cera.RenderOptions{
 		Scale: scale, Background: color.RGBA{255, 255, 255, 255}, Workers: 1,
-		Annotations: cera.AnnotsNone, Deadline: time.Now().Add(20 * time.Second),
+		Annotations: annots, Deadline: time.Now().Add(20 * time.Second),
 	})
 	return dst, err
 }

@@ -143,6 +143,38 @@ Dates are read leniently (a missing `D:`, missing fields, `Z00'00'`); a
 date without a time zone is taken as UTC. PDF 2.0 deprecates `/Info`, but
 for its dates, in favour of XMP, which is returned raw.
 
+## Editing
+
+An `Editor` (ADR 0013) records changes to a document, or puts a new one
+together, and writes the result as a new file:
+
+```go
+e := doc.Edit()          // all pages of doc, and everything around them
+e := cera.NewEditor()    // or an empty document
+
+err = e.ImportPages(at, other, cera.EditPage{Index: 2, Rotate: 90})
+err = e.DeletePages(3, 4)
+err = e.MovePage(from, to)
+err = e.RotatePage(i, 90)
+err = e.Save(w)
+```
+
+Everything at the level of the document (outline, names, structure tree,
+form, layers, page labels, metadata) belongs to the edited document. Pages
+imported from another document bring only what is on the page: content,
+resources, annotations and links to other pages imported with them; their
+widgets stay as plain annotations. Layers of imported pages are added, so
+hidden layers stay hidden. Deleting a page removes its annotations and the
+form fields whose widgets were all on deleted pages; outline entries and
+links to it lose their target.
+
+Pages are copied as they are: every object once per source document, byte
+for byte, streams with their filters. The result is never encrypted: an
+encrypted document is written decrypted when its permissions allow
+reassembling it, else `Save` and `ImportPages` return `ErrNoAssembly`.
+`Save` may be called again; documents an editor uses may be rendered
+meanwhile.
+
 ## Command line
 
 ```sh
