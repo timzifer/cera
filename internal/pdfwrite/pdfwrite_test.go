@@ -1,6 +1,7 @@
 package pdfwrite
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"testing"
@@ -66,10 +67,11 @@ func TestCopy(t *testing.T) {
 		"<</Self 2 0 R /Data 3 0 R /Again 3 0 R /Gone 9 0 R>>",
 		"<</Length 99 /Filter/FlateDecode /K 2 0 R>>stream\nabc\nendstream",
 	)
-	w := New(src)
+	w := New()
+	im := w.Import(src)
 	cat := emptyCatalog(w)
-	w.Set(cat, mustDict(t, w, cat).With("X", w.Map(pdf.Ref{Num: 2}.Object())).Object())
-	out := open(t, w.Bytes(Trailer{Root: cat}))
+	w.Set(cat, mustDict(t, w, cat).With("X", im.Map(pdf.Ref{Num: 2}.Object())).Object())
+	out := open(t, bytesOf(t, w, Trailer{Root: cat}))
 
 	c, _ := out.Catalog()
 	x, ok := c.Get("X").Ref()
@@ -114,17 +116,18 @@ func TestMapRef(t *testing.T) {
 		"(kept)",
 		"(skipped)",
 	)
-	w := New(src)
-	w.Drop = map[pdf.Name]bool{"Parent": true}
-	w.MapRef = func(r pdf.Ref) Ref {
+	w := New()
+	im := w.Import(src)
+	im.Drop = map[pdf.Name]bool{"Parent": true}
+	im.MapRef = func(r pdf.Ref) Ref {
 		if r.Num == 4 {
 			return 0
 		}
-		return w.Copy(r)
+		return im.Copy(r)
 	}
 	cat := emptyCatalog(w)
-	w.Set(cat, mustDict(t, w, cat).With("X", w.Map(pdf.Ref{Num: 2}.Object())).Object())
-	out := open(t, w.Bytes(Trailer{Root: cat}))
+	w.Set(cat, mustDict(t, w, cat).With("X", im.Map(pdf.Ref{Num: 2}.Object())).Object())
+	out := open(t, bytesOf(t, w, Trailer{Root: cat}))
 
 	c, _ := out.Catalog()
 	x, _ := c.Get("X").Ref()
@@ -143,7 +146,7 @@ func TestMapRef(t *testing.T) {
 // TestOutputObjects checks what the writer does with output values it
 // cannot write: references to no output object, nested streams.
 func TestOutputObjects(t *testing.T) {
-	w := New(nil)
+	w := New()
 	cat := emptyCatalog(w)
 	stm := pdf.NewStream(pdf.NewDict(pdf.Entry{Key: "Length", Val: pdf.Integer(1000)}), []byte("xy"))
 	s := w.Add(stm.Object())
@@ -152,7 +155,7 @@ func TestOutputObjects(t *testing.T) {
 		With("Far", Ref(1000).Object()).
 		With("Neg", pdf.Ref{Num: -1}.Object()).
 		With("Nested", pdf.Array{stm.Object()}.Object()).Object())
-	b := w.Bytes(Trailer{Root: cat})
+	b := bytesOf(t, w, Trailer{Root: cat})
 	out := open(t, b)
 	c, _ := out.Catalog()
 	for _, k := range []pdf.Name{"Far", "Neg"} {
@@ -197,12 +200,14 @@ func TestDropCrypt(t *testing.T) {
 }
 
 func TestEscapes(t *testing.T) {
-	var b bytes.Buffer
-	writeName(&b, "A B#(c)/é")
+	var out bytes.Buffer
+	b := bufio.NewWriter(&out)
+	writeName(b, "A B#(c)/é")
 	b.WriteByte(' ')
-	writeString(&b, []byte("a(b)\\c\r\nd"))
+	writeString(b, []byte("a(b)\\c\r\nd"))
+	b.Flush()
 	const want = `/A#20B#23#28c#29#2F#C3#A9 (a\(b\)\\c\r\nd)`
-	if got := b.String(); got != want {
+	if got := out.String(); got != want {
 		t.Fatalf("got %s, want %s", got, want)
 	}
 	o, _, err := pdf.ParseObject([]byte("[" + want + "]"))
@@ -215,6 +220,15 @@ func TestEscapes(t *testing.T) {
 	if n != "A B#(c)/é" || string(s) != "a(b)\\c\r\nd" {
 		t.Fatalf("read back %q %q", n, s)
 	}
+}
+
+func bytesOf(t *testing.T, w *Writer, tr Trailer) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	if err := w.Write(&b, tr); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
 }
 
 func mustDict(t *testing.T, w *Writer, r Ref) pdf.Dict {
@@ -237,4 +251,54 @@ func dictOf(t *testing.T, d *pdf.Document, r pdf.Ref) pdf.Dict {
 		t.Fatalf("%v is %v", r, o.Kind())
 	}
 	return dict
+}
+
+func TestFlate(t *testing.T) {
+	w := New()
+	cat := emptyCatalog(w)
+	data := bytes.Repeat([]byte("0 0 m 10 10 l S\n"), 100)
+	s := w.Add(Flate(pdf.NewDict(), data).Object())
+	w.Set(cat, mustDict(t, w, cat).With("S", s.Object()).Object())
+	out := open(t, bytesOf(t, w, Trailer{Root: cat}))
+	c, _ := out.Catalog()
+	so, _ := out.Resolve(c.Get("S")).Stream()
+	if so == nil {
+		t.Fatalf("/S = %v", c.Get("S"))
+	}
+	if f, _ := so.Dict.Get("Filter").Name(); f != "FlateDecode" {
+		t.Errorf("/Filter %v", so.Dict.Get("Filter"))
+	}
+	if raw := out.Raw(so); len(raw) >= len(data) {
+		t.Errorf("%d bytes stored for %d", len(raw), len(data))
+	}
+	if got := out.Decode(so).Data; !bytes.Equal(got, data) {
+		t.Errorf("decoded %d bytes, want %d", len(got), len(data))
+	}
+}
+
+// TestCompact checks that arrays under Compact keys lose the entries
+// mapped to null, and others keep them.
+func TestCompact(t *testing.T) {
+	src := source(t,
+		"<</Kids [3 0 R 4 0 R 3 0 R] /Other [4 0 R 3 0 R]>>",
+		"(kept)",
+		"(dropped)",
+	)
+	w := New()
+	im := w.Import(src)
+	im.Compact = map[pdf.Name]bool{"Kids": true}
+	im.MapRef = func(r pdf.Ref) Ref {
+		if r.Num == 4 {
+			return 0
+		}
+		return im.Copy(r)
+	}
+	d, _ := im.Map(pdf.Ref{Num: 2}.Object()).Ref()
+	dict, _ := im.Map(w.objs[d.Num-1].o).Dict()
+	if kids, _ := dict.Get("Kids").Array(); len(kids) != 2 {
+		t.Errorf("/Kids %v", kids)
+	}
+	if other, _ := dict.Get("Other").Array(); len(other) != 2 || !other[0].IsNull() {
+		t.Errorf("/Other %v", other)
+	}
 }

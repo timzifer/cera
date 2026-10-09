@@ -32,6 +32,7 @@ they depend on.
 | [0010](0010-accuracy-and-robustness.md) | Accuracy against PDFium and robustness budgets | M8 | accepted |
 | [0011](0011-gpu-backend.md) | GPU backend | M9 | proposed |
 | [0012](0012-own-pdf-reader.md) | Own PDF reader and font layer | M8½ | accepted |
+| [0013](0013-editing-documents.md) | Editing documents: `Document.Edit` | M9 | accepted |
 
 ## Template
 

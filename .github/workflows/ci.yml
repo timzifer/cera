@@ -146,6 +146,7 @@ jobs:
           - { name: FuzzFilters, pkg: ./internal/pdf }
           - { name: FuzzReaderAt, pkg: ./internal/pdf }
           - { name: FuzzToUnicode, pkg: ./internal/pdffont }
+          - { name: FuzzEdit, pkg: . }
           - { name: FuzzExtract, pkg: ./pdfedit }
     runs-on: ubuntu-latest
     steps:

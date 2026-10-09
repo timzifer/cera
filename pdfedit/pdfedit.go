@@ -1,49 +1,17 @@
 // Package pdfedit builds new PDF files from the pages of existing ones.
 //
-// [Extract] copies pages of a PDF into a new file, in any order and with
-// repeats, and can turn them by multiples of 90 degrees. It reads the file
-// with cera's own parser, so it accepts what cera renders: classic
-// cross-reference tables and cross-reference streams, object streams,
-// damaged files that need a repair, and encrypted files that open with the
-// empty password.
-//
-// The pages keep their content as it is: every object a selected page
-// refers to is copied once, byte for byte, and streams keep their filters.
-// What a page takes from its ancestors in the page tree (/Resources,
-// /MediaBox, /CropBox, /Rotate) is written onto the page itself.
-//
-// What cannot survive without the rest of the document is left out:
-//
-//   - the outline, the structure tree, the /Dests and the rest of the
-//     /Names of the catalogue, page labels, article threads (/B), page
-//     thumbnails (/Thumb, viewers make their own) and the document's XMP
-//     metadata, which may claim a conformance the new file no longer has;
-//   - the interactive form (/AcroForm): widget annotations stay on their
-//     pages as plain annotations and still show their appearance streams,
-//     but they are no longer fields;
-//   - link annotations whose destination is a page that is not copied;
-//     links to pages that are copied are pointed at the copy (the first
-//     one, for a page that is copied more than once), and named
-//     destinations become explicit ones;
-//   - /P and /StructParent of annotations and /StructParents of pages.
-//
-// The optional content properties (/OCProperties) are kept, so layers
-// hidden in the source stay hidden. The document information dictionary
-// (/Info) is kept as well.
-//
-// The new file is a PDF 1.7 file with a classic cross-reference table and
-// is never encrypted.
+// Deprecated: Editing lives in the cera package: [cera.Document.Edit] for
+// a document and [cera.NewEditor] for a new one. [Extract] is a short
+// form for NewEditor, ImportPages and Save.
 package pdfedit
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 
+	"github.com/timzifer/cera"
 	"github.com/timzifer/cera/internal/pdf"
-	"github.com/timzifer/cera/internal/pdfwrite"
 )
 
 // ErrEncrypted is returned for an encrypted file that does not open with
@@ -58,382 +26,33 @@ type Page struct {
 }
 
 // Extract writes a PDF to w that contains the given pages of src, in that
-// order (a page may repeat). An encrypted src that may be reassembled is
-// written decrypted. Nothing is written when Extract fails.
+// order (a page may repeat), as [cera.Editor] imports pages into a new
+// document. An encrypted src that may be reassembled is written decrypted.
+// Nothing is written when Extract fails.
+//
+// Deprecated: Use [cera.NewEditor], [cera.Editor.ImportPages] and
+// [cera.Editor.Save].
 func Extract(w io.Writer, src []byte, pages []Page) error {
 	if len(pages) == 0 {
 		return errors.New("pdfedit: no pages selected")
 	}
-	for i, p := range pages {
-		if p.Rotate%90 != 0 {
-			return fmt.Errorf("pdfedit: page %d of the selection: rotation %d is not a multiple of 90", i, p.Rotate)
-		}
-	}
-	d, err := pdf.Open(src)
+	d, err := cera.Open(src)
 	if err != nil {
 		if errors.Is(err, pdf.ErrWrongPassword) || errors.Is(err, pdf.ErrUnsupportedEncryption) {
 			return fmt.Errorf("%w: %v", ErrEncrypted, err)
 		}
 		return fmt.Errorf("pdfedit: %w", err)
 	}
-	if prot, ok := d.Protection(); ok && !prot.Owner && prot.Permissions&pdf.PermAssemble == 0 {
-		return ErrEncrypted
-	}
-	n := d.PageCount()
+	sel := make([]cera.EditPage, len(pages))
 	for i, p := range pages {
-		if p.Index < 0 || p.Index >= n {
-			return fmt.Errorf("pdfedit: page %d of the selection: index %d is out of range [0, %d)", i, p.Index, n)
+		sel[i] = cera.EditPage(p)
+	}
+	e := cera.NewEditor()
+	if err := e.ImportPages(0, d, sel...); err != nil {
+		if errors.Is(err, cera.ErrNoAssembly) {
+			return ErrEncrypted
 		}
-	}
-	x := newExtractor(d)
-	if err := x.build(pages); err != nil {
-		return err
-	}
-	_, err = w.Write(x.write())
-	return err
-}
-
-// An extractor copies pages of one document.
-type extractor struct {
-	d *pdf.Document
-	w *pdfwrite.Writer
-
-	// isPage holds the object numbers of every source page, pageOut the
-	// output number of the first copy of each selected one.
-	isPage  map[int32]bool
-	pageOut map[int32]pdfwrite.Ref
-	// skip holds source objects never copied: the /Encrypt dictionary.
-	skip map[int32]bool
-
-	catalog, pages, info pdfwrite.Ref
-}
-
-func newExtractor(d *pdf.Document) *extractor {
-	x := &extractor{
-		d:       d,
-		w:       pdfwrite.New(d),
-		isPage:  map[int32]bool{},
-		pageOut: map[int32]pdfwrite.Ref{},
-		skip:    map[int32]bool{},
-	}
-	// /Parent leads up a tree the output does not have: the page tree, a
-	// field's parents. Only the links Extract makes itself stay.
-	x.w.Drop = map[pdf.Name]bool{"Parent": true}
-	x.w.MapRef = x.ref
-	for i := range d.PageCount() {
-		if r, ok := d.PageRef(i + 1); ok {
-			x.isPage[r.Num] = true
-		}
-	}
-	if r, ok := d.Trailer().Get("Encrypt").Ref(); ok {
-		x.skip[r.Num] = true
-	}
-	return x
-}
-
-// ref returns the output number of a source object, numbering it for
-// copying when it is first met, or 0 when the reference is written as
-// null: a page that is not copied, a page tree node, a missing object.
-func (x *extractor) ref(r pdf.Ref) pdfwrite.Ref {
-	if r.Num <= 0 || x.skip[r.Num] {
-		return 0
-	}
-	if n, ok := x.pageOut[r.Num]; ok {
-		return n
-	}
-	if x.isPage[r.Num] {
-		return 0
-	}
-	if n, ok := x.w.Copied(r); ok {
-		return n
-	}
-	o, err := x.d.Get(r)
-	if err != nil || o.IsNull() {
-		return 0
-	}
-	if d, ok := o.Dict(); ok {
-		// Reached other than through /Parent: still not part of a page.
-		switch t, _ := d.Get("Type").Name(); t {
-		case "Page", "Pages", "Catalog", "XRef", "ObjStm":
-			return 0
-		}
-	}
-	return x.w.Copy(r)
-}
-
-// write serialises the output.
-func (x *extractor) write() []byte {
-	return x.w.Bytes(pdfwrite.Trailer{Root: x.catalog, Info: x.info})
-}
-
-// build makes the catalogue, the page tree and the pages.
-func (x *extractor) build(pages []Page) error {
-	cat, err := x.d.Catalog()
-	if err != nil {
 		return fmt.Errorf("pdfedit: %w", err)
 	}
-	x.catalog = x.w.Alloc() // filled in below
-	x.pages = x.w.Alloc()
-	out := make([]pdfwrite.Ref, len(pages))
-	kids := make(pdf.Array, len(pages))
-	for i, p := range pages {
-		out[i] = x.w.Alloc()
-		kids[i] = out[i].Object()
-		r, _ := x.d.PageRef(p.Index + 1)
-		if _, ok := x.pageOut[r.Num]; !ok {
-			x.pageOut[r.Num] = out[i]
-		}
-	}
-	// Pages are made once every selected page has its number, so links
-	// between them can point at the copies.
-	for i, p := range pages {
-		dict, err := x.page(p)
-		if err != nil {
-			return err
-		}
-		x.w.Set(out[i], dict.Object())
-	}
-
-	x.w.Set(x.pages, pdf.NewDict(
-		pdf.Entry{Key: "Type", Val: pdf.Name("Pages").Object()},
-		pdf.Entry{Key: "Kids", Val: kids.Object()},
-		pdf.Entry{Key: "Count", Val: pdf.Integer(int64(len(pages)))},
-	).Object())
-
-	entries := []pdf.Entry{
-		{Key: "Type", Val: pdf.Name("Catalog").Object()},
-		{Key: "Pages", Val: x.pages.Object()},
-	}
-	for _, k := range [...]pdf.Name{"OCProperties", "Lang"} {
-		if v := cat.Get(k); !v.IsNull() {
-			entries = append(entries, pdf.Entry{Key: k, Val: x.w.Map(v)})
-		}
-	}
-	x.w.Set(x.catalog, pdf.NewDict(entries...).Object())
-
-	info := x.d.Trailer().Get("Info")
-	if r, ok := info.Ref(); ok {
-		x.info = x.ref(r)
-	} else if info.Kind() == pdf.KindDict {
-		x.info = x.w.Add(x.w.Map(info))
-	}
-	return nil
-}
-
-// Page attributes that are not copied: the page tree is new, the rotation
-// and the annotations are rewritten, and beads, thumbnails and the
-// structure tree's key are dropped.
-var pageDropped = map[pdf.Name]bool{
-	"Type": true, "Parent": true, "Rotate": true, "Annots": true,
-	"B": true, "Thumb": true, "StructParents": true,
-}
-
-// page makes the dictionary of one output page.
-func (x *extractor) page(p Page) (pdf.Dict, error) {
-	src, err := x.d.Page(p.Index + 1) // with the inherited attributes
-	if err != nil {
-		return pdf.Dict{}, fmt.Errorf("pdfedit: page %d: %w", p.Index, err)
-	}
-	entries := []pdf.Entry{
-		{Key: "Type", Val: pdf.Name("Page").Object()},
-		{Key: "Parent", Val: x.pages.Object()},
-	}
-	for k, v := range src.All() {
-		if !pageDropped[k] {
-			entries = append(entries, pdf.Entry{Key: k, Val: x.w.Map(v)})
-		}
-	}
-	if rot := rotation(x.d.Resolve(src.Get("Rotate")), p.Rotate); rot != 0 {
-		entries = append(entries, pdf.Entry{Key: "Rotate", Val: pdf.Integer(int64(rot))})
-	}
-	if annots := x.annots(src.Get("Annots")); len(annots) > 0 {
-		entries = append(entries, pdf.Entry{Key: "Annots", Val: annots.Object()})
-	}
-	return pdf.NewDict(entries...), nil
-}
-
-// rotation adds extra degrees to a page's /Rotate, read the way cera reads
-// it, and returns 0, 90, 180 or 270.
-func rotation(o pdf.Object, extra int) int {
-	q := 0
-	if v, ok := o.Float(); ok && !math.IsNaN(v) && !math.IsInf(v, 0) {
-		q = int(math.Mod(math.Round(v/90), 4))
-	}
-	q += extra / 90
-	return (q%4 + 4) % 4 * 90
-}
-
-// annots copies the annotations of a page that still make sense alone.
-// Each copy of a page gets copies of its annotations, since an annotation
-// belongs to one page.
-func (x *extractor) annots(o pdf.Object) pdf.Array {
-	arr, _ := x.d.Resolve(o).Array()
-	type kept struct {
-		dict pdf.Dict
-		num  pdfwrite.Ref // output number; 0 for an annotation written in place
-	}
-	var keep []kept
-	local := map[int32]pdfwrite.Ref{} // source annotation → its copy on this page
-	for _, e := range arr {
-		ad, ok := x.d.Resolve(e).Dict()
-		if !ok || x.d.Resolve(e).Kind() == pdf.KindStream {
-			continue
-		}
-		ad, ok = x.link(ad)
-		if !ok {
-			continue
-		}
-		k := kept{dict: ad}
-		if r, ok := e.Ref(); ok {
-			if _, dup := local[r.Num]; dup {
-				continue
-			}
-			k.num = x.w.Alloc()
-			local[r.Num] = k.num
-		}
-		keep = append(keep, k)
-	}
-	out := make(pdf.Array, 0, len(keep))
-	for _, k := range keep {
-		var entries []pdf.Entry
-		for key, v := range k.dict.All() {
-			switch key {
-			case "P", "StructParent":
-				continue
-			case "Parent", "Popup", "IRT":
-				// Only references between annotations of this page
-				// survive.
-				r, ok := v.Ref()
-				if !ok {
-					continue
-				}
-				n, ok := local[r.Num]
-				if !ok {
-					continue
-				}
-				v = n.Object()
-			default:
-				v = x.w.Map(v)
-			}
-			entries = append(entries, pdf.Entry{Key: key, Val: v})
-		}
-		dict := pdf.NewDict(entries...)
-		if k.num == 0 {
-			out = append(out, dict.Object())
-			continue
-		}
-		x.w.Set(k.num, dict.Object())
-		out = append(out, k.num.Object())
-	}
-	return out
-}
-
-// link checks the destination of a link annotation. A link into the
-// document stays only when it goes to a copied page; its destination is
-// then written explicitly. Other annotations pass unchanged.
-func (x *extractor) link(ad pdf.Dict) (pdf.Dict, bool) {
-	if sub, _ := x.d.Resolve(ad.Get("Subtype")).Name(); sub != "Link" {
-		return ad, true
-	}
-	var dest pdf.Object
-	if v, ok := ad.Lookup("Dest"); ok {
-		dest = v
-	} else {
-		act, _ := x.d.Resolve(ad.Get("A")).Dict()
-		if s, _ := x.d.Resolve(act.Get("S")).Name(); s != "GoTo" {
-			return ad, true // a URI, a remote file, JavaScript, ...
-		}
-		dest = act.Get("D")
-	}
-	a := x.explicit(dest)
-	if len(a) == 0 {
-		return ad, false
-	}
-	r, ok := a[0].Ref()
-	if !ok {
-		return ad, false
-	}
-	if _, ok := x.pageOut[r.Num]; !ok {
-		return ad, false
-	}
-	var entries []pdf.Entry
-	for k, v := range ad.All() {
-		if k != "A" && k != "Dest" {
-			entries = append(entries, pdf.Entry{Key: k, Val: v})
-		}
-	}
-	entries = append(entries, pdf.Entry{Key: "Dest", Val: a.Object()})
-	return pdf.NewDict(entries...), true
-}
-
-// explicit resolves a destination to its array: an explicit destination,
-// or a named one looked up in the catalogue's /Dests and in the /Dests
-// name tree.
-func (x *extractor) explicit(o pdf.Object) pdf.Array {
-	o = x.d.Resolve(o)
-	var key []byte
-	switch o.Kind() {
-	case pdf.KindArray:
-		a, _ := o.Array()
-		return a
-	case pdf.KindName:
-		n, _ := o.Name()
-		key = []byte(n)
-	case pdf.KindString:
-		key, _ = o.Str()
-	default:
-		return nil
-	}
-	cat, err := x.d.Catalog()
-	if err != nil {
-		return nil
-	}
-	v := pdf.Null
-	if dests, ok := x.d.GetDict(cat, "Dests"); ok {
-		v = dests.Get(pdf.Name(key))
-	}
-	if v.IsNull() {
-		names, _ := x.d.GetDict(cat, "Names")
-		v = x.nameTree(names.Get("Dests"), key)
-	}
-	v = x.d.Resolve(v)
-	if dd, ok := v.Dict(); ok {
-		v = x.d.Resolve(dd.Get("D"))
-	}
-	a, _ := v.Array()
-	return a
-}
-
-// maxNameTreeNodes bounds a name tree search.
-const maxNameTreeNodes = 1 << 14
-
-// nameTree finds key in the name tree rooted at root.
-func (x *extractor) nameTree(root pdf.Object, key []byte) pdf.Object {
-	stack := []pdf.Object{root}
-	seen := map[int32]bool{}
-	for n := 0; len(stack) > 0 && n < maxNameTreeNodes; n++ {
-		o := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if r, ok := o.Ref(); ok {
-			if seen[r.Num] {
-				continue
-			}
-			seen[r.Num] = true
-		}
-		node, ok := x.d.Resolve(o).Dict()
-		if !ok {
-			continue
-		}
-		names, _ := x.d.Resolve(node.Get("Names")).Array()
-		for i := 0; i+1 < len(names); i += 2 {
-			if k, ok := x.d.Resolve(names[i]).Str(); ok && bytes.Equal(k, key) {
-				return names[i+1]
-			}
-		}
-		kids, _ := x.d.Resolve(node.Get("Kids")).Array()
-		for i := len(kids) - 1; i >= 0; i-- {
-			stack = append(stack, kids[i])
-		}
-	}
-	return pdf.Null
+	return e.Save(w)
 }
