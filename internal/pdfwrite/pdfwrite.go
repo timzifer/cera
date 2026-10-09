@@ -68,6 +68,12 @@ type Base struct {
 	// Gen returns the generation of an existing object, and false for
 	// one the file does not define.
 	Gen func(num int32) (int32, bool)
+	// Crypt encrypts what the update writes for an encrypted file, and
+	// Encrypt is the trailer's /Encrypt for it: a reference to the file's
+	// encryption dictionary, or the dictionary itself, in the output
+	// space. Crypt is nil for a file that is not encrypted.
+	Crypt   *pdf.Encryptor
+	Encrypt pdf.Object
 }
 
 // New returns an empty writer of a new file.

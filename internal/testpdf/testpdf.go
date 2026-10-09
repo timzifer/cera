@@ -5,8 +5,11 @@ package testpdf
 import (
 	"bytes"
 	"compress/zlib"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/md5"
 	"crypto/rc4"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"slices"
@@ -211,48 +214,114 @@ func rc4Bytes(key, b []byte) []byte {
 // Encrypted builds a two-page document encrypted with 128-bit RC4 (/V 2
 // /R 3) under the user password, with the permissions perm.
 func Encrypted(password string, perm int32) []byte {
+	return EncryptedWith("rc4", password, perm)
+}
+
+// EncryptedWith builds the two-page document of Encrypted, with a text
+// field "secret" on its first page, encrypted under the user password
+// with the permissions perm and method: "rc4" (128-bit RC4, /V 2 /R 3),
+// "aes128" (/V 4 /R 4, AESV2) or "aes256" (/V 5 /R 5, AESV3).
+func EncryptedWith(method, password string, perm int32) []byte {
 	id := []byte("0123456789abcdef")
-	owner := bytes.Repeat([]byte("O"), 32)
-	padded := append([]byte(password), pad...)[:32]
-	// Algorithm 2: the file key.
-	h := md5.New()
-	h.Write(padded)
-	h.Write(owner)
-	h.Write(binary.LittleEndian.AppendUint32(nil, uint32(perm)))
-	h.Write(id)
-	key := h.Sum(nil)
-	for range 50 {
-		s := md5.Sum(key[:16])
-		key = s[:]
-	}
-	// Algorithm 5: /U.
-	s := md5.Sum(append(slices.Clone(pad), id...))
-	u := rc4Bytes(key, s[:])
-	for i := 1; i <= 19; i++ {
-		k := slices.Clone(key)
-		for j := range k {
-			k[j] ^= byte(i)
+	hex := func(b []byte) string { return fmt.Sprintf("<%x>", b) }
+	var key []byte
+	var encrypt string
+	switch method {
+	case "aes256":
+		key = bytes.Repeat([]byte{0x42}, 32)
+		vsalt, ksalt := []byte("validsal"), []byte("keysaltx")
+		hash := func(salt []byte) []byte {
+			s := sha256.Sum256(append([]byte(password), salt...))
+			return s[:]
 		}
-		u = rc4Bytes(k, u)
+		u := append(append(hash(vsalt), vsalt...), ksalt...)
+		ue := cbc(hash(ksalt), make([]byte, 16), key)
+		encrypt = fmt.Sprintf("<</Filter /Standard /V 5 /R 5 /Length 256 /P %d /O %s /OE %s /U %s /UE %s"+
+			" /CF <</StdCF <</CFM /AESV3 /Length 32 /AuthEvent /DocOpen>>>> /StmF /StdCF /StrF /StdCF>>",
+			perm, hex(bytes.Repeat([]byte("O"), 48)), hex(make([]byte, 32)), hex(u), hex(ue))
+	default:
+		owner := bytes.Repeat([]byte("O"), 32)
+		padded := append([]byte(password), pad...)[:32]
+		// Algorithm 2: the file key.
+		h := md5.New()
+		h.Write(padded)
+		h.Write(owner)
+		h.Write(binary.LittleEndian.AppendUint32(nil, uint32(perm)))
+		h.Write(id)
+		key = h.Sum(nil)
+		for range 50 {
+			s := md5.Sum(key[:16])
+			key = s[:]
+		}
+		// Algorithm 5: /U.
+		s := md5.Sum(append(slices.Clone(pad), id...))
+		u := rc4Bytes(key, s[:])
+		for i := 1; i <= 19; i++ {
+			k := slices.Clone(key)
+			for j := range k {
+				k[j] ^= byte(i)
+			}
+			u = rc4Bytes(k, u)
+		}
+		u = append(u, make([]byte, 16)...)
+		encrypt = fmt.Sprintf("<</Filter /Standard /V 2 /R 3 /Length 128 /P %d /O %s /U %s>>", perm, hex(owner), hex(u))
+		if method == "aes128" {
+			encrypt = fmt.Sprintf("<</Filter /Standard /V 4 /R 4 /Length 128 /P %d /O %s /U %s"+
+				" /CF <</StdCF <</CFM /AESV2 /Length 16 /AuthEvent /DocOpen>>>> /StmF /StdCF /StrF /StdCF>>", perm, hex(owner), hex(u))
+		}
 	}
-	u = append(u, make([]byte, 16)...)
 	enc := func(num int, b []byte) []byte {
+		switch method {
+		case "aes256":
+			return aesObject(key, b)
+		case "aes128":
+			k := append(slices.Clone(key), byte(num), byte(num>>8), byte(num>>16), 0, 0, 's', 'A', 'l', 'T')
+			s := md5.Sum(k)
+			return aesObject(s[:], b)
+		}
 		k := append(slices.Clone(key), byte(num), byte(num>>8), byte(num>>16), 0, 0)
 		s := md5.Sum(k)
 		return rc4Bytes(s[:], b)
 	}
-	hex := func(b []byte) string { return fmt.Sprintf("<%x>", b) }
 	return File{
 		Objs: map[int]string{
-			1: "<</Type /Catalog /Pages 2 0 R>>",
-			2: "<</Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 100] /Resources <<>>>>",
-			3: "<</Type /Page /Parent 2 0 R /Contents 5 0 R>>",
-			4: "<</Type /Page /Parent 2 0 R /Contents 6 0 R>>",
-			5: Stream("/Filter /FlateDecode", enc(5, Deflate([]byte("1 0 0 rg 10 10 80 60 re f")))),
-			6: Stream("", enc(6, []byte("0 0 1 rg 50 20 120 70 re f"))),
-			7: "<</Title " + hex(enc(7, []byte("Secret (title)"))) + ">>",
-			8: fmt.Sprintf("<</Filter /Standard /V 2 /R 3 /Length 128 /P %d /O %s /U %s>>", perm, hex(owner), hex(u)),
+			1: "<</Type /Catalog /Pages 2 0 R /AcroForm <</Fields [9 0 R] /DA " + hex(enc(1, []byte("/Helv 10 Tf 0 g"))) +
+				" /DR <</Font <</Helv 10 0 R>>>>>>>>",
+			2:  "<</Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 100] /Resources <<>>>>",
+			3:  "<</Type /Page /Parent 2 0 R /Contents 5 0 R /Annots [9 0 R]>>",
+			4:  "<</Type /Page /Parent 2 0 R /Contents 6 0 R>>",
+			5:  Stream("/Filter /FlateDecode", enc(5, Deflate([]byte("1 0 0 rg 10 10 80 60 re f")))),
+			6:  Stream("", enc(6, []byte("0 0 1 rg 50 20 120 70 re f"))),
+			7:  "<</Title " + hex(enc(7, []byte("Secret (title)"))) + ">>",
+			8:  encrypt,
+			9:  "<</Type /Annot /Subtype /Widget /FT /Tx /T " + hex(enc(9, []byte("secret"))) + " /V " + hex(enc(9, []byte("old"))) + " /Rect [100 70 190 90] /AP <</N 11 0 R>>>>",
+			11: Stream("/Type /XObject /Subtype /Form /BBox [0 0 90 20]", enc(11, []byte("0 1 0 rg 0 0 90 20 re f"))),
+			10: "<</Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding>>",
 		},
 		Trailer: "/Root 1 0 R /Info 7 0 R /Encrypt 8 0 R /ID [" + hex(id) + hex(id) + "]",
 	}.Bytes()
+}
+
+// cbc encrypts data, whole blocks, with AES in CBC mode.
+func cbc(key, iv, data []byte) []byte {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	out := make([]byte, len(data))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(out, data)
+	return out
+}
+
+// aesObject encrypts data as PDF encrypts strings and streams with AES:
+// the initialisation vector, then the padded data in CBC mode.
+func aesObject(key, data []byte) []byte {
+	iv := []byte("initialisationvx")
+	return append(slices.Clone(iv), cbc(key, iv, pkcs5(data))...)
+}
+
+// pkcs5 pads b to whole AES blocks.
+func pkcs5(b []byte) []byte {
+	n := aes.BlockSize - len(b)%aes.BlockSize
+	return append(slices.Clone(b), bytes.Repeat([]byte{byte(n)}, n)...)
 }
