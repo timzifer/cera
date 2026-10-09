@@ -157,6 +157,7 @@ err = e.DeletePages(3, 4)
 err = e.MovePage(from, to)
 err = e.RotatePage(i, 90)
 err = e.SetFields(state) // values of doc.Form().NewState() the user changed
+err = e.Flatten()        // draw the form into the pages and drop it
 err = e.Save(w)          // a new file
 err = e.Update(w)        // the file as it was, and an incremental update
 ```
@@ -185,6 +186,12 @@ changed text or choice field gets an appearance stream of its new value,
 made as cera draws it (the form's `/DA` font, or Helvetica when that cannot
 show the text), so every viewer shows the values without regenerating
 them; check boxes and radio buttons switch between their appearances.
+
+`Flatten` draws every widget the document shows into the content of its
+page, as cera renders it (with values from `SetFields`), and removes the
+form: the widgets leave the pages, `/AcroForm` the catalogue. Hidden
+widgets are dropped, widgets in a layer stay in it. Flattened widgets lie
+under the annotations the page keeps.
 
 Signatures are not checked, but what they declare is kept: a signed
 document is not saved as a new file (`ErrSigned`, use `Update`), a field a

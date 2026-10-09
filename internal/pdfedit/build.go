@@ -592,6 +592,16 @@ func (x *source) page(p Page) (pdf.Dict, error) {
 	if err != nil {
 		return pdf.Dict{}, fmt.Errorf("page %d: %w", p.Index, err)
 	}
+	if r, ok := x.d.PageRef(p.Index + 1); ok && x.own {
+		if o, ok := x.b.patched[r.Num]; ok {
+			// A patched page: its entries over the inherited ones.
+			// Patches of pages set entries, they remove none.
+			pd, _ := o.Dict()
+			for k, v := range pd.All() {
+				src = src.With(k, v)
+			}
+		}
+	}
 	entries := []pdf.Entry{
 		{Key: "Type", Val: pdf.Name("Page").Object()},
 		{Key: "Parent", Val: x.b.pages.Object()},

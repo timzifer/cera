@@ -58,9 +58,10 @@ type EditPage struct {
 // It is not safe for concurrent use, but the documents it uses may be
 // rendered while it is. Its methods change nothing when they fail.
 type Editor struct {
-	base   *Document // the edited document; nil for NewEditor
-	pages  []editPage
-	fields map[*Field]Value // values to write, by SetFields
+	base    *Document // the edited document; nil for NewEditor
+	pages   []editPage
+	fields  map[*Field]Value // values to write, by SetFields
+	flatten bool             // the form is flattened, by Flatten
 }
 
 // editPage is one page of the result: page index of src, turned by rotate

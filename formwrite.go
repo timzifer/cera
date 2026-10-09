@@ -86,6 +86,10 @@ func (e *Editor) fieldPatches() ([]pdfedit.Patch, []pdf.Object) {
 		pdf.Entry{Key: "BaseFont", Val: pdf.Name("Helvetica").Object()},
 		pdf.Entry{Key: "Encoding", Val: pdf.Name("WinAnsiEncoding").Object()},
 	).Object()}
+	if e.flatten {
+		// The widgets go into the pages: no field is written.
+		return e.flattenPatches(&objs), objs
+	}
 	fields := make([]*Field, 0, len(e.fields))
 	for f := range e.fields {
 		fields = append(fields, f)

@@ -498,6 +498,9 @@ func FuzzEdit(f *testing.F) {
 				_ = state.SetValue(f, ChoiceValue(int(b)%max(len(f.Options), 1)))
 			}
 			_ = e.SetFields(state)
+			if a%3 == 0 {
+				_ = e.Flatten()
+			}
 		}
 		var out bytes.Buffer
 		if e.Save(&out) != nil {
