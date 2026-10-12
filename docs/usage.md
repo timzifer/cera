@@ -206,6 +206,26 @@ layer.Update(cera.View{Scale: scale, Viewport: visible})
 err = page.Render(ctx, dst, cera.RenderOptions{Scale: scale, Form: state, SkipAnnotation: layer.Skip})
 ```
 
+The values of a state travel as FDF or XFDF, the exchange formats of form
+data: `state.ExportFDF(w)` and `state.ExportXFDF(w)` write every field
+that has a value, by its name — but for passwords —, and
+`state.ImportFDF(r)` and `state.ImportXFDF(r)` set the fields the data
+names, as `SetValue` does, so that the form checks them and calculated
+fields follow:
+
+```go
+err = state.ImportXFDF(f)
+var fail *cera.FormDataError
+if errors.As(err, &fail) {
+	// the rest is set; fail.Unknown: names the form does not have,
+	// fail.Refused: values it does not take (ErrInvalidValue, ErrReadOnly)
+}
+err = e.SetFields(state) // and written into the document
+```
+
+Rich text values are dropped for the plain ones beside them, and what
+else the formats carry — annotations, pages, scripts — is not read.
+
 `dst` may be any sub-rectangle of the page (a tile or viewport): only that
 region is drawn. `RenderOptions.Region` narrows it further. Errors in the
 content never stop a page; a non-nil error means a partial image

@@ -155,6 +155,9 @@ Fonts a file does not embed:
 - Native widgets through `FormWidgetProvider` and `FormLayer` (tab order,
   focus); fyne provider in [`form/fyneform`](../form/fyneform)
 - `cmd/cera -field name=value` fills a form
+- `FormState.ExportFDF`, `ExportXFDF`, `ImportFDF`, `ImportXFDF`: the
+  values of a form in its exchange formats, with hierarchical names, the
+  states of buttons and several options of a list box
 - Format, validation and calculation without JavaScript where a field's
   scripts are calls of Acrobat's form functions (`AFNumber_Format`,
   `AFPercent_Format`, `AFDate_FormatEx`, `AFTime_Format`,
