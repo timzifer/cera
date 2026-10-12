@@ -553,7 +553,13 @@ func (in *interp) drawAnnots(p *Page, base Matrix, scale float64, af *annotFilte
 			return
 		}
 		a := &annots[i]
-		if a.Flags&AnnotHidden != 0 || a.Subtype == "Popup" {
+		hidden := a.Flags&AnnotHidden != 0
+		if len(in.formHide) > 0 && a.Subtype == "Widget" {
+			if h, ok := in.formHide[p.doc.Form().widget(p.index, a.Index)]; ok {
+				hidden = h
+			}
+		}
+		if hidden || a.Subtype == "Popup" {
 			continue
 		}
 		flags := a.Flags &^ annotLinkBorder

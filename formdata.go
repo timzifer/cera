@@ -133,7 +133,10 @@ func (s *FormState) dataTree(data []formDatum) *dataNode {
 // has one, by its name, but for password fields. The state of a check box
 // or radio button is written as a name, text as a string, the options
 // selected in a choice field by their export values.
-func (s *FormState) ExportFDF(w io.Writer) error {
+func (s *FormState) ExportFDF(w io.Writer) error { return s.writeFDF(w, s.formData()) }
+
+// writeFDF writes data as FDF.
+func (s *FormState) writeFDF(w io.Writer, data []formDatum) error {
 	bw := &bytes.Buffer{}
 	bw.WriteString("%FDF-1.2\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<</FDF <</Fields [")
 	var write func(n *dataNode)
@@ -165,7 +168,7 @@ func (s *FormState) ExportFDF(w io.Writer) error {
 		}
 		bw.WriteString(">>")
 	}
-	for _, k := range s.dataTree(s.formData()).kids {
+	for _, k := range s.dataTree(data).kids {
 		write(k)
 	}
 	bw.WriteString("]>>>>\nendobj\ntrailer\n<</Root 1 0 R>>\n%%EOF\n")
@@ -215,7 +218,10 @@ const xfdfNS = "http://ns.adobe.com/xfdf/"
 
 // ExportXFDF writes the values of the state as XFDF, as ExportFDF writes
 // them as FDF.
-func (s *FormState) ExportXFDF(w io.Writer) error {
+func (s *FormState) ExportXFDF(w io.Writer) error { return s.writeXFDF(w, s.formData()) }
+
+// writeXFDF writes data as XFDF.
+func (s *FormState) writeXFDF(w io.Writer, data []formDatum) error {
 	bw := &bytes.Buffer{}
 	bw.WriteString(xml.Header + `<xfdf xmlns="` + xfdfNS + `" xml:space="preserve">` + "\n<fields>")
 	var write func(n *dataNode)
@@ -237,7 +243,7 @@ func (s *FormState) ExportXFDF(w io.Writer) error {
 		}
 		bw.WriteString("</field>")
 	}
-	for _, k := range s.dataTree(s.formData()).kids {
+	for _, k := range s.dataTree(data).kids {
 		write(k)
 	}
 	bw.WriteString("\n</fields>\n</xfdf>\n")

@@ -152,6 +152,10 @@ type Widget struct {
 	// button, its export value; empty for other fields.
 	OnState    string
 	Appearance Appearance
+	// Actions are what the widget does when it is activated — a push
+	// button pressed —, in the order they are to be done (/A and what is
+	// chained to it); see [WidgetAction] and [FormState.Do].
+	Actions []WidgetAction
 
 	dict    pdf.Dict
 	ref     pdf.Ref  // the annotation
@@ -598,6 +602,7 @@ func (fr *formReader) widget(f *Field, wd pdf.Dict, pl annotPlace) *Widget {
 		}
 	}
 	a.Caption = textString(d.resolve(mk.Get("CA")))
+	w.Actions = fr.actions(wd)
 	return w
 }
 

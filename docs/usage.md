@@ -206,6 +206,30 @@ layer.Update(cera.View{Scale: scale, Viewport: visible})
 err = page.Render(ctx, dst, cera.RenderOptions{Scale: scale, Form: state, SkipAnnotation: layer.Skip})
 ```
 
+A push button does what its widget's `Actions` say, in their order. The
+state carries out those of the form — `ResetForm` sets the fields named to
+their defaults, `Hide` shows or hides widgets, which renders with the
+state and a `FormLayer` then obey — and the rest is the viewer's:
+
+```go
+for _, a := range widget.Actions {
+	switch {
+	case state.Do(a): // ResetForm, Hide
+	case a.Target != nil:
+		follow(a.Target) // GoTo, URI, Named: as for a link
+	case a.Kind == "SubmitForm":
+		body, contentType, err := state.Submission(a) // FDF, XFDF or an HTML form
+		// ask the user, then send body to a.URL — or do not: cera sends nothing
+	case a.Kind == "JavaScript":
+		// a.Script: reported, not run
+	}
+}
+```
+
+`state.SetHidden` and `state.ResetFields` do the same by hand. What a
+state hides is how the document is shown, not part of it: `SetFields`
+does not write it.
+
 The values of a state travel as FDF or XFDF, the exchange formats of form
 data: `state.ExportFDF(w)` and `state.ExportXFDF(w)` write every field
 that has a value, by its name — but for passwords —, and

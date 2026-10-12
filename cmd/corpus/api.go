@@ -256,6 +256,30 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 			r.differ("update: %d annotations on page 1 after a highlight was added to %d", len(op.Annotations()), had)
 		}
 	})
+	r.step("actions", func() {
+		// What the buttons of the form do: carried out or put together,
+		// which changes nothing of the document.
+		form := doc.Form()
+		if form == nil {
+			return
+		}
+		state := form.NewState()
+		for _, f := range form.Fields {
+			for _, w := range f.Widgets {
+				for _, a := range w.Actions {
+					switch {
+					case state.Do(a):
+					case a.Kind == "SubmitForm":
+						if _, _, err := state.Submission(a); err != nil && !errors.Is(err, cera.ErrSubmitDocument) {
+							r.differ("actions: what %s submits: %v", f.Name, err)
+						}
+					case a.Kind == "":
+						r.differ("actions: %s has an action of no kind", f.Name)
+					}
+				}
+			}
+		}
+	})
 	r.step("field", func() {
 		const name = "cera.corpus.field"
 		e := doc.Edit()

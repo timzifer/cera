@@ -155,6 +155,11 @@ Fonts a file does not embed:
 - Native widgets through `FormWidgetProvider` and `FormLayer` (tab order,
   focus); fyne provider in [`form/fyneform`](../form/fyneform)
 - `cmd/cera -field name=value` fills a form
+- `Widget.Actions`: what a push button does — `ResetForm` and `Hide`
+  carried out by the `FormState` (`Do`, `ResetFields`, `SetHidden`),
+  `GoTo`, `URI` and `Named` as link targets, `SubmitForm` with its
+  address, format and the data to send (`Submission`; cera sends
+  nothing), JavaScript reported
 - `Editor.AddField` and `RemoveField`: fields of every type added to
   pages with generated appearances, widgets added to fields, names that
   make the nodes above them; fields removed with their widgets

@@ -87,6 +87,7 @@ type FormState struct {
 
 	mu   sync.Mutex
 	vals map[*Field]Value // values set; others are Field.Saved
+	hide map[*Widget]bool // widgets hidden or shown otherwise than the document says
 	subs map[int]func(*Field)
 	next int
 }
