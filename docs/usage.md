@@ -240,6 +240,7 @@ err = e.MovePage(from, to)
 err = e.RotatePage(i, 90)
 err = e.SetFields(state) // values of doc.Form().NewState() the user changed
 err = e.Flatten()        // draw the form into the pages and drop it
+err = e.AddHighlight(i, cera.Highlight{Quads: text.Quads(sel), Note: "check"})
 err = e.Save(w)          // a new file
 err = e.Update(w)        // the file as it was, and an incremental update
 ```
@@ -278,11 +279,21 @@ form: the widgets leave the pages, `/AcroForm` the catalogue. Hidden
 widgets are dropped, widgets in a layer stay in it. Flattened widgets lie
 under the annotations the page keeps.
 
+`AddHighlight` marks text on a page of the edited document: a
+`/Highlight` (or `Underline`, `StrikeOut`, `Squiggly`) annotation from
+quads in points of the displayed page, as `PageText.Quads` returns them
+for a selection or a search match. It is written with `/QuadPoints` in
+user space and an appearance stream (a highlight multiplies with the page
+below it), so every viewer shows it alike; a `Note` goes into `/Contents`
+with a closed popup. The highlight stays with its page when the page
+moves, and goes when it is deleted.
+
 Signatures are not checked, but what they declare is kept: a signed
 document is not saved as a new file (`ErrSigned`, use `Update`), a field a
 signature locks (`/Lock`) does not change (`ErrLocked`), and a
-certification's DocMDP permissions allow no change with P 1 and no change
-of the pages with P 2 and 3 (`ErrCertified`). Writing values removes an
+certification's DocMDP permissions allow no change with P 1, no change
+of the pages with P 2 and 3 and no added annotations with P 2
+(`ErrCertified`). Writing values removes an
 XFA form, which would show the old ones. Calculated fields are not
 computed again: cera runs no JavaScript.
 
@@ -295,7 +306,8 @@ written as it is. It returns `ErrNoUpdate` for an editor made with
 encrypted: what the update appends is encrypted with its key (RC4, AES-128
 or AES-256), and `ErrNotPermitted` refuses what its permissions do not
 allow (page changes need the right to modify or assemble, form values the
-right to fill in forms, annotate or modify).
+right to fill in forms, annotate or modify, highlights the right to
+annotate or modify).
 
 ## Command line
 

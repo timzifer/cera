@@ -107,11 +107,16 @@ answers link annotation, then address in the text, then widget, then
 line of text, then nothing, for the hover cursor; widgets are only
 reported, editing them stays with the form layer (ADR 0006).
 
-**Highlights** (step 6). `Editor.AddHighlight` (ADR 0013) adds a
-`/Highlight` annotation from quads in displayed points (`PageText.Quads`),
-written as `/QuadPoints` in user space with a generated appearance stream,
-plus an optional note (`/Contents`, popup). Saved by `Save`, or by
-`Update`, which keeps signatures valid.
+**Highlights** (step 6, `annotwrite.go`). `Editor.AddHighlight` (ADR
+0013) adds a `/Highlight`, `/Underline`, `/StrikeOut` or `/Squiggly`
+annotation to a page of the edited document from quads in displayed
+points (`PageText.Quads`), written as `/QuadPoints` in user space with an
+appearance stream drawn as the renderer draws markup without one (a
+highlight with blend mode Multiply), plus an optional note (`/Contents`,
+closed popup). The highlight belongs to its page in the editor and moves
+and goes with it. Saved by `Save`, or by `Update`, which keeps signatures
+valid; it needs the permission to annotate or modify, and a certification
+with DocMDP permissions 1 or 2 refuses it.
 
 ### Steps
 
@@ -122,7 +127,7 @@ plus an optional note (`/Contents`, popup). Saved by `Save`, or by
 | 3 | Selection, quads, offsets | #113 |
 | 4 | `TextIndex`, `Find` with context, quote anchors | #116 |
 | 5 | `Links`, `Destination`, `Hit` | #117 |
-| 6 | `Editor.AddHighlight` | open |
+| 6 | `Editor.AddHighlight` | #118 |
 
 Each step is one PR against `main`.
 

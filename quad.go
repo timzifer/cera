@@ -59,3 +59,14 @@ func (q Quad) Transform(m Matrix) Quad {
 	}
 	return q
 }
+
+// area returns the area q encloses.
+func (q Quad) area() float64 {
+	ring := [4][2]float64{q.P[0], q.P[1], q.P[3], q.P[2]}
+	a := 0.0
+	for i, p := range ring {
+		n := ring[(i+1)%4]
+		a += p[0]*n[1] - n[0]*p[1]
+	}
+	return math.Abs(a) / 2
+}

@@ -46,7 +46,8 @@ var ErrNoUpdate = errors.New("cera: the document cannot be updated incrementally
 // ErrNotPermitted is returned by [Editor.Update] for a change the
 // permissions of an encrypted document do not allow: changing the pages
 // needs the permission to modify it or to assemble it, writing form values
-// the permission to fill in forms, to annotate or to modify.
+// the permission to fill in forms, to annotate or to modify, adding
+// annotations the permission to annotate or to modify.
 var ErrNotPermitted = errors.New("cera: the document's permissions do not allow the change")
 
 // EditPage selects a page to import.
@@ -79,6 +80,8 @@ type editPage struct {
 	rotate int
 	own    bool
 	fields bool
+	// highlights are added to an own page, by AddHighlight.
+	highlights []Highlight
 }
 
 // Edit returns an editor of d with all its pages.
@@ -184,7 +187,8 @@ func (e *Editor) check(i int) error {
 // [NewEditor] and for a document that needed a repair, [ErrNotPermitted]
 // for a change an encrypted document's permissions do not allow, and
 // [ErrCertified] for changes a certification signature does not allow:
-// any with DocMDP permissions 1, changes of the pages with 2 and 3. The
+// any with DocMDP permissions 1, changes of the pages with 2 and 3, added
+// annotations with 1 and 2. The
 // editor may be updated again. Nothing is written when Update fails, but
 // for an error of w itself.
 func (e *Editor) Update(w io.Writer) (err error) {
@@ -192,13 +196,15 @@ func (e *Editor) Update(w io.Writer) (err error) {
 	if e.base == nil {
 		return fmt.Errorf("%w: %v", ErrNoUpdate, pdfedit.ErrNoBase)
 	}
-	if sg := e.base.signing(); sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged()) || sg.mdp > 1 && e.pagesChanged() {
+	if sg := e.base.signing(); sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated()) ||
+		sg.mdp == 2 && (e.pagesChanged() || e.annotated()) || sg.mdp == 3 && e.pagesChanged() {
 		return ErrCertified
 	}
 	if prot, ok := e.base.r.Protection(); ok && !prot.Owner {
 		perm := prot.Permissions
 		if e.pagesChanged() && perm&(pdf.PermModify|pdf.PermAssemble) == 0 ||
-			len(e.fields) > 0 && perm&(pdf.PermFillForms|pdf.PermAnnotate|pdf.PermModify) == 0 {
+			len(e.fields) > 0 && perm&(pdf.PermFillForms|pdf.PermAnnotate|pdf.PermModify) == 0 ||
+			e.annotated() && perm&(pdf.PermAnnotate|pdf.PermModify) == 0 {
 			return ErrNotPermitted
 		}
 	}
@@ -222,6 +228,9 @@ func (e *Editor) plan() pdfedit.Doc {
 		doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own, Fields: p.fields}
 	}
 	doc.Patches, doc.Objects = e.fieldPatches()
+	if e.base != nil {
+		doc.Patches = e.highlightPatches(doc.Patches, &doc.Objects)
+	}
 	return doc
 }
 
