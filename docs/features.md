@@ -98,7 +98,8 @@ Fonts a file does not embed:
   lines), PolyLine, Polygon, Ink, Highlight, Underline, StrikeOut, Squiggly;
   FreeText (box, border, callout, wrapped text from `/DA`, `/DS`, `/Q`),
   the icons of Text and FileAttachment, Caret, the standard stamps, and
-  the border of a link that has `/Border` or `/BS`
+  with `RenderOptions.LinkBorders` the border of a link that has `/Border`
+  or `/BS`
 - `Page.Annotations` with link targets and, for markup annotations,
   `Markup`: author, subject, dates, rich text, colours, opacity, border,
   geometry in displayed points (quads, ink strokes, vertices, line and its

@@ -1,7 +1,10 @@
 package cera
 
 import (
+	"context"
 	"fmt"
+	"image"
+	"image/color"
 	"testing"
 
 	"github.com/timzifer/cera/internal/testpdf"
@@ -52,7 +55,7 @@ func TestAnnotLook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	img, st := renderAnnots(t, lookFile(), RenderOptions{Scale: 2})
+	img, st := renderAnnots(t, lookFile(), RenderOptions{Scale: 2, LinkBorders: true})
 	if n := st.Unsupported["annot-no-ap"]; n != 0 {
 		t.Errorf("annot-no-ap counted %d times", n)
 	}
@@ -120,6 +123,20 @@ func TestAnnotLook(t *testing.T) {
 	}
 	if c := at(155, 29); c != [3]uint8{255, 255, 255} {
 		t.Errorf("top of an underlined link %v", c)
+	}
+	// Without the option the links draw nothing, from the same list or a
+	// new one.
+	for _, borders := range []bool{false, true, false} {
+		dst := image.NewRGBA(p.Bounds(2))
+		if err := p.Render(context.Background(), dst, RenderOptions{Scale: 2, Background: white, LinkBorders: borders}); err != nil {
+			t.Fatal(err)
+		}
+		if c := dst.RGBAAt(22, 560); (c == color.RGBA{255, 0, 0, 255}) != borders {
+			t.Errorf("link borders %v: the border is %v", borders, c)
+		}
+		if c := dst.RGBAAt(22, 80); c != (color.RGBA{0, 0, 255, 255}) {
+			t.Errorf("link borders %v: the border of the free text is %v", borders, c)
+		}
 	}
 }
 

@@ -27,7 +27,8 @@ var stampNames = map[string]bool{
 // none: for the types of generated, but a stamp only with a standard name
 // and a link only with a border. A link without /Border and /BS has none:
 // the specification gives it one a point wide, which Acrobat never drew,
-// and other viewers follow Acrobat.
+// and other viewers follow Acrobat. The border of a link is drawn only
+// where RenderOptions.LinkBorders asks for it.
 func (d *Document) generates(a *Annotation) bool {
 	switch a.Subtype {
 	case "Stamp":

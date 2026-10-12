@@ -93,12 +93,22 @@ const (
 
 // annotFilter is what a render or run says about annotations.
 type annotFilter struct {
-	mode AnnotMode
-	skip func(index int) bool
+	mode        AnnotMode
+	skip        func(index int) bool
+	linkBorders bool
 }
+
+// annotLinkBorder marks, among the flags an annotation is recorded with,
+// what cera draws for a link without an appearance stream: its border,
+// shown only where the options ask for it. No file sets the bit; the
+// specification defines ten flags.
+const annotLinkBorder AnnotFlags = 1 << 31
 
 // shows reports whether an annotation with flags f at index i is drawn.
 func (af *annotFilter) shows(i int, f AnnotFlags) bool {
+	if f&annotLinkBorder != 0 && !af.linkBorders {
+		return false
+	}
 	switch af.mode {
 	case AnnotsNone:
 		return false
@@ -397,15 +407,20 @@ func (in *interp) drawAnnots(p *Page, base Matrix, scale float64, af *annotFilte
 		if a.Flags&AnnotHidden != 0 || a.Subtype == "Popup" {
 			continue
 		}
-		if in.rec == nil && !af.shows(a.Index, a.Flags) {
+		flags := a.Flags &^ annotLinkBorder
+		if a.Subtype == "Link" && p.doc.appearance(a, a.state) == nil {
+			flags |= annotLinkBorder
+		}
+		if in.rec == nil && !af.shows(a.Index, flags) {
 			continue
 		}
-		in.annotation(p, a, base, scale)
+		in.annotation(p, a, flags, base, scale)
 	}
 }
 
-// annotation draws a with its appearance stream or a generated one.
-func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64) {
+// annotation draws a with its appearance stream or a generated one. A
+// display list records it under flags, those of a and annotLinkBorder.
+func (in *interp) annotation(p *Page, a *Annotation, flags AnnotFlags, base Matrix, scale float64) {
 	doc := in.doc
 	var (
 		ap  *pdf.Stream
@@ -442,7 +457,7 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 	}
 	switch {
 	case in.rec != nil:
-		in.setOC(in.rec.annotTag(a.Index, a.Flags, expr))
+		in.setOC(in.rec.annotTag(a.Index, flags, expr))
 	case expr != nil && !expr.eval(in.ocVis, in.ocZoom):
 		return
 	}
