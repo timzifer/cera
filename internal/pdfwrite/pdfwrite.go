@@ -55,6 +55,11 @@ type Writer struct {
 	// (An update takes both from its Base.)
 	Crypt   *pdf.Encryptor
 	Encrypt Ref
+	// Packed writes a new file in the compact form of PDF 1.5: the objects
+	// that are not streams go into object streams, compressed, and a
+	// cross-reference stream tells where everything is. Readers older
+	// than that do not read it. (An update follows the file it extends.)
+	Packed bool
 
 	// Sig, when not zero, is the output object that is a signature
 	// dictionary being made (PDF 2.0, 12.8.1). Its /Contents is written as

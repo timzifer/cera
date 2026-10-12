@@ -155,6 +155,9 @@ Fonts a file does not embed:
 - Native widgets through `FormWidgetProvider` and `FormLayer` (tab order,
   focus); fyne provider in [`form/fyneform`](../form/fyneform)
 - `cmd/cera -field name=value` fills a form
+- `Save` writes object streams and a cross-reference stream where the
+  document had them, or on request (`SaveOptions.ObjectStreams`); also
+  encrypted
 - `Editor.Redact` and `ApplyRedactions`: content taken out of pages for
   good — glyphs out of their strings, paths left out or clipped, images
   re-encoded without the samples, forms rewritten per use, annotations,

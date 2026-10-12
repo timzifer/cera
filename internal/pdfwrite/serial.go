@@ -2,6 +2,7 @@ package pdfwrite
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/md5"
 	"fmt"
 	"hash"
@@ -60,6 +61,9 @@ func (w *Writer) Write(out io.Writer, t Trailer) error {
 	if w.base != nil {
 		return w.writeUpdate(out, t)
 	}
+	if w.Packed {
+		return w.writePacked(out, t)
+	}
 	c := &counter{w: out, h: md5.New()}
 	bw := bufio.NewWriterSize(c, 64<<10)
 	b := sink{bw}
@@ -107,6 +111,126 @@ func (w *Writer) Write(out io.Writer, t Trailer) error {
 		b.printf(" /Encrypt %d 0 R", w.Encrypt)
 	}
 	b.printf(" /ID [<%x> <%x>]>>\nstartxref\n%d\n%%%%EOF\n", first, sum, xref)
+	return bw.Flush()
+}
+
+// objStmSize is the number of objects of one object stream: enough for
+// the compression to find what dictionaries share, few enough that a
+// reader which wants one object does not decode a whole file.
+const objStmSize = 200
+
+// writePacked writes the file in the compact form (PDF 2.0, 7.5.7 and
+// 7.5.8). Streams are written as they come; the other objects are
+// collected, objStmSize at a time, into object streams, which are objects
+// of the file like any other and are written when their turn comes. Not
+// packed are the encryption dictionary, which a reader needs before it can
+// decode a stream, and a signature dictionary being made, whose place in
+// the file is filled in later. Inside an object stream nothing is
+// encrypted but the stream as a whole.
+func (w *Writer) writePacked(out io.Writer, t Trailer) error {
+	c := &counter{w: out, h: md5.New()}
+	bw := bufio.NewWriterSize(c, 64<<10)
+	b := sink{bw}
+	e := &encoder{b: b, w: w, pos: func() int64 { return c.n + int64(bw.Buffered()) }}
+	version := w.Version
+	if version < "1.5" {
+		version = "1.7"
+	}
+	b.printf("%%PDF-%s\n%%\xe2\xe3\xcf\xd3\n", version)
+
+	// The objects of the stream being collected: their numbers, where
+	// each starts in body, and the entries of the table for them, whose
+	// stream number is filled in when the stream is made.
+	var body bytes.Buffer
+	pb := bufio.NewWriter(&body)
+	pe := &encoder{b: sink{pb}, w: w, pos: func() int64 { return 0 }}
+	var nums []int32
+	var starts []int
+	xs := []xentry{{num: 0, gen: 65535, free: true}}
+	flush := func() {
+		var head bytes.Buffer
+		for k, num := range nums {
+			fmt.Fprintf(&head, "%d %d ", num, starts[k])
+		}
+		dict := pdf.NewDict(
+			pdf.Entry{Key: "Type", Val: pdf.Name("ObjStm").Object()},
+			pdf.Entry{Key: "N", Val: pdf.Integer(int64(len(nums)))},
+			pdf.Entry{Key: "First", Val: pdf.Integer(int64(head.Len()))},
+		)
+		stm := int32(w.Add(Flate(dict, append(head.Bytes(), body.Bytes()...)).Object()))
+		for k, num := range nums {
+			xs = append(xs, xentry{num: num, stm: stm, idx: int32(k)})
+		}
+		body.Reset()
+		nums, starts = nums[:0], starts[:0]
+	}
+	for i := 0; c.err == nil; i++ {
+		if i == len(w.objs) {
+			if len(nums) == 0 {
+				break
+			}
+			flush() // adds the stream, which is written next
+		}
+		s := w.objs[i]
+		w.objs[i] = slot{}
+		if s.imp != nil {
+			s.o = s.imp.Map(s.o)
+		}
+		num := int32(i + 1)
+		if s.o.Kind() != pdf.KindStream && Ref(num) != w.Encrypt && Ref(num) != w.Sig {
+			nums, starts = append(nums, num), append(starts, body.Len())
+			pe.object(num, 0, nil)
+			pe.value(s.o, 0)
+			_ = pb.Flush()
+			body.WriteByte('\n')
+			if len(nums) == objStmSize {
+				flush()
+			}
+			continue
+		}
+		xs = append(xs, xentry{num: num, off: c.n + int64(bw.Buffered())})
+		b.printf("%d 0 obj\n", num)
+		crypt := w.Crypt
+		if Ref(num) == w.Encrypt {
+			crypt = nil // the encryption dictionary is not encrypted
+		}
+		e.object(num, 0, crypt)
+		e.value(s.o, 0)
+		b.str("\nendobj\n")
+	}
+	if err := bw.Flush(); err != nil {
+		return err
+	}
+	sum := c.h.Sum(nil)
+	first := t.ID
+	if first == nil {
+		first = sum
+	}
+
+	// The cross-reference stream, the last object, which holds the
+	// trailer too and is never encrypted.
+	xref := c.n
+	num := int32(len(w.objs)) + 1
+	xs = append(xs, xentry{num: num, off: xref})
+	slices.SortFunc(xs, func(a, b xentry) int { return int(a.num - b.num) })
+	data, widths, _ := xrefRows(xs)
+	entries := []pdf.Entry{
+		{Key: "Type", Val: pdf.Name("XRef").Object()},
+		{Key: "Size", Val: pdf.Integer(int64(num) + 1)},
+		{Key: "W", Val: widths.Object()},
+		{Key: "Root", Val: t.Root.Object()},
+	}
+	if t.Info != 0 {
+		entries = append(entries, pdf.Entry{Key: "Info", Val: t.Info.Object()})
+	}
+	if w.Crypt != nil && w.Encrypt != 0 {
+		entries = append(entries, pdf.Entry{Key: "Encrypt", Val: w.Encrypt.Object()})
+	}
+	entries = append(entries, pdf.Entry{Key: "ID", Val: pdf.Array{pdf.String(first), pdf.String(sum)}.Object()})
+	e.object(0, 0, nil)
+	b.printf("%d 0 obj\n", num)
+	e.value(Flate(pdf.NewDict(entries...), data).Object(), 0)
+	b.printf("\nendobj\nstartxref\n%d\n%%%%EOF\n", xref)
 	return bw.Flush()
 }
 
@@ -291,12 +415,16 @@ func (w *Writer) gen(num int32) (int32, bool) {
 	return g, ok
 }
 
-// An xentry is an entry of the cross-reference section of an update.
+// An xentry is an entry of a cross-reference section: of an object at an
+// offset, of a free one, or with stm of an object in an object stream, the
+// one at idx there.
 type xentry struct {
 	num  int32
 	off  int64
 	gen  int32
 	free bool
+	stm  int32
+	idx  int32
 }
 
 // writeUpdate writes an incremental update to out, which already holds the
@@ -408,7 +536,7 @@ func (w *Writer) writeUpdate(out io.Writer, t Trailer) error {
 func xrefRows(xs []xentry) ([]byte, pdf.Array, pdf.Array) {
 	maxOff := int64(0)
 	for _, x := range xs {
-		maxOff = max(maxOff, x.off)
+		maxOff = max(maxOff, x.off, int64(x.stm))
 	}
 	w2 := 1
 	for w2 < 8 && maxOff>>(8*w2) > 0 {
@@ -422,15 +550,18 @@ func xrefRows(xs []xentry) ([]byte, pdf.Array, pdf.Array) {
 		}
 		n, _ := index[len(index)-1].Int()
 		index[len(index)-1] = pdf.Integer(n + 1)
-		typ, off := byte(1), x.off
-		if x.free {
+		typ, off, third := byte(1), x.off, x.gen
+		switch {
+		case x.free:
 			typ, off = 0, 0
+		case x.stm != 0:
+			typ, off, third = 2, int64(x.stm), x.idx
 		}
 		rows = append(rows, typ)
 		for k := w2 - 1; k >= 0; k-- {
 			rows = append(rows, byte(off>>(8*k)))
 		}
-		rows = append(rows, byte(x.gen>>8), byte(x.gen))
+		rows = append(rows, byte(third>>8), byte(third))
 	}
 	widths := pdf.Array{pdf.Integer(1), pdf.Integer(int64(w2)), pdf.Integer(2)}
 	return rows, widths, index

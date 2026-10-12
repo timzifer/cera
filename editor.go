@@ -404,7 +404,30 @@ type SaveOptions struct {
 	// Decrypt writes the file of an encrypted document without its
 	// protection.
 	Decrypt bool
+	// ObjectStreams says whether the file is written in the compact form
+	// of PDF 1.5: the objects that are not streams packed into object
+	// streams, compressed, with a cross-reference stream. A form with
+	// thousands of small objects is a tenth smaller for it. The zero
+	// value, ObjectStreamsAsSource, writes the edited document as it was
+	// read, and a new document in the classic form.
+	ObjectStreams ObjectStreamMode
 }
+
+// ObjectStreamMode says whether a file is written with object streams;
+// see [SaveOptions.ObjectStreams].
+type ObjectStreamMode int
+
+const (
+	// ObjectStreamsAsSource packs the objects of a document that was
+	// packed, and of no other.
+	ObjectStreamsAsSource ObjectStreamMode = iota
+	// ObjectStreamsAlways packs them: the smallest file, which readers
+	// from before PDF 1.5 (2003) do not read.
+	ObjectStreamsAlways
+	// ObjectStreamsNever writes every object on its own, with a
+	// cross-reference table.
+	ObjectStreamsNever
+)
 
 // Save writes the result to w as a new file. An encrypted document stays
 // encrypted, with its passwords and permissions: use [Editor.SaveWith] to
@@ -428,6 +451,15 @@ func (e *Editor) SaveWith(w io.Writer, opt SaveOptions) (err error) {
 	}
 	if doc.Base != nil && !pdfedit.MayAssemble(doc.Base) {
 		return ErrNoAssembly
+	}
+	switch opt.ObjectStreams {
+	case ObjectStreamsAsSource:
+		doc.Packed = e.base != nil && e.base.r.Packed()
+	case ObjectStreamsAlways:
+		doc.Packed = true
+	case ObjectStreamsNever:
+	default:
+		return fmt.Errorf("cera: object stream mode %d", opt.ObjectStreams)
 	}
 	if e.base != nil && e.base.signing().signed {
 		return ErrSigned

@@ -229,6 +229,15 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		if r.check("save", doc.Edit().Save(&out)) {
 			reopen("save", out.Bytes(), true)
 		}
+		// And in the other form: packed into object streams, or not.
+		other := cera.SaveOptions{ObjectStreams: cera.ObjectStreamsAlways}
+		if bytes.Contains(out.Bytes(), []byte("/ObjStm")) {
+			other.ObjectStreams = cera.ObjectStreamsNever
+		}
+		out.Reset()
+		if r.check("save, the other form", doc.Edit().SaveWith(&out, other)) {
+			reopen("save, the other form", out.Bytes(), true)
+		}
 	})
 	r.step("update", func() {
 		// With a highlight on a word of the first page, so that there is

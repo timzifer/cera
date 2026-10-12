@@ -844,6 +844,14 @@ of the pages with P 2 and 3 and no added annotations with P 2
 XFA form, which would show the old ones. Calculated fields are not
 computed again: cera runs no JavaScript.
 
+`Save` writes a document that was packed — its objects in object
+streams, with a cross-reference stream, the compact form of PDF 1.5 — in
+that form again, and others with every object on its own and a
+cross-reference table. `SaveWith(w, cera.SaveOptions{ObjectStreams:
+cera.ObjectStreamsAlways})` packs any file, which makes a form of
+thousands of small objects a tenth smaller, and `ObjectStreamsNever`
+writes the classic form for a reader that knows no other.
+
 `Update` writes the edited file unchanged and appends only what changed
 (PDF 2.0, 7.5.6), so signatures over the original bytes stay valid: the
 document's pages keep their objects, deleted pages and what hung on them

@@ -62,6 +62,9 @@ type Doc struct {
 	// Sig, when set, names the new object that is a signature dictionary
 	// being made; see [Update].
 	Sig *Sig
+	// Packed writes a new file with object streams and a cross-reference
+	// stream ([Write]); see pdfwrite.Writer.Packed.
+	Packed bool
 }
 
 // Sig is a signature dictionary an update adds: Objects[Object], with a
@@ -92,6 +95,7 @@ func Write(w io.Writer, doc Doc) error {
 	if err := b.build(); err != nil {
 		return err
 	}
+	b.w.Packed = doc.Packed
 	return b.write(w)
 }
 
