@@ -163,6 +163,30 @@ To store a mark, keep bytes of the text instead, which outlive changes to
 the layout: `Offset` maps a position to its byte offset in `String`, and
 `RangeOfOffsets` maps a byte range back.
 
+Search runs on the text as `String` has it, with runs of white space as
+one space, soft hyphens left out and hyphenated words joined, so a query
+finds a word broken across lines. A `TextIndex` keeps the laid-out text
+of recently used pages and searches the document from a position on,
+wrapping, forward or back:
+
+```go
+x := cera.NewTextIndex(doc, cera.TextOptions{}, 0) // 0 keeps 64 pages
+opt := cera.SearchOptions{WholeWord: true}        // also MatchCase, IgnoreDiacritics, Context
+for m, err := range x.Find(ctx, "gamma", opt, cera.DocPos{Page: cur}, false) {
+	if err != nil { /* a page that failed, or ctx ended */ continue }
+	text, _ := x.Page(ctx, m.Page)
+	show(m.Page, text.Quads(m.Range), m.Quote.Prefix, m.Quote.Exact, m.Quote.Suffix)
+}
+```
+
+Each match carries a `Quote`: its text and up to `Context` characters
+before and after it. A quote is an anchor that survives a new extraction
+and works for text layers that are not cera's (such as GROBID's), where
+byte offsets mean nothing: `QuoteOf` makes one from a range, and
+`PageText.FindQuote` or `TextIndex.FindQuote` (from a page outward) find
+the place whose surroundings agree most. `TextIndex.TextOf` copies a
+selection across pages, from one `DocPos` to another.
+
 ## Metadata
 
 ```go
