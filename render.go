@@ -675,7 +675,8 @@ func (p *Page) done(dl *displayList) {
 	p.mu.Unlock()
 }
 
-// Release frees the display list cached by Render. The page stays usable.
+// Release frees the display list cached by Render, and those of the views
+// Rotated made of the page. The page stays usable.
 func (p *Page) Release() {
 	p.mu.Lock()
 	if dl := p.dl; dl != nil {
@@ -685,7 +686,13 @@ func (p *Page) Release() {
 		}
 	}
 	p.wl = nil
+	views := p.views
 	p.mu.Unlock()
+	for _, v := range views {
+		if v != nil {
+			v.Release()
+		}
+	}
 }
 
 // render draws the part of the list inside region into dst, with the

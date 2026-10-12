@@ -28,6 +28,8 @@ type TextIndex struct {
 	doc *Document
 	opt TextOptions
 	max int
+	// turn is what SetRotation turns the pages by.
+	turn int
 
 	mu    sync.Mutex
 	pages map[int]*indexPage
@@ -58,6 +60,31 @@ func NewTextIndex(d *Document, opt TextOptions, maxPages int) *TextIndex {
 
 // Document returns the document of x.
 func (x *TextIndex) Document() *Document { return x.doc }
+
+// SetRotation turns the view of every page by degrees, as [Page.Rotated]
+// does: the text, its quads and what Hit takes are then in points of the
+// turned pages. The pages laid out so far are dropped. It is for a viewer
+// that turns its view; call it before the index is used from several
+// goroutines, or between such uses.
+func (x *TextIndex) SetRotation(degrees int) {
+	x.mu.Lock()
+	x.turn = degrees
+	x.pages = map[int]*indexPage{}
+	x.lru.Init()
+	x.mu.Unlock()
+}
+
+// page returns page i as the index views it.
+func (x *TextIndex) page(i int) (*Page, error) {
+	p, err := x.doc.Page(i)
+	if err != nil {
+		return nil, err
+	}
+	x.mu.Lock()
+	turn := x.turn
+	x.mu.Unlock()
+	return p.Rotated(turn), nil
+}
 
 // Page returns the text of page i (0-based). Several callers asking for
 // the same page wait for one layout. When ctx ends before the text is
@@ -96,7 +123,7 @@ func (x *TextIndex) Page(ctx context.Context, i int) (*PageText, error) {
 // before.
 func (x *TextIndex) layout(ctx context.Context, e *indexPage) {
 	defer close(e.ready)
-	p, err := x.doc.Page(e.index)
+	p, err := x.page(e.index)
 	e.page = p
 	if err == nil {
 		e.text, err = p.TextWith(ctx, x.opt)
