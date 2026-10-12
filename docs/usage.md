@@ -421,11 +421,29 @@ form fields whose widgets were all on deleted pages; outline entries and
 links to it lose their target.
 
 Pages are copied as they are: every object once per source document, byte
-for byte, streams with their filters. The result is never encrypted: an
-encrypted document is written decrypted when its permissions allow
-reassembling it, else `Save` and `ImportPages` return `ErrNoAssembly`.
-`Save` may be called again; documents an editor uses may be rendered
-meanwhile.
+for byte, streams with their filters. An encrypted document may be
+reassembled when its permissions allow it, else `Save` and `ImportPages`
+return `ErrNoAssembly`. `Save` may be called again; documents an editor
+uses may be rendered meanwhile.
+
+`Save` keeps the protection of an encrypted document: the saved file opens
+with the same passwords and grants the same permissions. `SaveWith`
+changes that — it protects a file, or writes a protected one plain — and
+for an encrypted document either needs the owner password
+(`ErrNotPermitted` otherwise):
+
+```go
+err = e.SaveWith(w, cera.SaveOptions{Encrypt: &cera.Encryption{
+	UserPassword:  "to open",
+	OwnerPassword: "to change",
+	Permissions:   cera.PermPrint | cera.PermPrintFaithful,
+}})
+err = e.SaveWith(w, cera.SaveOptions{Decrypt: true})
+```
+
+New protection is AES-256 (PDF 2.0, revision 6) with a random file key.
+Pages imported from other documents are encrypted, or not, as the result
+is.
 
 `SetFields` records the values of a `FormState` of the edited document
 that differ from what the file holds: a text as a text string (its rich

@@ -1,6 +1,8 @@
 package cera
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -36,8 +38,9 @@ import (
 // itself.
 
 // ErrNoAssembly is returned for an encrypted document whose permissions
-// do not allow reassembling it (bit 11 of /P): it may not be saved as a
-// new file, and its pages may not be imported.
+// do not allow reassembling it (bit 11 of /P), opened with the user
+// password: it may not be saved as a new file, and its pages may not be
+// imported.
 var ErrNoAssembly = errors.New("cera: the document's permissions do not allow reassembling it")
 
 // ErrNoUpdate is returned by [Editor.Update] for a document that cannot
@@ -45,8 +48,10 @@ var ErrNoAssembly = errors.New("cera: the document's permissions do not allow re
 // repair.
 var ErrNoUpdate = errors.New("cera: the document cannot be updated incrementally")
 
-// ErrNotPermitted is returned by [Editor.Update] for a change the
-// permissions of an encrypted document do not allow: changing the pages
+// ErrNotPermitted is returned by [Editor.SaveWith] for removing or
+// changing the protection of a document opened with its user password,
+// and by [Editor.Update] for a change the permissions of an encrypted
+// document do not allow: changing the pages
 // needs the permission to modify it or to assemble it, writing form values
 // the permission to fill in forms, to annotate or to modify, adding
 // annotations the permission to annotate or to modify, and flattening,
@@ -270,15 +275,44 @@ func (e *Editor) plan() pdfedit.Doc {
 	return doc
 }
 
-// Save writes the result to w as a new file, which is never encrypted: an
-// encrypted document is written decrypted when its permissions allow
-// reassembling it. A signed document is refused with [ErrSigned]: a new
-// file invalidates its signatures, and [Editor.Update] keeps them. A
-// document whose embedded files alone are encrypted is refused with
-// [ErrPassword] unless it was opened with the password. The editor may be
-// saved again. Nothing is written when Save fails, but for
-// an error of w itself.
-func (e *Editor) Save(w io.Writer) (err error) {
+// Encryption protects a file the editor writes: with AES-256 (PDF 2.0),
+// under a file key of its own.
+type Encryption struct {
+	// UserPassword opens the file with the permissions below; it may be
+	// empty, for a file anyone opens and no one may change.
+	UserPassword string
+	// OwnerPassword opens it with all permissions, and is needed to
+	// remove or change the protection. When empty the file gets a random
+	// one that nobody knows.
+	OwnerPassword string
+	// Permissions are what a reader with the user password may do.
+	Permissions Permissions
+}
+
+// SaveOptions say how [Editor.SaveWith] writes the file.
+type SaveOptions struct {
+	// Encrypt, when set, encrypts the file anew.
+	Encrypt *Encryption
+	// Decrypt writes the file of an encrypted document without its
+	// protection.
+	Decrypt bool
+}
+
+// Save writes the result to w as a new file. An encrypted document stays
+// encrypted, with its passwords and permissions: use [Editor.SaveWith] to
+// change that. A signed document is refused with [ErrSigned]: a new file
+// invalidates its signatures, and [Editor.Update] keeps them. A document
+// whose embedded files alone are encrypted is refused with [ErrPassword]
+// unless it was opened with the password. The editor may be saved again.
+// Nothing is written when Save fails, but for an error of w itself.
+func (e *Editor) Save(w io.Writer) error { return e.SaveWith(w, SaveOptions{}) }
+
+// SaveWith is Save with options: to protect the file with passwords and
+// permissions, or to write an encrypted document plain. Either changes the
+// protection of an encrypted document, which needs the owner password:
+// [ErrNotPermitted] for a document opened with the user password. Pages
+// imported from other documents are encrypted, or not, as the result is.
+func (e *Editor) SaveWith(w io.Writer, opt SaveOptions) (err error) {
 	defer recoverPanic(&err)
 	doc := e.plan()
 	if doc.Base != nil && !pdfedit.MayAssemble(doc.Base) {
@@ -287,15 +321,76 @@ func (e *Editor) Save(w io.Writer) (err error) {
 	if e.base != nil && e.base.signing().signed {
 		return ErrSigned
 	}
-	// A new file is not encrypted: embedded files that the password did
-	// not open would be written as nothing.
+	// Embedded files that the password did not open would be written as
+	// nothing.
 	for _, p := range e.pages {
 		if p.src.r.FilesLocked() {
 			return ErrPassword
+		}
+	}
+	owner, encrypted := true, false
+	if e.base != nil {
+		if prot, ok := e.base.r.Protection(); ok {
+			owner, encrypted = prot.Owner, true
+		}
+	}
+	switch {
+	case opt.Encrypt != nil && opt.Decrypt:
+		return errors.New("cera: a file is encrypted or decrypted, not both")
+	case (opt.Encrypt != nil || opt.Decrypt) && encrypted && !owner && !e.unguarded:
+		return ErrNotPermitted
+	case opt.Encrypt != nil:
+		enc := opt.Encrypt
+		ownerPassword := enc.OwnerPassword
+		if ownerPassword == "" {
+			random := make([]byte, 24)
+			if _, err := rand.Read(random); err != nil {
+				return fmt.Errorf("cera: %w", err)
+			}
+			ownerPassword = hex.EncodeToString(random)
+		}
+		crypt, dict, err := pdf.NewEncryptor(enc.UserPassword, ownerPassword, pdf.Permissions(enc.Permissions), false)
+		if err != nil {
+			return fmt.Errorf("cera: %w", err)
+		}
+		doc.Crypt, doc.Encrypt = crypt, dict
+	case encrypted && !opt.Decrypt:
+		// As it was: the document's key and its encryption dictionary.
+		d := e.base
+		if dict, ok := d.inline(d.r.Trailer().Get("Encrypt"), 0).Dict(); ok {
+			doc.Crypt, doc.Encrypt = d.r.Encryptor(), dict
 		}
 	}
 	if err := pdfedit.Write(w, doc); err != nil {
 		return fmt.Errorf("cera: %w", err)
 	}
 	return nil
+}
+
+// inline returns o with the references in it followed: a value of direct
+// objects, as an encryption dictionary is written.
+func (d *Document) inline(o pdf.Object, depth int) pdf.Object {
+	o = d.resolve(o)
+	if depth > 8 {
+		return pdf.Null
+	}
+	switch o.Kind() {
+	case pdf.KindDict:
+		dict, _ := o.Dict()
+		var entries []pdf.Entry
+		for k, v := range dict.All() {
+			entries = append(entries, pdf.Entry{Key: k, Val: d.inline(v, depth+1)})
+		}
+		return pdf.NewDict(entries...).Object()
+	case pdf.KindArray:
+		arr, _ := o.Array()
+		out := make(pdf.Array, len(arr))
+		for i, v := range arr {
+			out[i] = d.inline(v, depth+1)
+		}
+		return out.Object()
+	case pdf.KindStream:
+		return pdf.Null
+	}
+	return o
 }

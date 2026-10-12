@@ -41,6 +41,11 @@ type Doc struct {
 	// /Metadata stream; the edited document's is changed by a patch.
 	Info pdf.Dict
 	XMP  []byte
+	// Crypt, when set, encrypts a new file ([Write]), and Encrypt is its
+	// encryption dictionary, of direct values. An update is encrypted as
+	// the file it extends is.
+	Crypt   *pdf.Encryptor
+	Encrypt pdf.Dict
 }
 
 // MayAssemble reports whether the permissions of d allow reassembling it
@@ -594,6 +599,9 @@ func validVersion(v string) bool {
 // write writes the output.
 func (b *builder) write(w io.Writer) error {
 	t := pdfwrite.Trailer{Root: b.catalog, Info: b.info}
+	if b.upd == nil && b.doc.Crypt != nil {
+		b.w.Crypt, b.w.Encrypt = b.doc.Crypt, b.w.Add(b.doc.Encrypt.Object())
+	}
 	if b.upd != nil {
 		if err := b.doc.Base.WriteSource(w); err != nil {
 			return err

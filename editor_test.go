@@ -29,7 +29,15 @@ func editOpen(t *testing.T, b []byte) *Document {
 func editSave(t *testing.T, e *Editor) []byte {
 	t.Helper()
 	var out bytes.Buffer
-	if err := e.Save(&out); err != nil {
+	// What the tests look at is the content: an encrypted document is
+	// written plain, also where it was opened with the user password,
+	// which SaveWith refuses to others.
+	opt := SaveOptions{Decrypt: e.base != nil && e.base.Encrypted()}
+	guarded := e.unguarded
+	e.unguarded = e.unguarded || opt.Decrypt
+	err := e.SaveWith(&out, opt)
+	e.unguarded = guarded
+	if err != nil {
 		t.Fatal(err)
 	}
 	editStrict(t, out.Bytes())

@@ -85,3 +85,96 @@ func aesEncrypt(block cipher.Block, data []byte) []byte {
 	cipher.NewCBCEncrypter(block, out[:aes.BlockSize]).CryptBlocks(body, body)
 	return out
 }
+
+// NewEncryptor makes the encryption of a new file: AES-256 (/V 5, /R 6)
+// with a random file key, opened by the user password with the permissions
+// perm and by the owner password with all of them. It returns the
+// encryptor of what is written and the /Encrypt dictionary, whose own
+// strings are written as they are. Metadata streams are encrypted too
+// unless plainMetadata is set. Passwords are prepared with SASLprep and
+// cut at 127 bytes, as readers prepare what is typed.
+func NewEncryptor(user, owner string, perm Permissions, plainMetadata bool) (*Encryptor, Dict, error) {
+	prep := func(s string) []byte {
+		b := saslprep(s)
+		if len(b) > 127 {
+			b = b[:127]
+		}
+		return b
+	}
+	random := func(n int) ([]byte, error) {
+		b := make([]byte, n)
+		_, err := rand.Read(b)
+		return b, err
+	}
+	key, err := random(32)
+	if err != nil {
+		return nil, Dict{}, err
+	}
+	// Algorithms 8 and 9: the validation hash of a password with two
+	// salts, and the file key encrypted under a key made of the password.
+	entry := func(password, udata []byte) (hash, wrapped []byte, err error) {
+		salts, err := random(16)
+		if err != nil {
+			return nil, nil, err
+		}
+		hash = append(hash2B(password, salts[:8], udata, 6), salts...)
+		block, err := aes.NewCipher(hash2B(password, salts[8:], udata, 6))
+		if err != nil {
+			return nil, nil, err
+		}
+		wrapped = make([]byte, 32)
+		cipher.NewCBCEncrypter(block, make([]byte, aes.BlockSize)).CryptBlocks(wrapped, key)
+		return hash, wrapped, nil
+	}
+	u, ue, err := entry(prep(user), nil)
+	if err != nil {
+		return nil, Dict{}, err
+	}
+	o, oe, err := entry(prep(owner), u)
+	if err != nil {
+		return nil, Dict{}, err
+	}
+	// Algorithm 10: the permissions, encrypted with the file key, so that
+	// a reader can tell whether /P was changed.
+	p := int32(uint32(perm&AllPermissions) | 0xFFFFF0C0)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, Dict{}, err
+	}
+	tail, err := random(4)
+	if err != nil {
+		return nil, Dict{}, err
+	}
+	perms := []byte{byte(p), byte(p >> 8), byte(p >> 16), byte(p >> 24), 0xff, 0xff, 0xff, 0xff, 'T', 'a', 'd', 'b'}
+	if plainMetadata {
+		perms[8] = 'F'
+	}
+	perms = append(perms, tail...)
+	block.Encrypt(perms, perms)
+
+	dec := &decryptor{
+		key: key, strings: cryptAESV3, streams: cryptAESV3, embedded: cryptAESV3,
+		revision: 6, perm: perm & AllPermissions, plainMetadata: plainMetadata, v3: block,
+	}
+	dict := NewDict(
+		Entry{Key: "Filter", Val: Name("Standard").Object()},
+		Entry{Key: "V", Val: Integer(5)},
+		Entry{Key: "R", Val: Integer(6)},
+		Entry{Key: "Length", Val: Integer(256)},
+		Entry{Key: "CF", Val: NewDict(Entry{Key: "StdCF", Val: NewDict(
+			Entry{Key: "CFM", Val: Name("AESV3").Object()},
+			Entry{Key: "AuthEvent", Val: Name("DocOpen").Object()},
+			Entry{Key: "Length", Val: Integer(32)},
+		).Object()}).Object()},
+		Entry{Key: "StmF", Val: Name("StdCF").Object()},
+		Entry{Key: "StrF", Val: Name("StdCF").Object()},
+		Entry{Key: "U", Val: String(u)},
+		Entry{Key: "UE", Val: String(ue)},
+		Entry{Key: "O", Val: String(o)},
+		Entry{Key: "OE", Val: String(oe)},
+		Entry{Key: "Perms", Val: String(perms)},
+		Entry{Key: "P", Val: Integer(int64(p))},
+		Entry{Key: "EncryptMetadata", Val: Boolean(!plainMetadata)},
+	)
+	return &Encryptor{dec}, dict, nil
+}

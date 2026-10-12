@@ -168,9 +168,13 @@ func TestAttachmentsEncrypted(t *testing.T) {
 		if err := locked.Edit().Save(&out); !errors.Is(err, ErrPassword) || out.Len() > 0 {
 			t.Errorf("%s: saved without the password: %v, %d bytes", method, err, out.Len())
 		}
+		// With it, the saved file is protected as the document is, and
+		// its attachments read with the password.
 		if err := doc.Edit().Save(&out); err != nil {
 			t.Errorf("%s: saving with the password: %v", method, err)
-		} else if as := editOpen(t, out.Bytes()).Attachments(); len(as) != 1 || readAttachment(t, as[0]) != testpdf.AttachmentData {
+		} else if saved, err := OpenWithPassword(out.Bytes(), "secret"); err != nil {
+			t.Errorf("%s: the saved file: %v", method, err)
+		} else if as := saved.Attachments(); len(as) != 1 || readAttachment(t, as[0]) != testpdf.AttachmentData {
 			t.Errorf("%s: attachments of the saved file: %v", method, as)
 		}
 	}
