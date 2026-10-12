@@ -53,6 +53,8 @@ const (
 	maxLabelDepth     = 16       // levels of the number tree of page labels
 	maxLabelNodes     = 1 << 16  // nodes of the number tree of page labels
 	maxPrintRanges    = 1 << 10  // page ranges of /PrintPageRange
+	maxStructNodes    = 1 << 21  // elements and content of the structure tree
+	maxStructDepth    = 128      // levels of the structure tree
 )
 
 // Caches bound memory kept for reuse; past them entries are dropped and
@@ -118,6 +120,8 @@ var budgets = []budget{
 	{"maxLabelDepth", maxLabelDepth, "", "levels of the number tree of page labels; deeper nodes are not read"},
 	{"maxLabelNodes", maxLabelNodes, "", "nodes of the number tree of page labels; further ones are not read"},
 	{"maxPrintRanges", maxPrintRanges, "", "page ranges of /PrintPageRange in ViewSettings; further ones are left out"},
+	{"maxStructNodes", maxStructNodes, "", "elements, content items and attribute objects of the structure tree, read for Document.Structure and for the reading order of text; further ones are not read (StructTree.Truncated)"},
+	{"maxStructDepth", maxStructDepth, "", "levels of the structure tree in Document.Structure, and types a role map leads through; deeper elements are not read (StructTree.Truncated)"},
 	{"content.MaxNesting", content.MaxNesting, "", "arrays and dictionaries nested in one operand (Stats.Errors)"},
 	{"content.MaxOperands", content.MaxOperands, "", "operands kept for one operator; the first are dropped"},
 	{"cmap.MaxSpans", cmap.MaxSpans, "", "code ranges of one CMap; further ones are ignored"},

@@ -67,6 +67,9 @@ type Document struct {
 	structOnce  sync.Once
 	structMCIDs map[int][]int // marked-content identifiers by page, in structure order
 
+	structTreeOnce sync.Once
+	structTree     *StructTree // the structure tree, read on first use
+
 	// Colour spaces and shadings by reference.
 	csMu     sync.Mutex
 	spaces   map[pdf.Ref]csEntry

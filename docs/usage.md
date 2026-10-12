@@ -386,6 +386,49 @@ printDialog(vs.Print.Ranges, vs.Print.Copies, vs.Print.Duplex, vs.Print.Scaling 
 `Open` is nil for an `/OpenAction` that does not lead to a place in the
 document — a script, an address, another file.
 
+## Structure
+
+A tagged document says what its content is: headings, paragraphs, lists,
+tables with their cells, figures with a description. `Document.Structure`
+returns that tree, nil for a document without one — what a bridge to a
+screen reader reads by, and what an export to HTML keeps headings and
+tables with:
+
+```go
+tree := doc.Structure()
+if tree == nil {
+	return // untagged: the text of the pages in the order of their layout
+}
+var walk func(e *cera.StructElem, depth int)
+walk = func(e *cera.StructElem, depth int) {
+	fmt.Printf("%s%s %q\n", strings.Repeat("  ", depth), e.Role, e.Alt)
+	for _, k := range e.Kids {
+		switch {
+		case k.Elem != nil:
+			walk(k.Elem, depth+1)
+		case k.MCID >= 0:
+			// the characters of page k.Page whose TextChar.MCID is k.MCID
+		case k.Annot >= 0:
+			// the annotation of page k.Page with that Index: the link of a Link
+		}
+	}
+}
+for _, e := range tree.Elems {
+	walk(e, 0)
+}
+```
+
+`Type` is the name the document gives an element and `Role` the standard
+type its role map makes of it (`"Heading 1"` is an `"H1"`). `Kids` are in
+reading order: elements, the marked content of a page by its identifier,
+and annotations. `Title`, `Alt`, `ActualText`, `Expansion` and `Lang` are
+those of the element, the language inherited from above; `Attr()` has the
+attributes of tables and lists (`RowSpan`, `ColSpan`, `Headers`, `Scope`,
+`Summary`, `ListNumbering`) and the `BBox` of a figure, and
+`tree.ByID(id)` finds the header cell a cell names. `tree.Suspects` says
+that the producer guessed the tree from a layout. Other attributes, and
+content marked inside form XObjects, are not read.
+
 ## Metadata
 
 ```go

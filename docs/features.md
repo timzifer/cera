@@ -131,6 +131,10 @@ Fonts a file does not embed:
   letters, prefixes), read leniently; the editor keeps them with their
   pages
 - `Document.ViewSettings`: how a document asks to be opened and printed
+- `Document.Structure`: the structure tree of a tagged document — types
+  and their roles (`/RoleMap`, namespaces), titles, `/Alt`, `/ActualText`,
+  `/Lang`, marked content and annotations in reading order, the
+  attributes of tables and lists
   (`/OpenAction`, `/PageMode`, `/PageLayout`, `/ViewerPreferences`)
 - `Document.Outline`: the bookmarks as a tree, with titles, style, open
   state and targets (destinations, GoTo, URI, GoToR and Launch actions,

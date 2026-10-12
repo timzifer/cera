@@ -130,6 +130,27 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		}
 	})
 
+	r.step("structure", func() {
+		tree := doc.Structure()
+		if tree == nil {
+			return
+		}
+		var walk func(e *cera.StructElem)
+		walk = func(e *cera.StructElem) {
+			for _, k := range e.Kids {
+				switch {
+				case k.Page >= doc.NumPages(), k.Elem == nil && k.Page < 0, k.Elem == nil && (k.MCID < 0) == (k.Annot < 0):
+					r.differ("the structure element %s has the kid %+v", e.Type, k)
+				case k.Elem != nil:
+					walk(k.Elem)
+				}
+			}
+		}
+		for _, e := range tree.Elems {
+			walk(e)
+		}
+	})
+
 	// The text and the links of the pages.
 	var first *cera.PageText
 	var firstWord cera.TextRange // a word of the first page, to highlight
