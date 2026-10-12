@@ -397,6 +397,7 @@ func TestCanvasFonts(t *testing.T) {
 		t.Fatal(err)
 	}
 	var want []string
+	var lines []float64 // the baselines of the lines that start at the left
 	err := e.Draw(0, true, func(c *Canvas) {
 		y := 20.0
 		for _, name := range standardFonts {
@@ -409,6 +410,7 @@ func TestCanvasFonts(t *testing.T) {
 				continue
 			}
 			want = append(want, s)
+			lines = append(lines, y)
 			w := c.DrawText(s, 10, y, f, 10, black)
 			if asc, desc := f.Metrics(); w <= 0 || asc < 0.5 || desc > -0.1 {
 				t.Errorf("%s: width %v, metrics %v %v", name, w, asc, desc)
@@ -419,7 +421,8 @@ func TestCanvasFonts(t *testing.T) {
 		courier, _ := StandardFont("Courier")
 		helv, _ := StandardFont("Helvetica")
 		bold, _ := StandardFont("Helvetica-Bold")
-		if a, b := courier.Width("iii", 10), courier.Width("WWW", 10); a != b || a != 18 {
+		// (The stand-in without TeX Gyre is a unit of its em wider.)
+		if a, b := courier.Width("iii", 10), courier.Width("WWW", 10); a != b || a < 17.99 || a > 18.01 {
 			t.Errorf("Courier: %v and %v", a, b)
 		}
 		if a, b := helv.Width("Hamburg", 10), bold.Width("Hamburg", 10); a >= b {
@@ -427,6 +430,7 @@ func TestCanvasFonts(t *testing.T) {
 		}
 		// What Helvetica lacks, a fallback font shows.
 		want = append(want, "Preis: 5 λ", "tab stop")
+		lines = append(lines, y)
 		c.DrawText("Preis: 5 λ", 10, y, helv, 10, black)
 		c.DrawText("tab\tstop", 200, y, helv, 10, black)
 		y += 14
@@ -437,6 +441,7 @@ func TestCanvasFonts(t *testing.T) {
 				t.Fatal(err)
 			}
 			want = append(want, "Outlines of CFF")
+			lines = append(lines, y)
 			if w := c.DrawText("Outlines of CFF", 10, y, cff, 10, black); w < 40 || w > 100 {
 				t.Errorf("CFF: width %v", w)
 			}
@@ -464,14 +469,8 @@ func TestCanvasFonts(t *testing.T) {
 	}
 	// Every line shows: dark pixels where it is.
 	img, _ := editRender(t, d, 0)
-	for k := range want {
-		if k == len(want)-2 {
-			continue // the second text of a line
-		}
-		y, dark := 20+14*float64(k), 0
-		if k == len(want)-1 && stdfont.Gyre {
-			y -= 14
-		}
+	for k, y := range lines {
+		dark := 0
 		for x := 10.0; x < 80; x += 0.5 {
 			for dy := -7.0; dy < 0; dy += 0.5 {
 				if c := pixelAt(img, x, y+dy); c.R < 128 {
@@ -480,7 +479,7 @@ func TestCanvasFonts(t *testing.T) {
 			}
 		}
 		if dark < 40 {
-			t.Errorf("line %d (%q) shows %d dark pixels", k, want[k], dark)
+			t.Errorf("line %d, at %v, shows %d dark pixels", k, y, dark)
 		}
 	}
 }
