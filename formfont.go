@@ -30,12 +30,16 @@ import (
 // write the same content — to the glyphs of the subset, and a /ToUnicode
 // map, so that the text can be searched and copied.
 
-// fallbackFont is one fallback font of a document.
+// fallbackFont is one fallback font of a document, or a font a canvas
+// draws text with (canvas.go).
 type fallbackFont struct {
 	res  pdf.Name // its name in the resources of an appearance
 	ref  pdf.Ref  // stands for it where the renderer generates
 	name string   // /BaseFont
 	data []byte
+	// user is a font a caller gave: it is taken as it is, and may have
+	// CFF outlines, which cff then says.
+	user, cff bool
 
 	once  sync.Once
 	prog  *opentype.Font // nil: not a program that can be used
@@ -46,9 +50,10 @@ type fallbackFont struct {
 }
 
 // program returns the parsed program, nil unless it is a TrueType program
-// with a Unicode character map. A variable font whose default is lighter
-// than regular (Noto Sans JP, SC and KR are Thin) is used at weight 400:
-// the file holds a static font, which has the weight of the default.
+// with a Unicode character map; a caller's font may have CFF outlines
+// instead. A variable fallback font whose default is lighter than regular
+// (Noto Sans JP, SC and KR are Thin) is used at weight 400: the file holds
+// a static font, which has the weight of the default.
 func (fb *fallbackFont) program() *opentype.Font {
 	fb.once.Do(func() {
 		p, err := opentype.Parse(fb.data)
@@ -56,7 +61,7 @@ func (fb *fallbackFont) program() *opentype.Font {
 			return
 		}
 		for _, a := range p.Axes() {
-			if a.Tag != "wght" || a.Default >= 400 || a.Max < 400 {
+			if a.Tag != "wght" || a.Default >= 400 || a.Max < 400 || fb.user {
 				continue
 			}
 			if data, err := p.InstanceBytes(map[string]float64{"wght": 400}); err == nil {
@@ -69,7 +74,10 @@ func (fb *fallbackFont) program() *opentype.Font {
 			return
 		}
 		if _, ok := p.Table("glyf"); !ok {
-			return
+			if _, ok := p.Table("CFF "); !ok || !fb.user {
+				return
+			}
+			fb.cff = true
 		}
 		fb.prog, fb.perEm = p, float64(p.UnitsPerEm())
 	})
@@ -162,9 +170,14 @@ func (d *Document) fallbackFont(ref pdf.Ref) *Font {
 // dict returns the font dictionary of the fallback font: a Type 0 font
 // with the Identity-H encoding over the TrueType program file, named name,
 // with the glyph of each code from c2g, the given entries of the CIDFont
-// (/W) and of the font itself (/ToUnicode).
+// (/W) and of the font itself (/ToUnicode). A program of CFF outlines is a
+// CIDFont of type 0, whose codes are its glyphs without a map.
 func (fb *fallbackFont) dict(name string, file, c2g pdf.Object, cid []pdf.Entry, font ...pdf.Entry) pdf.Dict {
 	p := fb.prog
+	fileKey, subtype := pdf.Name("FontFile2"), pdf.Name("CIDFontType2")
+	if fb.cff {
+		fileKey, subtype = "FontFile3", "CIDFontType0"
+	}
 	u := func(v int) pdf.Object { return pdf.Real(math.Round(float64(v) * 1000 / fb.perEm)) }
 	x0, y0, x1, y1 := p.FontBBox()
 	base := pdf.Name(name).Object()
@@ -178,11 +191,14 @@ func (fb *fallbackFont) dict(name string, file, c2g pdf.Object, cid []pdf.Entry,
 		pdf.Entry{Key: "Descent", Val: u(p.Descent())},
 		pdf.Entry{Key: "CapHeight", Val: u(p.CapHeight())},
 		pdf.Entry{Key: "StemV", Val: pdf.Integer(int64(p.StemV()))},
-		pdf.Entry{Key: "FontFile2", Val: file},
+		pdf.Entry{Key: fileKey, Val: file},
 	)
+	if !fb.cff {
+		cid = append([]pdf.Entry{{Key: "CIDToGIDMap", Val: c2g}}, cid...)
+	}
 	kid := append([]pdf.Entry{
 		{Key: "Type", Val: pdf.Name("Font").Object()},
-		{Key: "Subtype", Val: pdf.Name("CIDFontType2").Object()},
+		{Key: "Subtype", Val: subtype.Object()},
 		{Key: "BaseFont", Val: base},
 		{Key: "CIDSystemInfo", Val: pdf.NewDict(
 			pdf.Entry{Key: "Registry", Val: pdf.String([]byte("Adobe"))},
@@ -190,7 +206,6 @@ func (fb *fallbackFont) dict(name string, file, c2g pdf.Object, cid []pdf.Entry,
 			pdf.Entry{Key: "Supplement", Val: pdf.Integer(0)},
 		).Object()},
 		{Key: "FontDescriptor", Val: desc.Object()},
-		{Key: "CIDToGIDMap", Val: c2g},
 		{Key: "DW", Val: pdf.Integer(1000)},
 	}, cid...)
 	return pdf.NewDict(append([]pdf.Entry{
@@ -288,15 +303,26 @@ func (ef *editFonts) finish() {
 		// finds its glyph. A program that cannot be subset is written
 		// whole.
 		program, c2g := fb.data, pdf.Name("Identity").Object()
-		if sub, renumbered, err := fb.prog.SubsetTrueType(gids); err == nil {
-			program = sub
-			m := make([]byte, 2*(int(gids[len(gids)-1])+1))
-			for _, g := range gids {
-				binary.BigEndian.PutUint16(m[2*int(g):], uint16(renumbered[g]))
+		var file pdf.Object
+		if fb.cff {
+			// The CFF table alone, the glyphs not used emptied: they
+			// keep their numbers.
+			table, _ := fb.prog.Table("CFF ")
+			if sub, err := fb.prog.SubsetCFF(gids); err == nil {
+				table = sub
 			}
-			c2g = add(pdfwrite.Flate(pdf.NewDict(), m).Object())
+			file = add(pdfwrite.Flate(pdf.NewDict(pdf.Entry{Key: "Subtype", Val: pdf.Name("CIDFontType0C").Object()}), table).Object())
+		} else {
+			if sub, renumbered, err := fb.prog.SubsetTrueType(gids); err == nil {
+				program = sub
+				m := make([]byte, 2*(int(gids[len(gids)-1])+1))
+				for _, g := range gids {
+					binary.BigEndian.PutUint16(m[2*int(g):], uint16(renumbered[g]))
+				}
+				c2g = add(pdfwrite.Flate(pdf.NewDict(), m).Object())
+			}
+			file = add(pdfwrite.Flate(pdf.NewDict(pdf.Entry{Key: "Length1", Val: pdf.Integer(int64(len(program)))}), program).Object())
 		}
-		file := add(pdfwrite.Flate(pdf.NewDict(pdf.Entry{Key: "Length1", Val: pdf.Integer(int64(len(program)))}), program).Object())
 
 		// /W: runs of consecutive codes, each with its widths, not
 		// rounded: a line is as long in the file as the renderer drew it.

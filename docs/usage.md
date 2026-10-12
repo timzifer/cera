@@ -461,6 +461,47 @@ err = e.ImportPagesWith(e.NumPages(), other, cera.ImportOptions{
 Bookmarks and names whose page is not in the result are left out. The
 structure tree does not come: imported pages are untagged.
 
+`AddPage` makes a blank page, and `Draw` draws on any page of the result —
+over its content or under it — with a `Canvas` in points of the displayed
+page, the origin at the top left, as everywhere in the editor: a watermark,
+page numbers, a header, a cover sheet, pages of scanned images, several
+pages on a sheet.
+
+```go
+font, err := cera.StandardFont("Helvetica") // or cera.NewCanvasFont(ttf)
+logo := cera.NewCanvasImage(img)             // or cera.NewCanvasJPEG(data)
+
+err = e.AddPage(0, 595, 842) // a cover sheet, A4
+for i := range e.NumPages() {
+	err = e.Draw(i, true, func(c *cera.Canvas) {
+		w, h := c.Size()
+		label := fmt.Sprintf("%d / %d", i+1, e.NumPages())
+		c.DrawText(label, (w-font.Width(label, 9))/2, h-24, font, 9, color.Gray{90})
+		c.DrawImage(logo, cera.Rect{X0: w - 96, Y0: 24, X1: w - 24, Y1: 48})
+
+		c.Save()
+		c.SetOpacity(0.15)
+		c.Transform(cera.Matrix{0.7, -0.7, 0.7, 0.7, w / 2, h / 2}) // turned about the middle
+		c.DrawText("DRAFT", -120, 30, font, 80, color.RGBA{200, 0, 0, 255})
+		c.Restore()
+	})
+}
+```
+
+A canvas fills, strokes and clips paths (`cera.Path`), with an opacity and
+a blend mode; draws images, a JPEG as it is and anything else compressed
+without loss, with its alpha; draws text in the standard 14 fonts or in a
+TrueType or OpenType font, of which the file gets the glyphs drawn; and
+draws another page (`DrawPage`), for sheets of several pages and for a
+stamp that is a PDF. Text is one line, character by character: there is no
+shaping and no line breaking. A font or an image made once is one object
+in the file however many pages show it.
+
+The content of a page drawn on is kept as it is: a drawing is a form of
+its own before or after it. It belongs to its page — it moves and turns
+with it. In an encrypted document, drawing needs the permission to modify;
+a certification forbids it.
+
 `SetFields` records the values of a `FormState` of the edited document
 that differ from what the file holds: a text as a text string (its rich
 text value removed), a button state as a name with every widget's `/AS`,

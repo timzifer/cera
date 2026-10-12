@@ -46,6 +46,8 @@ e.MovePage(from, to)
 e.RotatePage(i, 90)
 e.SetFields(state)        // state from d.Form().NewState() (#92)
 e.AddAnnotation(i, a)     // and SetAnnotation, RemoveAnnotation (#125)
+e.AddPage(at, w, h)       // a blank page (#136)
+e.Draw(i, over, func(c *cera.Canvas) { ... }) // on any page
 
 e.Save(w)                 // the whole file, new
 e.Update(w)               // d's bytes and the changes appended (#91)
@@ -67,6 +69,19 @@ e.Update(w)               // d's bytes and the changes appended (#91)
   their page labels. This is asked per import, not per page, and what a
   document brings is one thing for all its pages. The structure tree does
   not come yet.
+- **What an editor draws is a form of its own** (#136). `Draw` hands out
+  a `Canvas` in points of the displayed page and writes what it drew as a
+  form XObject with its own resources, whose matrix takes it to the user
+  space of the page; the page's content goes between `q` and `Q` and the
+  form is painted before or after it. So the content of a page is neither
+  parsed nor rewritten, a page drawn on gets one name more in its
+  resources, and names of fonts and images cannot collide with the
+  page's. `Canvas` is the public form of the writer the generators of
+  appearances use, and its fonts are embedded as the fallback fonts of
+  generated appearances are. Another page is drawn as a form made of its
+  content and resources. The alternative, a `Device` that writes PDF so
+  that anything cera interprets can be written again, is larger and was
+  not needed for stamps, page numbers, cover sheets and n-up.
 - **Deleting a page** removes what hangs on it alone: its annotations, and
   form fields whose widgets were all on deleted pages. Outline entries,
   links and named destinations that pointed at it lose their target.
@@ -98,8 +113,8 @@ e.Update(w)               // d's bytes and the changes appended (#91)
   what rendering and writing share (the form model, appearance
   generation) is used by both, so what is shown and what is saved cannot
   drift apart.
-- Generating pages later (`AddPage` with a canvas, embedded fonts) is
-  another editor method, not a new package.
+- Generating pages (`AddPage`, `Draw` with a canvas, embedded fonts) are
+  editor methods, not a new package.
 
 ## Alternatives considered
 

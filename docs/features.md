@@ -159,6 +159,11 @@ Fonts a file does not embed:
 - With `/EncryptMetadata false` the XMP stream is read as stored
 - `Editor.ImportPagesWith`: imported pages bring their outline entries,
   named destinations and page labels
+- `Editor.AddPage` and `Editor.Draw`: blank pages, and drawings over or
+  under the content of any page — paths, images (JPEG as it is, others
+  Flate with a soft mask), text in the standard 14 fonts and in embedded
+  subsets of TrueType and OpenType fonts, other pages as forms; opacity
+  and blend modes
 - `Editor.Save` keeps the encryption of a document; `Editor.SaveWith`
   encrypts (AES-256, user and owner password, permissions) or decrypts
 - `Editor.SetMetadata` writes `/Info` and the XMP packet in agreement,
