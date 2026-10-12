@@ -54,6 +54,8 @@ func outlineString(items []OutlineItem, depth int) string {
 		case t == nil:
 		case t.URI != "":
 			b.WriteString(" -> " + t.URI)
+		case !t.leads():
+			b.WriteString(" (" + t.Action + ")")
 		default:
 			fmt.Fprintf(&b, " -> page %d %s", t.Page, t.Fit)
 		}
@@ -72,7 +74,7 @@ func TestOutline(t *testing.T) {
 Übersicht 1 -> page 1 FitH
 Action -> page 2 Fit
 Web -> https://example.com/
-Script
+Script (JavaScript)
 Element -> page 1 XYZ
 Closed
   Hidden child -> page 2 Fit

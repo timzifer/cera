@@ -235,8 +235,12 @@ case cera.HitLink: // hand; on click:
 		open(t.URI)
 	} else if d, ok := doc.Destination(&t); ok {
 		show(d.Page, d.Fit, d.X, d.Y, d.Zoom, d.Rect) // displayed points of page d.Page
+	} else if n, ok := t.NamedPage(current, doc.NumPages()); ok {
+		showPage(n) // /Named: NextPage, PrevPage, FirstPage, LastPage
 	} else if t.External {
-		ask(t.File) // /GoToR, /Launch: cera follows neither
+		ask(t.File) // /GoToR, /GoToE, /Launch: cera follows none of them
+	} else {
+		say(t.Action) // "JavaScript", "SubmitForm", ...: nothing cera runs
 	}
 case cera.HitWidget: // the form layer's; h.Widget
 case cera.HitText:   // I-beam; h.Pos starts a selection
@@ -245,7 +249,11 @@ case cera.HitText:   // I-beam; h.Pos starts a selection
 
 `Page.Links` returns the link annotations with their quads (from
 `/QuadPoints`, else the rectangle), `PageText.URLs` the addresses written
-in the text.
+in the text. Every link with a destination or an action is one:
+`LinkTarget.Action` names the action, and of chained actions (`/Next`)
+the target is the first that leads somewhere — a script before a `GoTo`
+is skipped. A relative URI is resolved against the document's base
+(`/URI /Base`).
 
 `Page.Annotations` lists the annotations, and for the markup among them
 (notes, highlights, ink, shapes, free text, stamps) `Markup` says what a

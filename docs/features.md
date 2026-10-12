@@ -100,6 +100,10 @@ Fonts a file does not embed:
   the icons of Text and FileAttachment, Caret, the standard stamps, and
   with `RenderOptions.LinkBorders` the border of a link that has `/Border`
   or `/BS`; with `/CA`, which an appearance stream overrides
+- Link targets: destinations (explicit, named — looked up by the bytes of
+  the name), GoTo, GoToR, GoToE, Launch, URI (with the document's base and
+  `/IsMap`) and Named actions, the first of chained actions that leads
+  somewhere, and the type of any other action
 - `Page.Annotations` with link targets and, for markup annotations,
   `Markup`: author, subject, dates, rich text, colours, opacity, border,
   geometry in displayed points (quads, ink strokes, vertices, line and its
