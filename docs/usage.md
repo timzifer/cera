@@ -235,6 +235,23 @@ case cera.HitText:   // I-beam; h.Pos starts a selection
 `/QuadPoints`, else the rectangle), `PageText.URLs` the addresses written
 in the text.
 
+`Document.Outline` returns the bookmarks for a side panel, a tree of
+entries with a title, its style and a target that resolves like a link's:
+
+```go
+var show func(items []cera.OutlineItem, depth int)
+show = func(items []cera.OutlineItem, depth int) {
+	for _, it := range items {
+		row := addRow(depth, it.Title, it.Bold, it.Italic, it.Color, it.Open)
+		if d, ok := doc.Destination(it.Target); ok {
+			row.onClick(func() { goTo(d) })
+		}
+		show(it.Children, depth+1)
+	}
+}
+show(doc.Outline(), 0)
+```
+
 ## Metadata
 
 ```go

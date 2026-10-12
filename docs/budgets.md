@@ -35,6 +35,8 @@ A test keeps this table in step with the code.
 | `maxInfoEntries` | 256 | – | entries of /Info beyond the standard ones kept in Metadata.Custom; further ones are left out |
 | `maxInfoString` | 64 Ki | – | bytes of one decoded /Info string in Metadata; a longer one is cut |
 | `maxXMPBytes` | 16 Mi | – | bytes of the decoded XMP metadata stream; a larger one is left out of Metadata |
+| `maxOutlineDepth` | 32 | – | levels of the document outline; deeper entries are not read |
+| `maxOutlineItems` | 64 Ki | – | entries of the document outline; further ones are not read |
 | `content.MaxNesting` | 32 | – | arrays and dictionaries nested in one operand (Stats.Errors) |
 | `content.MaxOperands` | 4 Ki | – | operands kept for one operator; the first are dropped |
 | `cmap.MaxSpans` | 128 Ki | – | code ranges of one CMap; further ones are ignored |
