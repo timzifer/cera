@@ -38,6 +38,8 @@ A test keeps this table in step with the code.
 | `maxOutlineDepth` | 32 | – | levels of the document outline; deeper entries are not read |
 | `maxOutlineItems` | 64 Ki | – | entries of the document outline; further ones are not read |
 | `maxActions` | 16 | – | actions chained to that of a link or outline entry (/Next), and targets of a /GoToE; further ones are not read |
+| `maxLabelDepth` | 16 | – | levels of the number tree of page labels; deeper nodes are not read |
+| `maxLabelNodes` | 64 Ki | – | nodes of the number tree of page labels; further ones are not read |
 | `content.MaxNesting` | 32 | – | arrays and dictionaries nested in one operand (Stats.Errors) |
 | `content.MaxOperands` | 4 Ki | – | operands kept for one operator; the first are dropped |
 | `cmap.MaxSpans` | 128 Ki | – | code ranges of one CMap; further ones are ignored |
