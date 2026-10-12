@@ -47,6 +47,9 @@ type Document struct {
 	pageIdxOnce sync.Once
 	pageIdx     map[pdf.Ref]int // page index by reference, for links
 
+	outlineOnce sync.Once
+	outline     []OutlineItem // the document outline, read on first use
+
 	structOnce  sync.Once
 	structMCIDs map[int][]int // marked-content identifiers by page, in structure order
 
