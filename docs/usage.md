@@ -235,6 +235,25 @@ case cera.HitText:   // I-beam; h.Pos starts a selection
 `/QuadPoints`, else the rectangle), `PageText.URLs` the addresses written
 in the text.
 
+`Page.Annotations` lists the annotations, and for the markup among them
+(notes, highlights, ink, shapes, free text, stamps) `Markup` says what a
+comments panel shows: author and dates, colour, the exact geometry in
+points of the displayed page, the popup, and which annotation one replies
+to:
+
+```go
+for _, a := range page.Annotations() {
+	m := a.Markup
+	if m == nil || m.Reply != nil {
+		continue // no markup, or a reply: shown under its annotation
+	}
+	addComment(a.Index, a.Subtype, m.Author, m.Modified, a.Contents, m.Bounds)
+}
+```
+
+A highlight written with `Editor.AddHighlight` reads back with the quads,
+colour, opacity, author, date and note it was made from.
+
 `Document.Outline` returns the bookmarks for a side panel, a tree of
 entries with a title, its style and a target that resolves like a link's:
 

@@ -33,8 +33,11 @@ const (
 type Annotation struct {
 	Index   int    // position in /Annots
 	Subtype string // "Text", "Link", "Widget", "Square", ...
-	Rect    Rect   // in default user space
-	Flags   AnnotFlags
+	// Rect is the rectangle in default user space, which
+	// Page.DisplayMatrix maps to points of the displayed page;
+	// Markup.Bounds is the result for a markup annotation.
+	Rect  Rect
+	Flags AnnotFlags
 	// Contents is the text of the annotation, or its alternate
 	// description.
 	Contents string
@@ -42,6 +45,10 @@ type Annotation struct {
 	// Link is the target of a Link annotation; nil for other types and
 	// for links that go nowhere cera can name.
 	Link *LinkTarget
+	// Markup is what a markup annotation says about itself — author,
+	// dates, colours, geometry, popup, replies; nil for the other types:
+	// Link, Popup, Widget and those that hold media or printing marks.
+	Markup *Markup
 
 	dict  pdf.Dict
 	state pdf.Name // /AS
@@ -118,6 +125,7 @@ func (p *Page) Annotations() []Annotation {
 			}
 		}()
 		p.annots, p.annBad = p.doc.readAnnots(p.dict.Get("Annots"))
+		p.readMarkup(p.annots)
 	})
 	return p.annots
 }
