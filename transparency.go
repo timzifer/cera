@@ -110,6 +110,13 @@ type softPlane struct {
 var opaque = Paint{Color: color.RGBA{255, 255, 255, 255}}
 
 func (t *layers) reset(dst *image.RGBA, region image.Rectangle) {
+	// The bound may have been lowered since the buffers were kept.
+	for lim := int(freeLayerBytes.Load()); t.freeBytes > lim && len(t.free) > 0; {
+		last := len(t.free) - 1
+		t.freeBytes -= cap(t.free[last])
+		t.free[last] = nil
+		t.free = t.free[:last]
+	}
 	for i := range t.stack {
 		t.drop(&t.stack[i])
 	}
@@ -158,7 +165,7 @@ func (t *layers) buf(n int) []byte {
 }
 
 func (t *layers) release(b []byte) {
-	if cap(b) == 0 || t.freeBytes+cap(b) > maxFreeLayerBytes {
+	if cap(b) == 0 || t.freeBytes+cap(b) > int(freeLayerBytes.Load()) {
 		return
 	}
 	t.free = append(t.free, b[:0])

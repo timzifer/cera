@@ -45,6 +45,40 @@ func TestFind(t *testing.T) {
 	}
 }
 
+// Two places in the text of one /ActualText are one place on the page:
+// its glyphs are found whole (#138).
+func TestFindInActualText(t *testing.T) {
+	var chars []TextChar
+	for i, s := range []string{"o", "ffe", "", "", "r"} {
+		x := float64(10 + 6*i)
+		q := Quad{[4][2]float64{{x, 10}, {x + 6, 10}, {x, 22}, {x + 6, 22}}}
+		c := TextChar{Text: s, Origin: [2]float64{x, 20}, Size: 12, Advance: 6, Dir: [2]float64{1, 0}, Quad: q, Box: q.Bounds(), MCID: -1}
+		if i >= 1 && i <= 3 {
+			c.group = 1
+		}
+		chars = append(chars, c)
+	}
+	text := layoutText(chars, nil, false)
+	for _, c := range []struct {
+		query string
+		want  []TextRange
+	}{
+		{"f", []TextRange{{1, 4}}},
+		{"ffe", []TextRange{{1, 4}}},
+		{"of", []TextRange{{0, 4}}},
+		{"er", []TextRange{{1, 5}}},
+		{"r", []TextRange{{4, 5}}},
+	} {
+		var got []TextRange
+		for _, m := range text.Find(c.query, SearchOptions{}) {
+			got = append(got, m.Range)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(c.want) {
+			t.Errorf("Find(%q) = %v, want %v", c.query, got, c.want)
+		}
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	for _, c := range []struct {
 		s           string

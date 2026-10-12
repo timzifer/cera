@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"runtime"
 	"sync"
 	"sync/atomic"
 )
@@ -34,7 +35,8 @@ type Document struct {
 
 	tab      atomic.Pointer[table]
 	repairMu sync.Mutex
-	cache    streamCache
+	cache    *StreamCache
+	id       uint64 // what the cache knows the document's streams by
 
 	resolveFn func(Object) Object
 }
@@ -47,6 +49,11 @@ type Options struct {
 	// StreamCacheBytes bounds the cache of decoded streams: 0 means
 	// DefaultStreamCacheBytes, a negative value turns the cache off.
 	StreamCacheBytes int
+	// StreamCache, if set, is the cache of decoded streams, shared with
+	// the other documents opened with it; StreamCacheBytes is ignored.
+	// What a document has in it leaves with [Document.TrimCache], or
+	// when the document is collected.
+	StreamCache *StreamCache
 }
 
 // Open parses the cross-reference information of a PDF file held in memory,
@@ -74,14 +81,27 @@ func OpenReaderAt(r io.ReaderAt, size int64, opt Options) (*Document, error) {
 	return open(readerSource{r, size}, opt)
 }
 
+// cacheOwner is a document in a shared cache.
+type cacheOwner struct {
+	cache *StreamCache
+	id    uint64
+}
+
+// TrimCache drops the decoded streams the document has in its cache. They
+// are decoded again when they are next used.
+func (d *Document) TrimCache() { d.cache.drop(d.id) }
+
 func open(src source, opt Options) (*Document, error) {
-	d := &Document{src: src, password: opt.Password, version: version(src)}
+	d := &Document{src: src, password: opt.Password, version: version(src), id: owners.Add(1)}
 	d.resolveFn = d.Resolve
 	switch {
+	case opt.StreamCache != nil:
+		d.cache = opt.StreamCache
+		runtime.AddCleanup(d, func(o cacheOwner) { o.cache.drop(o.id) }, cacheOwner{d.cache, d.id})
 	case opt.StreamCacheBytes == 0:
-		d.cache.init(DefaultStreamCacheBytes)
-	case opt.StreamCacheBytes > 0:
-		d.cache.init(opt.StreamCacheBytes)
+		d.cache = NewStreamCache(DefaultStreamCacheBytes)
+	default:
+		d.cache = NewStreamCache(opt.StreamCacheBytes)
 	}
 	ctx := getCtx()
 	defer putCtx(ctx)
@@ -638,7 +658,7 @@ func (d *Document) PageContents(i int) (Decoded, error) {
 	if !ok {
 		return Decoded{}, nil
 	}
-	return d.cache.get(info.key, func() Decoded {
+	return d.cache.get(d.id, info.key, func() Decoded {
 		var out Decoded
 		for _, e := range a {
 			s, ok := d.Resolve(e).Stream()
@@ -812,7 +832,7 @@ func (d *Document) Decode(s *Stream) Decoded {
 	if s.Ref.Num <= 0 {
 		return d.DecodeUncached(s)
 	}
-	return d.cache.get(s, func() Decoded { return d.DecodeUncached(s) })
+	return d.cache.get(d.id, s, func() Decoded { return d.DecodeUncached(s) })
 }
 
 // DecodeUncached is Decode without the cache, for streams whose consumer

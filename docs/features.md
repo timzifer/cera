@@ -127,6 +127,8 @@ Fonts a file does not embed:
 - `Document.PageLabel` and `PageByLabel`: page labels (roman, decimal,
   letters, prefixes), read leniently; the editor keeps them with their
   pages
+- `Document.ViewSettings`: how a document asks to be opened and printed
+  (`/OpenAction`, `/PageMode`, `/PageLayout`, `/ViewerPreferences`)
 - `Document.Outline`: the bookmarks as a tree, with titles, style, open
   state and targets (destinations, GoTo, URI, GoToR and Launch actions,
   structure elements)

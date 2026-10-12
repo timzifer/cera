@@ -52,10 +52,14 @@ const (
 	maxCompareNodes   = 1 << 20  // objects compared to tell what changed after a signature
 	maxLabelDepth     = 16       // levels of the number tree of page labels
 	maxLabelNodes     = 1 << 16  // nodes of the number tree of page labels
+	maxPrintRanges    = 1 << 10  // page ranges of /PrintPageRange
 )
 
 // Caches bound memory kept for reuse; past them entries are dropped and
-// drawing does not change. maxReplayCells only chooses how pattern cells
+// drawing does not change. The first three are defaults: of
+// OpenOptions.ImageCacheBytes and of SetPoolLimits (cache.go), as
+// pdf.DefaultStreamCacheBytes is of OpenOptions.StreamCacheBytes.
+// maxReplayCells only chooses how pattern cells
 // are drawn, maxRunPoints how many strokes or fills of one pen are drawn
 // as one union (displaylist.go); past it, the next run starts.
 const (
@@ -113,6 +117,7 @@ var budgets = []budget{
 	{"maxCompareNodes", maxCompareNodes, "", "objects compared to tell what was appended after a signature; past it the changes count as Other"},
 	{"maxLabelDepth", maxLabelDepth, "", "levels of the number tree of page labels; deeper nodes are not read"},
 	{"maxLabelNodes", maxLabelNodes, "", "nodes of the number tree of page labels; further ones are not read"},
+	{"maxPrintRanges", maxPrintRanges, "", "page ranges of /PrintPageRange in ViewSettings; further ones are left out"},
 	{"content.MaxNesting", content.MaxNesting, "", "arrays and dictionaries nested in one operand (Stats.Errors)"},
 	{"content.MaxOperands", content.MaxOperands, "", "operands kept for one operator; the first are dropped"},
 	{"cmap.MaxSpans", cmap.MaxSpans, "", "code ranges of one CMap; further ones are ignored"},
@@ -128,11 +133,11 @@ var budgets = []budget{
 	{"pdf.MaxPageTreeDepth", pdf.MaxPageTreeDepth, "", "page tree nodes nested in each other; deeper pages are not found"},
 	{"pdf.MaxObjectWindow", pdf.MaxObjectWindow, "", "bytes read to parse one object of a file opened with OpenReaderAt; a larger object is not read"},
 
-	{"imageCacheBytes", imageCacheBytes, "", "decoded images a document keeps"},
-	{"pdf.DefaultStreamCacheBytes", pdf.DefaultStreamCacheBytes, "", "decoded streams (content, forms, Type 3 glyphs, functions) a document keeps"},
+	{"imageCacheBytes", imageCacheBytes, "", "decoded images a document keeps, unless OpenOptions.ImageCacheBytes or a Cache says otherwise"},
+	{"pdf.DefaultStreamCacheBytes", pdf.DefaultStreamCacheBytes, "", "decoded streams (content, forms, Type 3 glyphs, functions) a document keeps, unless OpenOptions.StreamCacheBytes or a Cache says otherwise"},
 	{"pdf.MaxCachedStream", pdf.MaxCachedStream, "", "largest decoded stream kept; larger ones are decoded on every use"},
-	{"maxFreeLayerBytes", maxFreeLayerBytes, "", "transparency layer buffers a device keeps"},
-	{"maxIdleGlyphCaches", maxIdleGlyphCaches, "", "glyph mask caches kept between renders"},
+	{"maxFreeLayerBytes", maxFreeLayerBytes, "", "transparency layer buffers a device keeps, unless SetPoolLimits says otherwise"},
+	{"maxIdleGlyphCaches", maxIdleGlyphCaches, "", "glyph mask caches kept between renders, unless SetPoolLimits says otherwise"},
 	{"maxMeshShaders", maxMeshShaders, "", "mesh shaders kept per mesh"},
 	{"maxReplayCells", maxReplayCells, "", "pattern cells drawn as vector operations instead of a tile"},
 	{"maxRunPoints", maxRunPoints, "", "points of consecutive strokes or fills of one pen drawn as one union; past it, the next union starts"},

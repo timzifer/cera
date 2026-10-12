@@ -45,13 +45,19 @@ type TextMatch struct {
 // Find returns the places of query in the text, in reading order and not
 // overlapping. The text is searched as String has it, with runs of white
 // space as one space, soft hyphens left out and words broken across lines
-// (TextLine.Hyphenated) joined; so is the query.
+// (TextLine.Hyphenated) joined; so is the query. Places that share
+// characters, as two in the text of one /ActualText do, are one place, the
+// first.
 func (t *PageText) Find(query string, opt SearchOptions) []TextMatch {
 	c := t.searchCache()
 	n := c.normText(t, opt)
 	var out []TextMatch
 	for _, m := range n.find(n.query(query), opt.WholeWord) {
-		out = append(out, c.match(t, n, m[0], m[1], opt.Context))
+		tm := c.match(t, n, m[0], m[1], opt.Context)
+		if len(out) > 0 && tm.Range.Start < out[len(out)-1].Range.End {
+			continue
+		}
+		out = append(out, tm)
 	}
 	return out
 }

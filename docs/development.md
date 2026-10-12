@@ -28,6 +28,7 @@ Locally:
 go run ./cmd/corpus fetch  -dir testdata/corpus   # pinned files, SHA-256 verified
 go run ./cmd/corpus scenes -dir testdata/corpus   # synthetic drawings
 go run ./cmd/corpus run    -dir testdata/corpus -dpi 150 -out report
+go run ./cmd/corpus run    -dir testdata/corpus -api -pages 3   # text, links and the editor
 
 go run ./cmd/corpus sources                       # the large corpora
 go run ./cmd/corpus get -source borb              # → testdata/borb
@@ -38,6 +39,21 @@ go run ./cmd/corpus run -dir testdata/borb -runs 0 -sample 50 -seed 7   # a batc
 
 Customer drawings stay local: pass their directory as another `-dir`
 (comma-separated); they are reported as category `local`.
+
+`run -api` does not time renders. It runs what a viewer and an editor ask
+of a document beyond drawing it, per file: the text of the pages, with
+round trips of selection and search (offsets ascending, a selection grown
+by its unit, a word found where it stands and found again by its quote);
+the links, where they lead and what lies under them; and the editor — the
+file saved anew, updated with a highlight, its form and annotations
+flattened — each opened again with the pages it had and its first page
+compared with what the document shows (a page is reported when more than
+0.1 % of its pixels differ by more than 16 levels). The gate is that of
+rendering: a panic, a hang or a deadline fails the run, and with
+`-fail-open` a file that does not open. Everything else is listed in the
+report as a difference, and what a document does not allow — it is signed,
+certified, protected or needed a repair — as refused. CI runs it on the
+pinned corpus, the weekly workflow on the batches of the large corpora.
 
 `-workers` sets the goroutines per page (default 1, the single-core figure
 of the spec; 0 = all cores). Every page is timed twice per run: a first

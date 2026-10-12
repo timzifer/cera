@@ -32,8 +32,7 @@ func TestDecodeIsCachedAndShared(t *testing.T) {
 }
 
 func TestStreamCacheSingleFlight(t *testing.T) {
-	var c streamCache
-	c.init(1 << 20)
+	c := NewStreamCache(1 << 20)
 	s := &Stream{Ref: Ref{Num: 3}}
 	var calls atomic.Int32
 	release := make(chan struct{})
@@ -42,7 +41,7 @@ func TestStreamCacheSingleFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c.get(s, func() Decoded {
+			c.get(1, s, func() Decoded {
 				calls.Add(1)
 				<-release
 				return Decoded{Data: []byte("x")}
@@ -57,11 +56,10 @@ func TestStreamCacheSingleFlight(t *testing.T) {
 }
 
 func TestStreamCacheBound(t *testing.T) {
-	var c streamCache
-	c.init(cacheShards * 10_000)
+	c := NewStreamCache(cacheShards * 10_000)
 	for i := range 1000 {
 		s := &Stream{Ref: Ref{Num: int32(i)}}
-		c.get(s, func() Decoded { return Decoded{Data: make([]byte, 1000)} })
+		c.get(1, s, func() Decoded { return Decoded{Data: make([]byte, 1000)} })
 	}
 	for i := range c.shards {
 		sh := &c.shards[i]
@@ -77,10 +75,10 @@ func TestStreamCacheBound(t *testing.T) {
 		}
 	}
 	// Off: nothing is kept.
-	var off streamCache
+	off := NewStreamCache(-1)
 	calls := 0
 	for range 3 {
-		off.get(&Stream{}, func() Decoded { calls++; return Decoded{} })
+		off.get(1, &Stream{}, func() Decoded { calls++; return Decoded{} })
 	}
 	if calls != 3 {
 		t.Error("a disabled cache cached")
@@ -116,5 +114,66 @@ func TestPageIsBuiltOnce(t *testing.T) {
 	p2, _ := d.Page(1)
 	if fmt.Sprint(p1) != fmt.Sprint(p2) {
 		t.Error("page changed")
+	}
+}
+
+// cached returns the number of streams c holds and their bytes.
+func (c *StreamCache) cached() (n, bytes int) {
+	for i := range c.shards {
+		sh := &c.shards[i]
+		sh.mu.Lock()
+		n += len(sh.m)
+		bytes += sh.bytes
+		sh.mu.Unlock()
+	}
+	return n, bytes
+}
+
+func TestStreamCacheShared(t *testing.T) {
+	c := NewStreamCache(1 << 20)
+	data := file{objs: onePage("0 0 m 1 1 l S"), trailer: "/Root 1 0 R"}.bytes()
+	open := func() *Document {
+		d, err := OpenWith(data, Options{StreamCache: c, StreamCacheBytes: -1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	a, b := open(), open()
+	sa, _ := mustGet(t, a, 4).Stream()
+	sb, _ := mustGet(t, b, 4).Stream()
+	da := a.Decode(sa).Data
+	b.Decode(sb)
+	if n, _ := c.cached(); n != 2 {
+		t.Fatalf("%d streams of two documents cached", n)
+	}
+	// One document trimmed: the other keeps what it has.
+	a.TrimCache()
+	if n, _ := c.cached(); n != 1 {
+		t.Errorf("%d streams cached after one document was trimmed", n)
+	}
+	if again := b.Decode(sb).Data; string(again) != string(da) {
+		t.Errorf("decoded %q", again)
+	}
+	if again := a.Decode(sa).Data; string(again) != string(da) {
+		t.Errorf("a trimmed stream decodes to %q", again)
+	}
+	if n, _ := c.cached(); n != 2 {
+		t.Errorf("%d streams cached after the trimmed one was decoded again", n)
+	}
+	c.Trim()
+	if n, bytes := c.cached(); n != 0 || bytes != 0 {
+		t.Errorf("%d streams, %d bytes after Trim", n, bytes)
+	}
+	// A stream being decoded while the cache is trimmed is kept.
+	trimmed := make(chan struct{})
+	c.get(7, &Stream{Ref: Ref{Num: 9}}, func() Decoded {
+		c.Trim()
+		close(trimmed)
+		return Decoded{Data: []byte("x")}
+	})
+	<-trimmed
+	if n, bytes := c.cached(); n != 1 || bytes == 0 {
+		t.Errorf("%d streams, %d bytes after a decode across Trim", n, bytes)
 	}
 }

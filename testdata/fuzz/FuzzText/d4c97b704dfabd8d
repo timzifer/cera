@@ -1,0 +1,6 @@
+go test fuzz v1
+[]byte("\xe100000A0A0 00200\xec0\t10100")
+string("A")
+bool(false)
+uint16(1)
+uint16(1)

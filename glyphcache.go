@@ -41,7 +41,7 @@ func getGlyphCache() *glyphCache {
 func putGlyphCache(gc *glyphCache) {
 	gcs := &glyphCaches
 	gcs.Lock()
-	if gc != nil && len(gcs.free) < maxIdleGlyphCaches {
+	if gc != nil && len(gcs.free) < int(idleGlyphCaches.Load()) {
 		gcs.free = append(gcs.free, gc)
 	}
 	gcs.Unlock()

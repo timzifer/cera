@@ -97,12 +97,15 @@ func (t *PageText) findURLs() []Link {
 		if strings.HasSuffix(u, "//") || strings.HasSuffix(u, ":") || strings.EqualFold(u, "www.") {
 			continue // a scheme without an address
 		}
-		r := t.RangeOfOffsets(m[0], m[0]+len(u))
+		quads := t.Quads(t.RangeOfOffsets(m[0], m[0]+len(u)))
+		if len(quads) == 0 {
+			continue // text without a place on the page
+		}
 		uri := u
 		if strings.HasPrefix(strings.ToLower(u), "www.") {
 			uri = "http://" + u
 		}
-		out = append(out, Link{Index: -1, Quads: t.Quads(r), Target: LinkTarget{URI: uri, Page: -1}})
+		out = append(out, Link{Index: -1, Quads: quads, Target: LinkTarget{URI: uri, Page: -1}})
 	}
 	return out
 }
