@@ -217,7 +217,9 @@ func TestRedact(t *testing.T) {
 		return text.Chars[ms[0].Range.Start].Origin
 	}
 	for _, s := range []string{"Public", "words", "Left", "right", "Keep", "Form", "text", "Inner", "end"} {
-		if a, b := where(before, s), where(after, s); !samePoints([][2]float64{a}, [][2]float64{b}) {
+		// To the thousandth of a point: the numbers that stand for the
+		// glyphs are written to four places.
+		if a, b := where(before, s), where(after, s); math.Abs(a[0]-b[0]) > 1e-3 || math.Abs(a[1]-b[1]) > 1e-3 {
 			t.Errorf("%q moved from %v to %v", s, a, b)
 		}
 	}
@@ -538,8 +540,6 @@ func TestRedactText(t *testing.T) {
 		a, b   int // which of them before and after
 		before string
 	}{{"line", 1, 1, ""}, {"line", 2, 2, ""}, {"second", 0, 0, ""}, {"third", 0, 0, ""}, {"after", 0, 0, ""}, {"here", 0, 0, ""}, {"here", 1, 1, ""}, {"twice", 1, 1, ""}} {
-		// To the thousandth of a point: the numbers that stand for the
-		// glyphs are written to four places.
 		if a, b := where(before, c.s, c.a), where(after, c.s, c.b); math.Abs(a[0]-b[0]) > 1e-3 || math.Abs(a[1]-b[1]) > 1e-3 {
 			t.Errorf("%q moved from %v to %v", c.s, a, b)
 		}
