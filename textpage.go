@@ -58,7 +58,8 @@ type PageText struct {
 	// in reading order.
 	Blocks []TextBlock
 
-	plain *plainText // String and offsets, made on first use
+	plain  *plainText   // String and offsets, made on first use
+	search *searchCache // text to search, made on first use
 }
 
 // TextLine is a line of text: characters on one baseline, close enough to

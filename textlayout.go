@@ -114,6 +114,7 @@ func layoutText(chars []TextChar, ranks map[int]int) *PageText {
 		Lines:  make([]TextLine, 0, len(lines)),
 		Blocks: make([]TextBlock, 0, len(blocks)),
 		plain:  new(plainText),
+		search: new(searchCache),
 	}
 	for _, bi := range order {
 		b := &blocks[bi]
