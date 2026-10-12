@@ -22,7 +22,7 @@ import (
 var ErrWrongPassword = errors.New("pdf: the password does not open this file")
 
 // ErrUnsupportedEncryption is returned for a security handler other than the
-// standard one.
+// standard one, and for a crypt filter method the reader does not know.
 var ErrUnsupportedEncryption = errors.New("pdf: unsupported security handler")
 
 // pad is the 32-byte string every pre-2.0 password is padded with.
@@ -103,7 +103,7 @@ func (dec *decryptor) methodName() string {
 func newDecryptor(enc Dict, id []byte, password string, resolve func(Object) Object) (*decryptor, error) {
 	get := func(d Dict, k Name) Object { return resolve(d.Get(k)) }
 	if f, ok := get(enc, "Filter").Name(); ok && f != "Standard" {
-		return nil, ErrUnsupportedEncryption
+		return nil, fmt.Errorf("%w /%s", ErrUnsupportedEncryption, f)
 	}
 	v := int(intOr(get(enc, "V"), 0))
 	rev := int(intOr(get(enc, "R"), 0))
@@ -181,7 +181,7 @@ func (dec *decryptor) readMethods(enc Dict, v int, get func(Dict, Name) Object) 
 		case "None":
 			return cryptNone, nil
 		default:
-			return cryptNone, fmt.Errorf("pdf: unsupported crypt filter method /%s", m)
+			return cryptNone, fmt.Errorf("%w: crypt filter method /%s", ErrUnsupportedEncryption, m)
 		}
 	}
 	var err error

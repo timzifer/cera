@@ -11,7 +11,6 @@ import (
 	"io"
 
 	"github.com/timzifer/cera"
-	"github.com/timzifer/cera/internal/pdf"
 )
 
 // ErrEncrypted is returned for an encrypted file that does not open with
@@ -38,7 +37,7 @@ func Extract(w io.Writer, src []byte, pages []Page) error {
 	}
 	d, err := cera.Open(src)
 	if err != nil {
-		if errors.Is(err, pdf.ErrWrongPassword) || errors.Is(err, pdf.ErrUnsupportedEncryption) {
+		if errors.Is(err, cera.ErrPassword) || errors.Is(err, cera.ErrUnsupportedEncryption) {
 			return fmt.Errorf("%w: %v", ErrEncrypted, err)
 		}
 		return fmt.Errorf("pdfedit: %w", err)

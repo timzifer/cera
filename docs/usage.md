@@ -28,6 +28,31 @@ A file need not be in memory: `cera.OpenReaderAt(f, size, opts)` reads
 through an `io.ReaderAt` (an `*os.File`, a browser `File` in `js/wasm`)
 only what the pages drawn need.
 
+An encrypted file opens with its password. `ErrPassword` says that it
+needs one, or another one, and `ErrUnsupportedEncryption` that no password
+helps:
+
+```go
+doc, err := cera.Open(data)
+for errors.Is(err, cera.ErrPassword) {
+	pw, ok := askPassword()
+	if !ok {
+		return
+	}
+	doc, err = cera.OpenWith(data, cera.OpenOptions{Password: pw})
+}
+
+if doc.Encrypted() && doc.Permissions()&cera.PermCopy == 0 {
+	// the author does not want text copied
+}
+```
+
+`Permissions` is what the author allows a reader with the user password,
+and everything for the owner password and for a file that is not
+encrypted. The editor refuses what they forbid; rendering and text
+extraction do not ask, so whether to print or to copy is the
+application's decision.
+
 Fonts a document names but does not embed can come from a provider; the
 CJK module links Noto Sans only for the collections it is asked for:
 
