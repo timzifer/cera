@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"reflect"
 	"slices"
 	"time"
 
@@ -49,7 +50,10 @@ type NewAnnotation struct {
 	// icon the same size and upright.
 	Flags AnnotFlags
 	// Link is where a "Link" leads: a URI, a page of the edited document
-	// with a view, a named destination, or another file.
+	// with a view, a named destination, another file (/GoToR, /Launch) or
+	// a Named action. A link of the document keeps its action as it is
+	// while Link is what it was read as, and whenever cera cannot write
+	// the action: JavaScript, /GoToE, ...
 	Link *LinkTarget
 	Markup
 }
@@ -358,10 +362,46 @@ func (e *Editor) target(ae *annotEdits, page *Page, a *NewAnnotation, self int) 
 			}
 		}
 	}
-	if t := a.Link; t != nil && t.URI == "" && !t.External && t.Named == "" && (t.Page < 0 || t.Page >= e.base.NumPages()) {
-		return fmt.Errorf("cera: a link to page %d of a document of %d pages", t.Page, e.base.NumPages())
+	if t := a.Link; t != nil {
+		switch {
+		case !writableLink(t):
+			// What cera does not write stays as it is in a link of the
+			// document, and cannot be made anew.
+			if self >= ae.n && t.Action == "" {
+				return errors.New("cera: a link needs somewhere to lead")
+			}
+			if self >= ae.n {
+				return fmt.Errorf("cera: a link with the action %q cannot be written", t.Action)
+			}
+		case t.URI == "" && !t.External && t.Named == "" && t.NamedAction == "" && t.Page >= e.base.NumPages():
+			return fmt.Errorf("cera: a link to page %d of a document of %d pages", t.Page, e.base.NumPages())
+		}
 	}
 	return nil
+}
+
+// sameTarget reports whether a and b are the same target; a parameter
+// that is left as it is (NaN) equals itself.
+func sameTarget(a, b *LinkTarget) bool {
+	x, y := *a, *b
+	if len(x.Params) != len(y.Params) {
+		return false
+	}
+	for i, v := range x.Params {
+		if v != y.Params[i] && !(math.IsNaN(v) && math.IsNaN(y.Params[i])) {
+			return false
+		}
+	}
+	x.Params, y.Params = nil, nil
+	return reflect.DeepEqual(x, y)
+}
+
+// writableLink reports whether the editor can write where t leads.
+func writableLink(t *LinkTarget) bool {
+	if t.Action == "GoToE" {
+		return false
+	}
+	return t.URI != "" || t.External || t.Named != "" || t.NamedAction != "" || t.Page >= 0
 }
 
 // AddAnnotation adds a to page i of the result, a page of the edited
@@ -816,6 +856,7 @@ func (w *annotWriter) entries(a *NewAnnotation, old *Annotation) (set []pdf.Entr
 	}
 
 	var rect Rect
+	var keep []pdf.Name // managed entries of the old annotation that stay
 	switch a.Subtype {
 	case "Text":
 		rect = w.rect(a.Bounds)
@@ -896,7 +937,15 @@ func (w *annotWriter) entries(a *NewAnnotation, old *Annotation) (set []pdf.Entr
 			qp, _ := w.user(pts...)
 			set = append(set, pdf.Entry{Key: "QuadPoints", Val: qp.Object()})
 		}
-		set = append(set, w.link(a.Link))
+		// A link of the document that leads where it led keeps its
+		// destination or action as it is — with what cera does not read
+		// of it, a script chained to it for one —, and so does one whose
+		// action cera cannot write.
+		if old != nil && old.Link != nil && sameTarget(old.Link, a.Link) || !writableLink(a.Link) {
+			keep = []pdf.Name{"A", "Dest"}
+		} else {
+			set = append(set, w.link(a.Link))
+		}
 	}
 	set = append(set,
 		pdf.Entry{Key: "Type", Val: name("Annot")},
@@ -915,12 +964,12 @@ func (w *annotWriter) entries(a *NewAnnotation, old *Annotation) (set []pdf.Entr
 	}
 	if old != nil {
 		for k, v := range old.dict.All() {
-			if !written[k] && !slices.Contains(managed, k) {
+			if !written[k] && (!slices.Contains(managed, k) || slices.Contains(keep, k)) {
 				all = append(all, pdf.Entry{Key: k, Val: v})
 			}
 		}
 		for _, k := range managed {
-			if !written[k] && old.dict.Has(k) {
+			if !written[k] && old.dict.Has(k) && !slices.Contains(keep, k) {
 				del = append(del, k)
 			}
 		}
@@ -1011,7 +1060,13 @@ func (w *annotWriter) link(t *LinkTarget) pdf.Entry {
 	}
 	switch {
 	case t.URI != "":
-		return action(pdf.Entry{Key: "S", Val: pdf.Name("URI").Object()}, pdf.Entry{Key: "URI", Val: pdf.String([]byte(t.URI))})
+		uri := []pdf.Entry{{Key: "S", Val: pdf.Name("URI").Object()}, {Key: "URI", Val: pdf.String([]byte(t.URI))}}
+		if t.IsMap {
+			uri = append(uri, pdf.Entry{Key: "IsMap", Val: pdf.Boolean(true)})
+		}
+		return action(uri...)
+	case t.NamedAction != "":
+		return action(pdf.Entry{Key: "S", Val: pdf.Name("Named").Object()}, pdf.Entry{Key: "N", Val: pdf.Name(t.NamedAction).Object()})
 	case t.External:
 		file := pdf.Entry{Key: "F", Val: pdf.String(encodeText(t.File))}
 		switch {

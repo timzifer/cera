@@ -125,7 +125,13 @@ Implemented in `annot.go` (reading, links, drawing) and `annotgen.go`
   Quad points are accepted in either order writers use.
 - Links: `Annotation.Link` holds URI and GoTo targets, explicit and named
   destinations (catalog `/Dests` and the `/Dests` name tree); other
-  actions leave it nil.
+  actions leave it nil. Since #127: GoToE (reported as external, with the
+  path of embedded files), Named actions (`NamedAction`, resolved by
+  `LinkTarget.NamedPage`), the URI base of the catalogue, and for every
+  other action its type in `LinkTarget.Action`, so that a link with an
+  action is never dead. Of chained actions (`/Next`, at most `maxActions`)
+  the first that leads somewhere is the target. Names are looked up in
+  name trees by their bytes, as the trees are ordered.
 - Since #124 the types that show text or an icon are generated too
   (`annotlook.go`): FreeText — box filled with `/C`, border and callout in
   the colour of `/DA`, `/Contents` wrapped in the font and size of `/DA`

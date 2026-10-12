@@ -2,6 +2,7 @@ package cera
 
 import (
 	"math"
+	"net/url"
 
 	"github.com/timzifer/cera/internal/pdf"
 )
@@ -43,7 +44,7 @@ type Annotation struct {
 	Contents string
 	Name     string // /NM
 	// Link is the target of a Link annotation; nil for other types and
-	// for links that go nowhere cera can name.
+	// for links with neither a destination nor an action.
 	Link *LinkTarget
 	// Markup is what a markup annotation says about itself — author,
 	// dates, colours, geometry, popup, replies; nil for the other types:
@@ -55,8 +56,11 @@ type Annotation struct {
 	ref   pdf.Ref
 }
 
-// LinkTarget is where a link goes: a URI, or a place in the document.
+// LinkTarget is where a link goes: a URI, a place in the document or in
+// another file, or what else it does.
 type LinkTarget struct {
+	// URI is the address of a URI action, resolved against the base the
+	// document names for its relative addresses (/URI /Base).
 	URI string
 	// Page is the 0-based target page, -1 if none.
 	Page int
@@ -70,11 +74,62 @@ type LinkTarget struct {
 	// Params resolve when the document defines it.
 	Named string
 	// External reports a link out of the document: to another PDF file
-	// (/GoToR), where Page, Fit, Params and Named are in that file, or to
-	// a file or application (/Launch). File names it. cera follows
-	// neither, and a viewer should ask before it does.
+	// (/GoToR), where Page, Fit, Params and Named are in that file, to a
+	// file embedded in this or another one (/GoToE, see Embedded), or to
+	// a file or application (/Launch). File names it. cera follows none
+	// of them, and a viewer should ask before it does.
 	External bool
 	File     string
+	// Embedded is the way to the target of a /GoToE action, from File,
+	// or from this document when File is empty: the names of embedded
+	// files, each inside the one before, ".." for the file a file is
+	// embedded in.
+	Embedded []string
+	// Action is the type of the action the target was read from: "GoTo",
+	// "GoToR", "GoToE", "Launch", "URI", "Named", or one cera only
+	// reports, so that a viewer can say that the link does something it
+	// will not run: "JavaScript", "SubmitForm", "ResetForm", "Hide", ...
+	// It is empty for a destination (/Dest). Of chained actions (/Next)
+	// the target is the first that leads somewhere.
+	Action string
+	// NamedAction is the name of a Named action: "NextPage", "PrevPage",
+	// "FirstPage" and "LastPage", which [LinkTarget.NamedPage] resolves,
+	// or one a viewer may know ("Print", "GoBack", "Find", ...).
+	NamedAction string
+	// IsMap reports a URI the viewer is to add the place of the click to,
+	// as "?x,y" (/IsMap).
+	IsMap bool
+}
+
+// NamedPage returns the page a Named action leads to from page current of
+// a document of n pages. It reports false for other targets, for names
+// other than NextPage, PrevPage, FirstPage and LastPage, and where there
+// is no such page.
+func (t *LinkTarget) NamedPage(current, n int) (int, bool) {
+	page := -1
+	switch t.NamedAction {
+	case "NextPage":
+		page = current + 1
+	case "PrevPage":
+		page = current - 1
+	case "FirstPage":
+		page = 0
+	case "LastPage":
+		page = n - 1
+	}
+	return page, page >= 0 && page < n
+}
+
+// leads reports whether a viewer can follow t somewhere.
+func (t *LinkTarget) leads() bool {
+	if t == nil {
+		return false
+	}
+	switch t.NamedAction {
+	case "NextPage", "PrevPage", "FirstPage", "LastPage":
+		return true
+	}
+	return t.URI != "" || t.External || t.Page >= 0 || t.Named != ""
 }
 
 // AnnotMode selects the annotations a render draws.
@@ -176,32 +231,59 @@ func emptyRect(d *Document, ad pdf.Dict) bool {
 	return !ad.IsZero() && ok && len(a) == 4
 }
 
-// linkTarget reads the destination or action of a link.
+// linkTarget reads the destination or action of a link or an outline
+// entry.
 func (d *Document) linkTarget(ad pdf.Dict) *LinkTarget {
 	if dest, ok := ad.Lookup("Dest"); ok {
 		return d.destination(dest)
 	}
-	act := d.dict(ad.Get("A"))
-	switch s, _ := d.name(act.Get("S")); s {
-	case "URI":
-		b, ok := d.resolve(act.Get("URI")).Str()
-		if !ok {
-			return nil
+	left := maxActions
+	return d.action(ad.Get("A"), &left)
+}
+
+// action reads the action o and those chained to it (/Next): the first
+// that leads somewhere, or else o as what it is. left bounds the actions
+// read.
+func (d *Document) action(o pdf.Object, left *int) *LinkTarget {
+	act := d.dict(o)
+	if act.IsZero() || *left <= 0 {
+		return nil
+	}
+	*left--
+	t := d.oneAction(act)
+	if t.leads() {
+		return t
+	}
+	next := act.Get("Next")
+	list, ok := d.resolve(next).Array()
+	if !ok && !next.IsNull() {
+		list = pdf.Array{next}
+	}
+	for _, n := range list {
+		if nt := d.action(n, left); nt.leads() {
+			return nt
 		}
-		return &LinkTarget{URI: string(b), Page: -1}
-	case "GoTo":
-		return d.destination(act.Get("D"))
-	case "GoToR":
-		t := &LinkTarget{Page: -1, External: true, File: d.fileSpec(act.Get("F"))}
-		switch o := d.resolve(act.Get("D")); o.Kind() {
+	}
+	return t
+}
+
+// oneAction reads a single action, nil if it has no type.
+func (d *Document) oneAction(act pdf.Dict) *LinkTarget {
+	s, _ := d.name(act.Get("S"))
+	if s == "" {
+		return nil
+	}
+	t := &LinkTarget{Page: -1, Action: string(s)}
+	// remote reads a destination in another file: a name, or a page by
+	// its number with a view.
+	remote := func(o pdf.Object) {
+		switch o = d.resolve(o); o.Kind() {
 		case pdf.KindName:
 			n, _ := o.Name()
 			t.Named = string(n)
 		case pdf.KindString:
 			t.Named = textString(o)
 		case pdf.KindArray:
-			// The page is a number in the other file, not a page of this
-			// document.
 			a, _ := o.Array()
 			if len(a) > 0 {
 				if n, ok := d.integer(a[0]); ok && n >= 0 {
@@ -212,16 +294,70 @@ func (d *Document) linkTarget(ad pdf.Dict) *LinkTarget {
 				t.Fit, t.Params = view.Fit, view.Params
 			}
 		}
-		return t
+	}
+	switch s {
+	case "URI":
+		b, ok := d.resolve(act.Get("URI")).Str()
+		if !ok {
+			return nil
+		}
+		t.URI = d.resolveURI(string(b))
+		t.IsMap, _ = d.resolve(act.Get("IsMap")).Bool()
+	case "GoTo":
+		if dest := d.destination(act.Get("D")); dest != nil {
+			dest.Action = "GoTo"
+			return dest
+		}
+	case "GoToR":
+		t.External, t.File = true, d.fileSpec(act.Get("F"))
+		remote(act.Get("D"))
+	case "GoToE":
+		t.External, t.File = true, d.fileSpec(act.Get("F"))
+		// The chain of target dictionaries: down into an embedded file
+		// (/R /C, by its name in /EmbeddedFiles) or up to the file this
+		// one is embedded in (/R /P).
+		for target, i := d.dict(act.Get("T")), 0; !target.IsZero() && i < maxActions; target, i = d.dict(target.Get("T")), i+1 {
+			if r, _ := d.name(target.Get("R")); r == "P" {
+				t.Embedded = append(t.Embedded, "..")
+			} else {
+				t.Embedded = append(t.Embedded, textString(d.resolve(target.Get("N"))))
+			}
+		}
+		remote(act.Get("D"))
 	case "Launch":
 		f := act.Get("F")
 		if f.IsNull() {
 			// /Win, /Mac, /Unix: the file of a platform.
 			f = d.dict(act.Get("Win")).Get("F")
 		}
-		return &LinkTarget{Page: -1, External: true, File: d.fileSpec(f)}
+		t.External, t.File = true, d.fileSpec(f)
+	case "Named":
+		n, _ := d.name(act.Get("N"))
+		t.NamedAction = string(n)
 	}
-	return nil
+	return t
+}
+
+// resolveURI resolves a relative address against the base the document
+// names for its URI actions (/URI /Base of the catalogue).
+func (d *Document) resolveURI(uri string) string {
+	cat, err := d.r.Catalog()
+	if err != nil {
+		return uri
+	}
+	b, ok := d.resolve(d.dict(cat.Get("URI")).Get("Base")).Str()
+	if !ok || len(b) == 0 {
+		return uri
+	}
+	base, err := url.Parse(string(b))
+	if err != nil {
+		return uri
+	}
+	ref, err := url.Parse(uri)
+	if err != nil || ref.IsAbs() {
+		return uri
+	}
+	return base.ResolveReference(ref).String()
 }
 
 // fileSpec returns the file name of a file specification: a string, or a
@@ -241,12 +377,16 @@ func (d *Document) fileSpec(o pdf.Object) string {
 func (d *Document) destination(o pdf.Object) *LinkTarget {
 	o = d.resolve(o)
 	t := &LinkTarget{Page: -1}
+	// key is the name as the file spells it: names are looked up by
+	// their bytes, not by the text they decode to.
+	var key string
 	switch o.Kind() {
 	case pdf.KindName:
 		n, _ := o.Name()
-		t.Named = string(n)
+		t.Named, key = string(n), string(n)
 	case pdf.KindString:
-		t.Named = textString(o)
+		b, _ := o.Str()
+		t.Named, key = textString(o), string(b)
 	case pdf.KindArray:
 		a, _ := o.Array()
 		d.explicitDest(t, a)
@@ -254,7 +394,7 @@ func (d *Document) destination(o pdf.Object) *LinkTarget {
 	default:
 		return nil
 	}
-	if dest := d.namedDest(t.Named); dest != nil {
+	if dest := d.namedDest(key); dest != nil {
 		d.explicitDest(t, dest)
 	}
 	return t
@@ -300,7 +440,7 @@ func (d *Document) pageIndex(ref pdf.Ref) int {
 }
 
 // namedDest looks a named destination up in /Dests of the catalog and in
-// the /Dests name tree.
+// the /Dests name tree, by the bytes of its name.
 func (d *Document) namedDest(name string) pdf.Array {
 	cat, err := d.r.Catalog()
 	if err != nil {
@@ -318,13 +458,16 @@ func (d *Document) namedDest(name string) pdf.Array {
 	return a
 }
 
-// nameTree finds key in the name tree rooted at o.
+// nameTree finds key in the name tree rooted at o. The keys of a name tree
+// are ordered, and compared, as strings of bytes (PDF 2.0, 7.9.6): what
+// they decode to as text is ordered differently outside ASCII, and a node
+// chosen by that order would not hold the key.
 func (d *Document) nameTree(o pdf.Object, key string) pdf.Object {
 	node := d.dict(o)
 	for depth := 0; !node.IsZero() && depth < 32; depth++ {
 		if names, ok := d.resolve(node.Get("Names")).Array(); ok {
 			for i := 0; i+1 < len(names); i += 2 {
-				if k, ok := d.resolve(names[i]).Str(); ok && textString(pdf.String(k)) == key {
+				if k, ok := d.resolve(names[i]).Str(); ok && string(k) == key {
 					return names[i+1]
 				}
 			}
@@ -338,7 +481,7 @@ func (d *Document) nameTree(o pdf.Object, key string) pdf.Object {
 			if len(lim) == 2 {
 				lo, _ := d.resolve(lim[0]).Str()
 				hi, _ := d.resolve(lim[1]).Str()
-				if key < textString(pdf.String(lo)) || key > textString(pdf.String(hi)) {
+				if key < string(lo) || key > string(hi) {
 					continue
 				}
 			}

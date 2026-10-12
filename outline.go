@@ -19,8 +19,9 @@ type OutlineItem struct {
 	// Target is where the entry leads, as for a link: resolve it with
 	// [Document.Destination]. An entry that names a structure element
 	// and no destination leads to the page of the element. Target is nil
-	// for an entry that leads nowhere cera can name — a heading of its
-	// children, or an action other than those of [LinkTarget].
+	// for an entry without destination and action, a heading of its
+	// children; an action cera does not follow is reported by its type
+	// ([LinkTarget.Action]).
 	Target *LinkTarget
 	// Open says that the children are shown when the outline is first
 	// displayed.

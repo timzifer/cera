@@ -45,6 +45,7 @@ const (
 	maxXMPBytes      = 16 << 20 // bytes of the decoded XMP metadata stream
 	maxOutlineDepth  = 32       // levels of the document outline
 	maxOutlineItems  = 1 << 16  // entries of the document outline
+	maxActions       = 16       // actions chained to that of a link, and targets of a /GoToE
 )
 
 // Caches bound memory kept for reuse; past them entries are dropped and
@@ -99,6 +100,7 @@ var budgets = []budget{
 	{"maxXMPBytes", maxXMPBytes, "", "bytes of the decoded XMP metadata stream; a larger one is left out of Metadata"},
 	{"maxOutlineDepth", maxOutlineDepth, "", "levels of the document outline; deeper entries are not read"},
 	{"maxOutlineItems", maxOutlineItems, "", "entries of the document outline; further ones are not read"},
+	{"maxActions", maxActions, "", "actions chained to that of a link or outline entry (/Next), and targets of a /GoToE; further ones are not read"},
 	{"content.MaxNesting", content.MaxNesting, "", "arrays and dictionaries nested in one operand (Stats.Errors)"},
 	{"content.MaxOperands", content.MaxOperands, "", "operands kept for one operator; the first are dropped"},
 	{"cmap.MaxSpans", cmap.MaxSpans, "", "code ranges of one CMap; further ones are ignored"},
