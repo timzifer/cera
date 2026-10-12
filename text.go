@@ -205,6 +205,9 @@ func (in *interp) show(s []byte, res pdf.Dict, depth int) {
 	ts := &in.gs.text
 	tx := &in.text
 	f := ts.font
+	if in.red != nil {
+		in.red.str()
+	}
 	if f == nil {
 		in.st.Errors++
 		return
@@ -245,6 +248,17 @@ func (in *interp) show(s []byte, res pdf.Dict, depth int) {
 		var w1, vx, vy float64
 		if f.vertical {
 			w1, vx, vy = f.verticalMetrics(cid, w)
+		}
+		if in.red != nil {
+			spacing := ts.charSpace
+			if n == 1 && code == ' ' {
+				spacing += ts.wordSpace
+			}
+			box, step := em.Mul(tx.tm), w
+			if f.vertical {
+				box, step = stilus.Translate(-vx, -vy).Mul(box), w1
+			}
+			in.red.glyph(i-n, n, f, w, box.Mul(in.gs.ctm), step, spacing, ts.size)
 		}
 		if need {
 			gid, outline := f.glyph(cid)
@@ -436,9 +450,16 @@ func (in *interp) showType3(f *Font, s []byte, res pdf.Dict, depth int) {
 	if clip {
 		tx.clipping = true
 	}
-	for _, b := range s {
+	for k, b := range s {
 		code := int(b)
 		mt := em.Mul(tx.tm)
+		if in.red != nil {
+			spacing := ts.charSpace
+			if code == ' ' {
+				spacing += ts.wordSpace
+			}
+			in.red.glyph(k, 1, f, f.pdf.Width(code), mt.Mul(in.gs.ctm), f.pdf.Width(code), spacing, ts.size)
+		}
 		if td := in.textDev(); td != nil {
 			tx.run.Font = f
 			tx.run.Glyphs = append(tx.run.Glyphs[:0], Glyph{Code: code, GID: code, M: mt.Mul(in.gs.ctm), Advance: f.pdf.Width(code)})

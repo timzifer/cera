@@ -30,8 +30,9 @@ import (
 // drawing it, over the files: the text with round trips of search and
 // selection, the links and where they lead, and the editor — a file saved
 // anew, an update with a highlight, the form and the annotations
-// flattened, a field added, a signature — each opened again and its first
-// page compared with what it was.
+// flattened, a field added, a signature, a redaction — each opened again
+// and its first page compared with what it was, or for a redaction read
+// for what should be gone.
 //
 // The gate is that of rendering: no panic, no hang, no deadline.
 // Everything else it finds is a difference, reported with its file.
@@ -76,7 +77,8 @@ func (r *apiResult) check(name string, err error) bool {
 	case errors.As(err, &pe), errors.Is(err, cera.ErrDeadline), errors.Is(err, context.DeadlineExceeded):
 		r.failed = append(r.failed, fmt.Sprintf("%s: %v", name, err))
 	case errors.Is(err, cera.ErrSigned), errors.Is(err, cera.ErrCertified), errors.Is(err, cera.ErrNoAssembly),
-		errors.Is(err, cera.ErrNotPermitted), errors.Is(err, cera.ErrNoUpdate), errors.Is(err, cera.ErrPassword):
+		errors.Is(err, cera.ErrNotPermitted), errors.Is(err, cera.ErrNoUpdate), errors.Is(err, cera.ErrPassword),
+		errors.Is(err, cera.ErrLocked), errors.Is(err, cera.ErrRedaction):
 		r.refused = append(r.refused, fmt.Sprintf("%s: %v", name, err))
 	default:
 		r.differ("%s: %v", name, err)
@@ -254,6 +256,57 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		}
 		if op, err := od.Page(0); err == nil && len(op.Annotations()) <= had {
 			r.differ("update: %d annotations on page 1 after a highlight was added to %d", len(op.Annotations()), had)
+		}
+	})
+	r.step("redact", func() {
+		// The first word of the first page and a box across its middle
+		// are taken out: no character of the page that is written then
+		// has its middle in them.
+		p, err := doc.Page(0)
+		if err != nil {
+			return
+		}
+		w, h := p.Size()
+		areas := []cera.Quad{cera.QuadOf(cera.Rect{X0: 0.3 * w, Y0: 0.3 * h, X1: 0.7 * w, Y1: 0.5 * h})}
+		if first != nil && !firstWord.Empty() {
+			areas = append(areas, first.Quads(firstWord)...)
+		}
+		e := doc.Edit()
+		if !r.check("redact", e.Redact(0, areas, color.Black)) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("redact: save", e.Save(&out)) {
+			return
+		}
+		od := reopen("redact", out.Bytes(), false)
+		if od == nil {
+			return
+		}
+		op, err := od.Page(0)
+		if err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+		defer cancel()
+		pt, err := op.Text(ctx)
+		if !r.check("redact: text", err) {
+			return
+		}
+		left := 0
+		for k := range pt.Chars {
+			q := pt.Chars[k].Quad
+			x := (q.P[0][0] + q.P[1][0] + q.P[2][0] + q.P[3][0]) / 4
+			y := (q.P[0][1] + q.P[1][1] + q.P[2][1] + q.P[3][1]) / 4
+			for _, a := range areas {
+				if a.Contains(x, y) {
+					left++
+					break
+				}
+			}
+		}
+		if left > 0 {
+			r.differ("redact: %d characters are left in the areas", left)
 		}
 	})
 	r.step("actions", func() {

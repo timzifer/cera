@@ -701,6 +701,38 @@ its own before or after it. It belongs to its page — it moves and turns
 with it. In an encrypted document, drawing needs the permission to modify;
 a certification forbids it.
 
+`Redact` takes content out of a page for good. A box drawn over text
+leaves the text in the file; a redaction rewrites the page, so that what
+was in its areas is not there to be found by a viewer, a text extraction
+or a look at the bytes:
+
+```go
+text, _ := page.Text(ctx)
+for _, m := range text.Find("Jane Doe", cera.SearchOptions{}) {
+	err = e.Redact(page.Index(), text.Quads(m.Range), color.Black) // areas in points of the displayed page
+}
+n, err := e.ApplyRedactions() // the /Redact annotations a reviewer left
+err = e.Save(out)             // never Update: that would keep the bytes
+```
+
+In the areas, the glyphs leave their strings (the rest of each line
+stays where it was), paths that lie in them are left out and paths that
+reach into them are clipped, images are decoded, emptied there and
+encoded again, inline images are left out; form XObjects are rewritten
+as the page is, each use a copy, and hidden layers like shown ones.
+Annotations, links and fields that reach into an area go, as do
+`/ActualText`, `/Alt` and `/E` of the marked content and the structure
+elements the content belonged to, and the thumbnail of the page. It
+fails closed: what cannot be rewritten is left out whole, and `Save`
+returns `ErrRedaction` rather than write a page it could not rewrite.
+
+What it leaves for the caller to look at: the outline, whose titles may
+quote a heading; metadata and attachments; other pages, also where they
+show the same form or image. A path that reaches into an area is clipped,
+not cut — its numbers stay in the file —, and the cells of tiling
+patterns and soft masks are not rewritten, only clipped away with what
+they fill. An emptied image is written in RGB.
+
 `AddField` makes a form, or adds to one: a text field, a check box, the
 buttons of a radio group, a combo or list box, a push button, or a
 signature field for `Sign` to sign later. `RemoveField` takes one out,

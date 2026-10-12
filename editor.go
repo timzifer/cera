@@ -127,6 +127,9 @@ type Editor struct {
 	// fields that are removed, by RemoveField.
 	addFields []*addedField
 	delFields map[string]bool
+	// planErr is why plan could not describe the result: nothing is
+	// written then.
+	planErr error
 }
 
 // editPage is one page of the result: page index of src, turned by rotate
@@ -145,6 +148,8 @@ type editPage struct {
 	w, h  float64
 	// draws is what was drawn on the page, by Draw.
 	draws []*drawing
+	// redacts are the redactions of an own page, by Redact.
+	redacts []redaction
 }
 
 // Edit returns an editor of d with all its pages.
@@ -300,6 +305,9 @@ func (e *Editor) updatable() error {
 	if e.base == nil {
 		return fmt.Errorf("%w: %v", ErrNoUpdate, pdfedit.ErrNoBase)
 	}
+	if e.redacts() {
+		return fmt.Errorf("%w: an update keeps the bytes a redaction is to remove: save the document as a new file", ErrNoUpdate)
+	}
 	if sg := e.base.signing(); !e.unguarded && (sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated() || e.meta != nil) ||
 		sg.mdp == 2 && (e.pagesChanged() || e.annotated()) || sg.mdp == 3 && e.pagesChanged() ||
 		sg.mdp != 0 && (e.flattens() || e.drawsOn() || e.formed())) {
@@ -362,6 +370,10 @@ func (e *Editor) plan() pdfedit.Doc {
 	if e.base != nil && e.formed() {
 		e.fieldPlan(&doc)
 	}
+	e.planErr = nil
+	if e.base != nil && e.redacts() {
+		e.planErr = e.redactPlan(&doc)
+	}
 	cf := e.canvasForms(&doc)
 	e.drawPlan(&doc, cf)
 	if e.sign != nil {
@@ -411,6 +423,9 @@ func (e *Editor) Save(w io.Writer) error { return e.SaveWith(w, SaveOptions{}) }
 func (e *Editor) SaveWith(w io.Writer, opt SaveOptions) (err error) {
 	defer recoverPanic(&err)
 	doc := e.plan()
+	if e.planErr != nil {
+		return e.planErr
+	}
 	if doc.Base != nil && !pdfedit.MayAssemble(doc.Base) {
 		return ErrNoAssembly
 	}

@@ -63,6 +63,9 @@ func (e *Editor) Draw(i int, over bool, draw func(c *Canvas)) error {
 		return err
 	}
 	ep := &e.pages[i]
+	if len(ep.redacts) > 0 {
+		return errors.New("cera: the page is redacted in this editor: write that first, then draw on the result")
+	}
 	w, h, m, err := ep.view()
 	if err != nil {
 		return err

@@ -117,6 +117,9 @@ type interp struct {
 	// formHide are the widgets the state of the form hides or shows
 	// otherwise than the document does, for a run that is not recorded.
 	formHide map[*Widget]bool
+	// red, when set, rewrites the content streams that run: what is drawn
+	// in the areas of a redaction goes (redact.go).
+	red *redactor
 
 	// overprint simulates overprint (RenderOptions.SimulateOverprint).
 	overprint bool
@@ -144,7 +147,7 @@ func (in *interp) release() {
 	in.stack = in.stack[:0]
 	in.doc, in.dev, in.st, in.lim, in.td, in.mcd = nil, nil, nil, nil, nil, nil
 	in.out, in.rec, in.mute.d, in.ocVis = nil, nil, nil, nil
-	in.formVals, in.formHide = nil, nil
+	in.formVals, in.formHide, in.red = nil, nil, nil
 	in.tiles = nil
 	in.gs = gstate{}
 	in.text = in.text.keep()
@@ -180,6 +183,12 @@ func (in *interp) exec(data []byte, res pdf.Dict, depth int) {
 	sc.Reset(data)
 	outer, mcBase := in.depth, in.mcBase
 	in.depth, in.mcBase = depth, len(in.mc)
+	// A stream that is rewritten has a frame; what runs inside one that
+	// is not — a glyph procedure, an appearance — has none.
+	var frame, frameOut *redFrame
+	if in.red != nil {
+		frame, frameOut = in.red.enter(data, res)
+	}
 	for in.err == nil {
 		op, ok := sc.Next()
 		if !ok {
@@ -189,7 +198,16 @@ func (in *interp) exec(data []byte, res pdf.Dict, depth int) {
 		if in.st.Ops%checkEvery == 0 && in.expired() {
 			break
 		}
+		if frame != nil {
+			frame.before(in, sc, op)
+		}
 		in.do(sc, op, res, depth)
+		if frame != nil {
+			frame.after(in, sc, op)
+		}
+	}
+	if in.red != nil {
+		in.red.leave(frame, frameOut, in.err == nil)
 	}
 	in.st.Errors += sc.Errors()
 	sc.Reset(nil)
