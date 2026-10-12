@@ -274,6 +274,11 @@ for _, a := range page.Annotations() {
 A highlight written with `Editor.AddHighlight` reads back with the quads,
 colour, opacity, author, date and note it was made from.
 
+`Document.PageLabel(i)` is the number printed on page i — "iv", "12",
+"A-3" — for the page box of a viewer, and `Document.PageByLabel` finds
+the page for what a user types into it; both say nothing in a document
+without `/PageLabels`.
+
 `Document.Outline` returns the bookmarks for a side panel, a tree of
 entries with a title, its style and a target that resolves like a link's:
 

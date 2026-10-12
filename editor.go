@@ -25,7 +25,9 @@ import (
 //
 // Deleting a page removes what hangs on it alone: its annotations, and
 // form fields whose widgets were all on deleted pages. Outline entries,
-// links and named destinations that pointed at it lose their target.
+// links and named destinations that pointed at it lose their target. Page
+// labels stay with their pages: /PageLabels is written anew for the pages
+// of the result, and a page from another document has no label.
 //
 // Pages keep their content as it is: every object a page refers to is
 // copied once per source document, byte for byte, and streams keep their
@@ -250,6 +252,9 @@ func (e *Editor) plan() pdfedit.Doc {
 	doc.Patches = e.fieldPatches(&doc.Objects)
 	if e.base != nil {
 		doc.Patches = e.annotPatches(doc.Patches, &doc.Objects)
+		if p, ok := e.labelPatch(); ok {
+			doc.Patches = append(doc.Patches, p)
+		}
 	}
 	e.gen.finish()
 	return doc

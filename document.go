@@ -50,6 +50,11 @@ type Document struct {
 	outlineOnce sync.Once
 	outline     []OutlineItem // the document outline, read on first use
 
+	labelOnce    sync.Once
+	labels       []labelRange // the page labels, read on first use
+	labelIdxOnce sync.Once
+	labelIdx     map[string]int // the first page of each label
+
 	structOnce  sync.Once
 	structMCIDs map[int][]int // marked-content identifiers by page, in structure order
 

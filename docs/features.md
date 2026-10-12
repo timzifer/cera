@@ -115,6 +115,9 @@ Fonts a file does not embed:
 - Text extraction puts right-to-left text (Arabic, Hebrew) into logical
   order and gives the letters for presentation forms; lines, selection
   and columns follow the direction
+- `Document.PageLabel` and `PageByLabel`: page labels (roman, decimal,
+  letters, prefixes), read leniently; the editor keeps them with their
+  pages
 - `Document.Outline`: the bookmarks as a tree, with titles, style, open
   state and targets (destinations, GoTo, URI, GoToR and Launch actions,
   structure elements)
