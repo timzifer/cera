@@ -471,6 +471,42 @@ and the signature of the certificate's key (signed data of
 Trust is against the roots the caller gives: cera has no trust list, and
 does not check revocation.
 
+`Editor.Sign` signs: it writes the document with an update that holds
+the changes of the editor and a signature over all of it, so that the
+signatures the document has stay valid.
+
+```go
+e := doc.Edit()
+err := e.Sign(out, cera.SignOptions{
+	Key:         key,  // a crypto.Signer: a key in memory, on a token, with a service
+	Certificate: cert, // its certificate, and above it
+	Chain:       []*x509.Certificate{intermediate},
+	Reason:      "Approved",
+	Location:    "Berlin",
+
+	Field: "approval",                 // a signature field of the form, or a new one
+	Page:  0,                          // where a new field shows, in points of the
+	Rect:  cera.Rect{360, 700, 560, 760}, // displayed page; the zero Rect: invisible
+	Appearance: func(c *cera.Canvas) { // what it shows, as Editor.Draw draws
+		w, h := c.Size()
+		c.Stroke(rect(0, 0, w, h), cera.StrokeStyle{Width: 1}, color.Black)
+		c.DrawText("Signed by Ada Lovelace", 6, 20, font, 10, color.Black)
+	},
+})
+```
+
+The signature is a PAdES baseline signature (B-B, `ETSI.CAdES.detached`)
+with SHA-256, by an RSA or an ECDSA key, which is asked once. It has no
+timestamp and no validation data: its time is the signer's word.
+`Certify: 2` makes the author's certification instead, which says what
+may change afterwards — 1 nothing, 2 filling in forms and signing, 3 also
+annotating — and `Lock` names the fields that may not change once it is
+made. Form values, annotations and metadata of the same editor are
+written with the signature; changes of the pages are not: update the
+document first, open the result and sign that. Likewise, to go on after
+a signature, open what `Sign` wrote. The file is held in memory while it
+is signed.
+
 ## Attachments
 
 `Document.Attachments` lists the files a document embeds — the XML of an

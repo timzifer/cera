@@ -3,14 +3,21 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"io"
 	"math"
+	"math/big"
 	"os"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -23,8 +30,8 @@ import (
 // drawing it, over the files: the text with round trips of search and
 // selection, the links and where they lead, and the editor — a file saved
 // anew, an update with a highlight, the form and the annotations
-// flattened — each opened again and its first page compared with what it
-// was.
+// flattened, a signature — each opened again and its first page compared
+// with what it was.
 //
 // The gate is that of rendering: no panic, no hang, no deadline.
 // Everything else it finds is a difference, reported with its file.
@@ -249,6 +256,33 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 			r.differ("update: %d annotations on page 1 after a highlight was added to %d", len(op.Annotations()), had)
 		}
 	})
+	r.step("sign", func() {
+		signer, err := apiSigner()
+		if err != nil {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("sign", doc.Edit().Sign(&out, cera.SignOptions{Key: signer.key, Certificate: signer.cert})) {
+			return
+		}
+		if !bytes.HasPrefix(out.Bytes(), data) {
+			r.differ("sign: the file does not start with the document's")
+		}
+		// An invisible signature: the page is as it was.
+		od := reopen("sign", out.Bytes(), true)
+		if od == nil {
+			return
+		}
+		sigs := od.Signatures()
+		if len(sigs) == 0 {
+			r.differ("sign: the signed file has no signature")
+			return
+		}
+		last := &sigs[len(sigs)-1]
+		if st, err := last.Verify(cera.VerifyOptions{}); err != nil || !st.Intact || !last.CoversWholeFile || st.Changes.Any() {
+			r.differ("sign: the signature does not hold: %+v, %v", st, err)
+		}
+	})
 	r.step("flatten", func() {
 		e := doc.Edit()
 		if doc.Form() != nil && !r.check("flatten", e.Flatten()) {
@@ -264,6 +298,34 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 	})
 	return r
 }
+
+// signer is a key with its certificate.
+type signer struct {
+	key  *ecdsa.PrivateKey
+	cert *x509.Certificate
+}
+
+// apiSigner returns a key and a certificate of its own making, to sign the
+// files with.
+var apiSigner = sync.OnceValues(func() (signer, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return signer{}, err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "cera corpus run"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
+	if err != nil {
+		return signer{}, err
+	}
+	cert, err := x509.ParseCertificate(der)
+	return signer{key, cert}, err
+})
 
 // apiText checks the text of a page against itself: offsets into String
 // ascend with the positions, a selection holds what it was asked for and

@@ -119,6 +119,10 @@ Fonts a file does not embed:
   data, RSA and ECDSA, timestamp tokens), what was appended after a
   signature and whether certification and field locks allow it, and the
   certificate chain against roots the caller gives
+- `Editor.Sign`: approval and certification signatures (PAdES B-B,
+  `ETSI.CAdES.detached`) by an RSA or ECDSA key behind `crypto.Signer`,
+  in a field of the form or a new one, invisible or with an appearance
+  drawn on a canvas, with field locks; no timestamps or validation data
 - `Document.Attachments` and `Annotation.File`: embedded files with
   their metadata and `/AFRelationship`, decoded and decrypted (also where
   the files alone are encrypted, `/EFF`)

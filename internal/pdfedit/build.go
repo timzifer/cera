@@ -59,6 +59,20 @@ type Doc struct {
 	// of a new document; the edited document's is changed by a patch.
 	Imports    map[*pdf.Document]Import
 	PageLabels pdf.Dict
+	// Sig, when set, names the new object that is a signature dictionary
+	// being made; see [Update].
+	Sig *Sig
+}
+
+// Sig is a signature dictionary an update adds: Objects[Object], with a
+// /Contents of the length the signature may take and a /ByteRange. Update
+// sets Contents and ByteRange to where in the file it wrote the two, from
+// their first byte to past their last: the signer writes the ranges the
+// signature covers into the room of the one, pads it with spaces, and the
+// signature into the other.
+type Sig struct {
+	Object              int
+	Contents, ByteRange [2]int64
 }
 
 // MayAssemble reports whether the permissions of d allow reassembling it
@@ -112,7 +126,16 @@ func Update(w io.Writer, doc Doc) error {
 	if err := b.build(); err != nil {
 		return err
 	}
-	return b.write(w)
+	if doc.Sig != nil {
+		b.w.Sig = b.newObject(int32(doc.Sig.Object))
+	}
+	if err := b.write(w); err != nil {
+		return err
+	}
+	if doc.Sig != nil {
+		doc.Sig.Contents, doc.Sig.ByteRange = b.w.SigContents, b.w.SigByteRange
+	}
+	return nil
 }
 
 // unchanged reports whether doc has the pages of its base, in their order

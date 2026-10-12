@@ -120,6 +120,8 @@ type Editor struct {
 	// meta is the metadata of the result, by SetMetadata; nil to leave
 	// what the edited document has.
 	meta *Metadata
+	// sign is the signature being made, while Sign writes.
+	sign *signPlan
 }
 
 // editPage is one page of the result: page index of src, turned by rotate
@@ -274,6 +276,22 @@ func (e *Editor) check(i int) error {
 // for an error of w itself.
 func (e *Editor) Update(w io.Writer) (err error) {
 	defer recoverPanic(&err)
+	if err := e.updatable(); err != nil {
+		return err
+	}
+	err = pdfedit.Update(w, e.plan())
+	switch {
+	case errors.Is(err, pdfedit.ErrRepaired):
+		return fmt.Errorf("%w: %v", ErrNoUpdate, err)
+	case err != nil:
+		return fmt.Errorf("cera: %w", err)
+	}
+	return nil
+}
+
+// updatable reports why the changes of the editor cannot be written as an
+// update of the edited document, nil if they can.
+func (e *Editor) updatable() error {
 	if e.base == nil {
 		return fmt.Errorf("%w: %v", ErrNoUpdate, pdfedit.ErrNoBase)
 	}
@@ -290,13 +308,6 @@ func (e *Editor) Update(w io.Writer) (err error) {
 			(e.flattens() || e.drawsOn() || e.meta != nil) && perm&pdf.PermModify == 0 {
 			return ErrNotPermitted
 		}
-	}
-	err = pdfedit.Update(w, e.plan())
-	switch {
-	case errors.Is(err, pdfedit.ErrRepaired):
-		return fmt.Errorf("%w: %v", ErrNoUpdate, err)
-	case err != nil:
-		return fmt.Errorf("cera: %w", err)
 	}
 	return nil
 }
@@ -343,7 +354,11 @@ func (e *Editor) plan() pdfedit.Doc {
 	if e.meta != nil {
 		e.metaPatches(&doc)
 	}
-	e.drawPlan(&doc)
+	cf := e.canvasForms(&doc)
+	e.drawPlan(&doc, cf)
+	if e.sign != nil {
+		e.signPlan(&doc, cf)
+	}
 	e.gen.finish()
 	return doc
 }

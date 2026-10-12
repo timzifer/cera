@@ -63,7 +63,7 @@ func (w *Writer) Write(out io.Writer, t Trailer) error {
 	c := &counter{w: out, h: md5.New()}
 	bw := bufio.NewWriterSize(c, 64<<10)
 	b := sink{bw}
-	e := &encoder{b: b, w: w}
+	e := &encoder{b: b, w: w, pos: func() int64 { return c.n + int64(bw.Buffered()) }}
 	version := w.Version
 	if version == "" {
 		version = "1.7"
@@ -118,6 +118,8 @@ type encoder struct {
 	// generation gen, the one being written.
 	crypt    *pdf.Encryptor
 	num, gen int32
+	// pos returns the offset in the file of what is written next.
+	pos func() int64
 }
 
 // object sets the object written next, whose strings and stream crypt
@@ -201,6 +203,7 @@ func (e *encoder) value(o pdf.Object, depth int) {
 // replaced by it.
 func (e *encoder) dict(d pdf.Dict, depth, length int) {
 	b := e.b
+	sig := depth == 0 && e.w.Sig != 0 && e.num == int32(e.w.Sig)
 	b.str("<<")
 	for k, v := range d.All() {
 		if length >= 0 && k == "Length" {
@@ -208,6 +211,19 @@ func (e *encoder) dict(d pdf.Dict, depth, length int) {
 		}
 		writeName(b, k)
 		b.byte(' ')
+		if s, ok := v.Str(); ok && sig && k == "Contents" {
+			// The signature: found by its place, so written as it is.
+			e.w.SigContents[0] = e.pos()
+			b.printf("<%x>", s)
+			e.w.SigContents[1] = e.pos()
+			continue
+		}
+		if sig && k == "ByteRange" {
+			e.w.SigByteRange[0] = e.pos()
+			b.printf("[%-*s]", SigRangeRoom-2, "0 0 0 0")
+			e.w.SigByteRange[1] = e.pos()
+			continue
+		}
 		e.value(v, depth+1)
 	}
 	if length >= 0 {
@@ -292,7 +308,7 @@ func (w *Writer) writeUpdate(out io.Writer, t Trailer) error {
 	c := &counter{w: out, h: md5.New(), n: base.Size}
 	bw := bufio.NewWriterSize(c, 64<<10)
 	b := sink{bw}
-	e := &encoder{b: b, w: w}
+	e := &encoder{b: b, w: w, pos: func() int64 { return c.n + int64(bw.Buffered()) }}
 	// The file need not end with a line break.
 	b.str("\n")
 	var xs []xentry
