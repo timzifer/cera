@@ -40,6 +40,12 @@ type TextChar struct {
 	// page furniture such as running heads, page numbers or watermarks.
 	Artifact bool
 
+	// rtl says that the character reads from the right: the one after it
+	// in Chars stands left of it (textbidi.go). On a line with such
+	// characters, gapL and gapR say that a word space lies left and right
+	// of the character on the page. (Here, they fill the room beside
+	// Artifact.)
+	rtl, gapL, gapR bool
 	// group numbers the /ActualText sequence the glyph is in, from 1; 0
 	// for none. Its glyphs are selected together.
 	group int32
@@ -50,7 +56,10 @@ type TextChar struct {
 // from several goroutines.
 type PageText struct {
 	// Chars are the characters in reading order: the characters of a line
-	// follow each other, and the lines of a block.
+	// follow each other, and the lines of a block. Right-to-left text is
+	// in logical order too, the order it is read and typed in, with the
+	// letters its presentation forms stand for; on the page the character
+	// after one of its characters stands left of it.
 	Chars []TextChar
 	// Lines are the lines of text, in reading order.
 	Lines []TextLine
@@ -74,6 +83,10 @@ type TextLine struct {
 	Dir  [2]float64
 	// Block is the index of the line's block.
 	Block int
+	// RTL reports a line that reads from right to left, as most of its
+	// letters do: its first character is at its right end, at the end of
+	// Quad along Dir.
+	RTL bool
 	// Hyphenated reports that the line ends in a hyphen that breaks a word
 	// continued on the next line of the block.
 	Hyphenated bool
@@ -119,7 +132,18 @@ func (p *Page) TextWith(ctx context.Context, opt TextOptions) (*PageText, error)
 	if !opt.IgnoreStructure {
 		ranks = p.doc.structRanks(p.index)
 	}
-	return layoutText(td.finish(), ranks), err
+	return layoutText(td.finish(), ranks, p.doc.rightToLeft()), err
+}
+
+// rightToLeft reports a document that says it reads from right to left
+// (/ViewerPreferences /Direction /R2L).
+func (d *Document) rightToLeft() bool {
+	cat, err := d.r.Catalog()
+	if err != nil {
+		return false
+	}
+	dir, _ := d.name(d.dict(cat.Get("ViewerPreferences")).Get("Direction"))
+	return dir == "R2L"
 }
 
 // String returns the text: lines are separated by a line break, blocks by
@@ -130,7 +154,7 @@ func (p *Page) TextWith(ctx context.Context, opt TextOptions) (*PageText, error)
 // earlier line.
 func (t *PageText) String() string {
 	if len(t.Lines) == 0 && len(t.Chars) > 0 {
-		return layoutText(slices.Clone(t.Chars), nil).String() // made by hand
+		return layoutText(slices.Clone(t.Chars), nil, false).String() // made by hand
 	}
 	return t.plainText().s
 }
@@ -141,6 +165,19 @@ func (t *PageText) spaceBefore(i int) bool {
 	prev, c := &t.Chars[i-1], &t.Chars[i]
 	if isSpace(prev.Text) || isSpace(c.Text) {
 		return false
+	}
+	if prev.rtl || c.rtl {
+		// One of them reads from the right, and they need not stand
+		// side by side: there is a space where one is left for the next,
+		// or where the other is entered.
+		left, entered := prev.gapR, c.gapL
+		if prev.rtl {
+			left = prev.gapL
+		}
+		if c.rtl {
+			entered = c.gapR
+		}
+		return left || entered
 	}
 	along := (c.Origin[0]-prev.Origin[0])*prev.Dir[0] + (c.Origin[1]-prev.Origin[1])*prev.Dir[1]
 	return along-prev.Advance > 0.15*max(prev.Size, c.Size)

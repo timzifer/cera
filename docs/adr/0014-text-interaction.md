@@ -54,6 +54,17 @@ concurrent reads:
 - Fake-bold duplicates are dropped; invisible text (OCR layers) is kept.
 - Ligatures (multi-rune text, and U+FB00 to U+FB06) are split into one
   `TextChar` per character with a share of the quad.
+- Right-to-left text (`textbidi.go`, #126): Arabic and Hebrew
+  presentation forms are decomposed to their letters, the letters of a
+  ligature taking their shares of its quad from the right. A line with
+  right-to-left characters is ordered by position, its directions are
+  resolved with `golang.org/x/text/unicode/bidi` — the direction of most
+  letters is that of the line, and a line that reads from the right is
+  analysed from its right end, so that numbers and punctuation see what
+  precedes them in reading order — and rule L2 turns the visual order
+  into the logical one. Brackets are not mirrored: writers map the
+  mirrored glyph to the character typed. Word spaces are found while the
+  characters are in visual order.
 - The glyphs of an `/ActualText` sequence form one group: the first
   carries the text, the others none, and selection takes the group whole.
 - Characters form `TextLine`s (same direction, baseline moving less than

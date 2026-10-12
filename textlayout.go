@@ -12,15 +12,19 @@ import (
 //   - drops the copies fake bold and fill-then-stroke draw on top of a
 //     character,
 //   - splits glyphs standing for several characters (ligatures) into one
-//     character each, also the Latin ligatures U+FB00 to U+FB06,
+//     character each, also the Latin ligatures U+FB00 to U+FB06 and the
+//     Arabic and Hebrew presentation forms,
 //   - gathers characters into lines: consecutive characters on one
 //     baseline, then lines on the same baseline, close but not
 //     overlapping (text shown out of order),
+//   - puts the characters of lines with right-to-left text into logical
+//     order (textbidi.go),
 //   - gathers lines into blocks: lines of the same direction and size,
 //     one below the other, overlapping along the text,
 //   - orders the blocks by the structure tree of a tagged PDF, the rest
-//     by a recursive XY cut (columns before rows), text in other
-//     directions after the main one.
+//     by a recursive XY cut (columns before rows; from the right on a
+//     page that reads from right to left), text in other directions
+//     after the main one.
 //
 // Distances are in em of the characters compared.
 const (
@@ -88,6 +92,7 @@ type layoutLine struct {
 	ext   extent  // of the character quads
 	first int     // the line's first character in content order
 	block int
+	rtl   bool // the line reads from the right
 }
 
 // layoutBlock is a block being laid out.
@@ -102,12 +107,13 @@ type layoutBlock struct {
 
 // layoutText lays out chars, in content order, and orders them for
 // reading. ranks, when non-nil, is the place of marked-content identifiers
-// in the structure tree. layoutText reuses chars.
-func layoutText(chars []TextChar, ranks map[int]int) *PageText {
+// in the structure tree; r2l says that the document reads from right to
+// left. layoutText reuses chars.
+func layoutText(chars []TextChar, ranks map[int]int, r2l bool) *PageText {
 	chars = splitClusters(dropCopies(chars))
 	lines := buildLines(chars)
 	blocks := buildBlocks(lines)
-	order := orderBlocks(chars, lines, blocks, ranks)
+	order := orderBlocks(chars, lines, blocks, ranks, r2l)
 
 	t := &PageText{
 		Chars:  make([]TextChar, 0, len(chars)),
@@ -121,7 +127,7 @@ func layoutText(chars []TextChar, ranks map[int]int) *PageText {
 		tb := TextBlock{Start: len(t.Lines), Bounds: Rect{math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)}}
 		for _, li := range b.lines {
 			l := &lines[li]
-			tl := TextLine{Start: len(t.Chars), Quad: l.ext.quad(l.f), Dir: l.f.d, Block: len(t.Blocks)}
+			tl := TextLine{Start: len(t.Chars), Quad: l.ext.quad(l.f), Dir: l.f.d, Block: len(t.Blocks), RTL: l.rtl}
 			for _, ci := range l.chars {
 				t.Chars = append(t.Chars, chars[ci])
 			}
@@ -208,6 +214,7 @@ func splitClusters(chars []TextChar) []TextChar {
 		if r, n := utf8.DecodeRuneInString(c.Text); n == len(c.Text) && r >= 0xfb00 && r <= 0xfb06 {
 			c.Text = latinLigatures[r-0xfb00]
 		}
+		c.Text = decomposeRTL(c.Text)
 		for s := c.Text; s != ""; extra++ {
 			s = s[cluster(s):]
 		}
@@ -234,8 +241,13 @@ func splitClusters(chars []TextChar) []TextChar {
 		}
 		q := c.Quad.P
 		s := c.Text
+		// The letters of a right-to-left ligature stand from the right.
+		fromRight := strongRTL(s)
 		for j := range k {
 			t0, t1 := float64(j)/float64(k), float64(j+1)/float64(k)
+			if fromRight {
+				t0, t1 = float64(k-1-j)/float64(k), float64(k-j)/float64(k)
+			}
 			p := *c
 			n := cluster(s)
 			p.Text, s = s[:n], s[n:]
@@ -280,7 +292,7 @@ func buildLines(chars []TextChar) []layoutLine {
 		lines[i].measure(chars)
 	}
 	lines = mergeLines(chars, lines)
-	return slices.DeleteFunc(lines, func(l layoutLine) bool {
+	lines = slices.DeleteFunc(lines, func(l layoutLine) bool {
 		for _, ci := range l.chars {
 			if !isSpace(chars[ci].Text) {
 				return false
@@ -288,6 +300,10 @@ func buildLines(chars []TextChar) []layoutLine {
 		}
 		return true
 	})
+	for i := range lines {
+		lines[i].rtl = reorderLine(chars, lines[i].chars)
+	}
+	return lines
 }
 
 // measure sets the frame and extents of l from its characters.
@@ -461,7 +477,7 @@ func buildBlocks(lines []layoutLine) []layoutBlock {
 // orderBlocks returns the blocks in reading order: those the structure
 // tree places by the first place of their characters, then the others by
 // their layout.
-func orderBlocks(chars []TextChar, lines []layoutLine, blocks []layoutBlock, ranks map[int]int) []int {
+func orderBlocks(chars []TextChar, lines []layoutLine, blocks []layoutBlock, ranks map[int]int, r2l bool) []int {
 	var rest []int
 	var placed []int
 	rank := make([]int, len(blocks))
@@ -486,15 +502,18 @@ func orderBlocks(chars []TextChar, lines []layoutLine, blocks []layoutBlock, ran
 		}
 	}
 	slices.SortStableFunc(placed, func(a, b int) int { return rank[a] - rank[b] })
-	return append(placed, layoutOrder(chars, lines, blocks, rest)...)
+	return append(placed, layoutOrder(chars, lines, blocks, rest, r2l)...)
 }
 
 // layoutOrder orders blocks by their position: the blocks of the direction
 // with the most characters first, each direction by an XY cut in its own
-// frame.
-func layoutOrder(chars []TextChar, lines []layoutLine, blocks []layoutBlock, ids []int) []int {
+// frame. Where the text reads from right to left — r2l says so, or most
+// of the characters are on lines that do — the cut starts at the right:
+// the first column is the right one.
+func layoutOrder(chars []TextChar, lines []layoutLine, blocks []layoutBlock, ids []int, r2l bool) []int {
 	type group struct {
 		key, n int
+		rtl    int // characters on lines that read from the right
 		ids    []int
 	}
 	var groups []*group
@@ -510,6 +529,9 @@ func layoutOrder(chars []TextChar, lines []layoutLine, blocks []layoutBlock, ids
 		g.ids = append(g.ids, bi)
 		for _, li := range blocks[bi].lines {
 			g.n += len(lines[li].chars)
+			if lines[li].rtl {
+				g.rtl += len(lines[li].chars)
+			}
 		}
 	}
 	slices.SortStableFunc(groups, func(a, b *group) int { return b.n - a.n })
@@ -522,6 +544,9 @@ func layoutOrder(chars []TextChar, lines []layoutLine, blocks []layoutBlock, ids
 			for _, li := range blocks[bi].lines {
 				q := lines[li].ext.quad(lines[li].f)
 				e.addQuad(f, &q)
+			}
+			if r2l || 2*g.rtl > g.n {
+				e.u0, e.u1 = -e.u1, -e.u0 // seen from the right
 			}
 			ext[bi] = e
 		}

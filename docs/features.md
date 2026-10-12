@@ -108,6 +108,9 @@ Fonts a file does not embed:
   `RemoveAnnotation`): notes, free text, ink, shapes, lines, text markup,
   carets, standard stamps and links, with generated appearance streams,
   popups and reply threads
+- Text extraction puts right-to-left text (Arabic, Hebrew) into logical
+  order and gives the letters for presentation forms; lines, selection
+  and columns follow the direction
 - `Document.Outline`: the bookmarks as a tree, with titles, style, open
   state and targets (destinations, GoTo, URI, GoToR and Launch actions,
   structure elements)
