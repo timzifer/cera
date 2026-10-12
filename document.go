@@ -69,6 +69,8 @@ type Document struct {
 
 // Open parses a PDF file. Damaged cross-reference tables, wrong stream
 // lengths and missing objects are repaired by the reader where possible.
+// It returns [ErrPassword] for an encrypted file the empty password does
+// not open, and [ErrUnsupportedEncryption] for one cera cannot decrypt.
 func Open(data []byte) (*Document, error) {
 	return OpenWith(data, OpenOptions{})
 }
@@ -111,7 +113,7 @@ func open(read func(pdf.Options) (*pdf.Document, error), opt OpenOptions) (doc *
 	}
 	d, err := read(pdf.Options{Password: opt.Password})
 	if err != nil {
-		return nil, err
+		return nil, openError(err)
 	}
 	return &Document{r: d, fontProvider: opt.Fonts, naiveCMYK: opt.NaiveCMYK, devCMYK: devCMYK}, nil
 }
@@ -128,7 +130,7 @@ func (d *Document) Page(i int) (p *Page, err error) {
 	}
 	pd, err := d.r.Page(i + 1)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cera: %w", err)
 	}
 	p = &Page{doc: d, index: i, dict: pd}
 	p.geometry()
