@@ -229,7 +229,7 @@ func (b *builder) formDict() pdf.Object {
 	var fields pdf.Array
 	have := map[pdf.Name]bool{}
 	need := false
-	if x := b.sources[0]; x.own {
+	if x := b.own(); x != nil {
 		form := x.form()
 		if r, ok := b.ownCatalog().Get("AcroForm").Ref(); ok {
 			form, _ = x.obj(r).Dict()
@@ -297,7 +297,7 @@ func (b *builder) formDict() pdf.Object {
 // ownCatalog returns the edited document's catalogue as it is written:
 // patched, or as the file has it.
 func (b *builder) ownCatalog() pdf.Dict {
-	x := b.sources[0]
+	x := b.own()
 	cat, _ := x.d.Catalog()
 	if r, ok := x.d.Trailer().Get("Root").Ref(); ok {
 		if p, ok := x.obj(r).Dict(); ok && x.obj(r).Kind() == pdf.KindDict {

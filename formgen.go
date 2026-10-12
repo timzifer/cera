@@ -74,6 +74,10 @@ type encoder struct {
 	obj   pdf.Object // f in the resources
 	d     *Document
 	fonts genFonts
+	// prim, for the text of a canvas in an embedded font, is that font in
+	// place of f: what it lacks the fallback fonts show, and what they
+	// lack too its glyph for that.
+	prim *fallbackFont
 	// The text object being written: its size, and the fallback font
 	// selected in it, nil for f.
 	size float64
@@ -111,6 +115,20 @@ func (e *encoder) encodes(s string) bool {
 
 // glyph returns how r is shown: as '?' when no font has it.
 func (e *encoder) glyph(r rune) genGlyph {
+	if fb := e.prim; fb != nil {
+		gid, ok := fb.glyph(r)
+		if !ok && (r == '\t' || r == 0xa0) {
+			gid, ok = fb.glyph(' ')
+		}
+		if !ok {
+			if fb, gid, ok := e.d.fallbackGlyph(r); ok {
+				return genGlyph{fb: fb, code: uint16(gid), adv: fb.advance(gid)}
+			}
+			e.fonts.missing(r)
+			gid = 0
+		}
+		return genGlyph{fb: fb, code: uint16(gid), adv: fb.advance(gid)}
+	}
 	c, ok := e.own(r)
 	if !ok {
 		if fb, gid, ok := e.d.fallbackGlyph(r); ok {

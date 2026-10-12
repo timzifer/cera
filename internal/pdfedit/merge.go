@@ -202,7 +202,7 @@ func (b *builder) mergeOutlines() {
 	}
 	// The outline of the edited document, when it has one that is an
 	// object of its own with entries: the new ones follow its last.
-	if own := b.sources[0]; own.own {
+	if own := b.own(); own != nil {
 		cat, _ := own.d.Catalog()
 		if r, ok := own.d.Trailer().Get("Root").Ref(); ok {
 			if p, ok := own.obj(r).Dict(); ok {
@@ -319,7 +319,7 @@ func (b *builder) mergeDests() {
 	var all []dest
 	taken := map[string]bool{}
 	var own *source
-	if x := b.sources[0]; x.own {
+	if x := b.own(); x != nil {
 		own = x
 		for _, d := range x.dests() {
 			if !taken[string(d.name)] {

@@ -17,13 +17,18 @@ import (
 // Page is one page of the output: page Index of Src, turned by Rotate more
 // degrees (a multiple of 90). An own page is a page of the edited document,
 // kept with everything around it; it appears at most once. Any other page
-// is imported alone, from any document, the edited one included.
+// is imported alone, from any document, the edited one included. A page
+// without Src is a blank one, Width by Height points. Draws are painted on
+// the page, in their order.
 type Page struct {
 	Src    *pdf.Document
 	Index  int
 	Rotate int
 	Own    bool
 	Fields bool // an imported page brings its fields
+
+	Width, Height float64
+	Draws         []Draw
 }
 
 // Doc is what is written: the pages of the edited document Base (nil for
@@ -33,8 +38,11 @@ type Doc struct {
 	Pages []Page
 	// Patches change objects of the edited document. Objects are new
 	// ones, in its space; patches and they refer to them by NewRef.
-	Patches []Patch
-	Objects []pdf.Object
+	// ObjectSrc names, by its index, the document whose space a new
+	// object is in instead: one made of what a page of that document has.
+	Patches   []Patch
+	Objects   []pdf.Object
+	ObjectSrc map[int]*pdf.Document
 	// Info, when not zero, is the document information dictionary of the
 	// result, of direct values, in place of the edited document's or the
 	// first source's. XMP, when not nil, is its XMP packet, the catalogue's
@@ -108,13 +116,13 @@ func Update(w io.Writer, doc Doc) error {
 }
 
 // unchanged reports whether doc has the pages of its base, in their order
-// and turned as they are.
+// and turned as they are, with nothing drawn on them.
 func unchanged(doc Doc) bool {
 	if len(doc.Pages) != doc.Base.PageCount() {
 		return false
 	}
 	for i, p := range doc.Pages {
-		if !p.Own || p.Index != i || p.Rotate%360 != 0 {
+		if !p.Own || p.Index != i || p.Rotate%360 != 0 || len(p.Draws) > 0 {
 			return false
 		}
 	}
@@ -129,9 +137,13 @@ type builder struct {
 	// a new file is written.
 	upd *pdf.UpdateBase
 	// patched holds the changed objects of the edited document, newOut
-	// the output numbers of its new objects once referred to.
+	// the output numbers of the new objects once referred to.
 	patched map[int32]pdf.Object
 	newOut  map[int32]pdfwrite.Ref
+	// lead is the document the output takes after where it has none of
+	// its own: the edited one, or the one the first page comes from; nil
+	// for a document of blank pages.
+	lead *source
 
 	// sources are the sources of the pages, the base first, then in the
 	// order their first page comes, by document and whether their pages
@@ -183,7 +195,7 @@ type source struct {
 }
 
 func newBuilder(doc Doc, upd *pdf.UpdateBase) *builder {
-	b := &builder{doc: doc, w: pdfwrite.New(), upd: upd, bySrc: map[srcKey]*source{}}
+	b := &builder{doc: doc, w: pdfwrite.New(), upd: upd, bySrc: map[srcKey]*source{}, newOut: map[int32]pdfwrite.Ref{}}
 	if upd != nil {
 		base := pdfwrite.Base{
 			Size: upd.Size, Prev: upd.Startxref, Next: upd.Next, Stream: upd.XrefStream,
@@ -201,11 +213,25 @@ func newBuilder(doc Doc, upd *pdf.UpdateBase) *builder {
 		b.w = pdfwrite.NewUpdate(base)
 	}
 	if doc.Base != nil {
-		b.patched, b.newOut = patches(doc), map[int32]pdfwrite.Ref{}
+		b.patched = patches(doc)
 		b.source(doc.Base, true)
 	}
 	for _, p := range doc.Pages {
-		b.source(p.Src, p.Own)
+		if p.Src != nil {
+			b.source(p.Src, p.Own)
+		}
+	}
+	if len(b.sources) > 0 {
+		b.lead = b.sources[0]
+	}
+	// The documents new objects are made of, in the order of the objects.
+	made := make([]int, 0, len(doc.ObjectSrc))
+	for i := range doc.ObjectSrc {
+		made = append(made, i)
+	}
+	slices.Sort(made)
+	for _, i := range made {
+		b.source(doc.ObjectSrc[i], false)
 	}
 	return b
 }
@@ -255,8 +281,8 @@ func (b *builder) source(d *pdf.Document, own bool) *source {
 // null: a page that is not in the output, a page tree node, a missing
 // object. The edited document's catalogue is the output's.
 func (x *source) ref(r pdf.Ref) pdfwrite.Ref {
-	if r.Gen == newGen && x.own {
-		return x.newObject(r.Num)
+	if r.Gen == newGen {
+		return x.b.newObject(r.Num)
 	}
 	if r.Num <= 0 || x.skip[r.Num] {
 		return 0
@@ -320,6 +346,11 @@ func (b *builder) build() error {
 	out := make([]pdfwrite.Ref, len(b.doc.Pages))
 	kids := make(pdf.Array, len(out))
 	for i, p := range b.doc.Pages {
+		if p.Src == nil {
+			out[i] = b.w.Alloc()
+			kids[i] = out[i].Object()
+			continue
+		}
 		x := b.bySrc[srcKey{p.Src, p.Own}]
 		r, ok := x.d.PageRef(p.Index + 1)
 		if b.upd != nil && p.Own && ok && r.Num > 0 {
@@ -343,6 +374,10 @@ func (b *builder) build() error {
 	// Pages are made once every page has its number, so links between
 	// them can point at the copies.
 	for i, p := range b.doc.Pages {
+		if p.Src == nil {
+			b.w.Set(out[i], b.blank(p))
+			continue
+		}
 		x := b.bySrc[srcKey{p.Src, p.Own}]
 		r, _ := x.d.PageRef(p.Index + 1)
 		dict, err := x.page(p, x.pageOut[r.Num] == out[i])
@@ -374,14 +409,15 @@ func (b *builder) build() error {
 
 	// The information dictionary is the edited document's, or the first
 	// source's.
-	x := b.sources[0]
-	info := x.d.Trailer().Get("Info")
 	if !b.doc.Info.IsZero() {
 		b.info = b.w.Add(b.doc.Info.Object())
-	} else if r, ok := info.Ref(); ok {
-		b.info = x.ref(r)
-	} else if info.Kind() == pdf.KindDict {
-		b.info = b.w.Add(x.im.Map(info))
+	} else if x := b.lead; x != nil {
+		info := x.d.Trailer().Get("Info")
+		if r, ok := info.Ref(); ok {
+			b.info = x.ref(r)
+		} else if info.Kind() == pdf.KindDict {
+			b.info = b.w.Add(x.im.Map(info))
+		}
 	}
 	b.w.Version = b.version()
 	return nil
@@ -531,7 +567,7 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 		{Key: "Type", Val: pdf.Name("Catalog").Object()},
 		{Key: "Pages", Val: b.pages.Object()},
 	}
-	if x := b.sources[0]; x.own {
+	if x := b.own(); x != nil {
 		cat, err := x.d.Catalog()
 		if err != nil {
 			return pdf.Dict{}, err
@@ -585,7 +621,7 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 	if !b.names2.IsNull() {
 		entries = append(entries, pdf.Entry{Key: "Names", Val: b.names2})
 	}
-	if !b.doc.PageLabels.IsZero() && !b.sources[0].own {
+	if !b.doc.PageLabels.IsZero() && b.own() == nil {
 		entries = append(entries, pdf.Entry{Key: "PageLabels", Val: b.doc.PageLabels.Object()})
 	}
 	if b.doc.XMP != nil {
@@ -643,7 +679,7 @@ func (b *builder) write(w io.Writer) error {
 			return err
 		}
 	}
-	if x := b.sources[0]; x.own {
+	if x := b.own(); x != nil {
 		// The output stands for the edited file.
 		if id, ok := x.d.Resolve(x.d.Trailer().Get("ID")).Array(); ok && len(id) == 2 {
 			if s, ok := x.d.Resolve(id[0]).Str(); ok && len(s) > 0 {
@@ -680,6 +716,9 @@ func (x *source) page(p Page, first bool) (pdf.Dict, error) {
 				src = src.With(k, v)
 			}
 		}
+	}
+	if len(p.Draws) > 0 {
+		src = x.b.drawn(src, x.d.Resolve, p.Draws)
 	}
 	entries := []pdf.Entry{
 		{Key: "Type", Val: pdf.Name("Page").Object()},
@@ -805,7 +844,7 @@ func (x *source) setPatched() {
 // buildPatches makes an update of a document whose pages are unchanged:
 // the patched objects and the new ones alone.
 func (b *builder) buildPatches() error {
-	x := b.sources[0]
+	x := b.own()
 	r, ok := x.d.Trailer().Get("Root").Ref()
 	if !ok {
 		return ErrRepaired
@@ -818,20 +857,4 @@ func (b *builder) buildPatches() error {
 	}
 	x.setPatched()
 	return nil
-}
-
-// newObject returns the output number of new object i, numbering it when
-// it is first referred to: new objects nothing refers to are not written.
-func (x *source) newObject(i int32) pdfwrite.Ref {
-	objs := x.b.doc.Objects
-	if i < 0 || int(i) >= len(objs) {
-		return 0
-	}
-	if n, ok := x.b.newOut[i]; ok {
-		return n
-	}
-	n := x.b.w.Alloc()
-	x.b.newOut[i] = n
-	x.b.w.Set(n, x.im.Map(objs[i]))
-	return n
 }

@@ -33,6 +33,9 @@ import (
 // labels stay with their pages: /PageLabels is written anew for the pages
 // of the result, and a page from another document has no label.
 //
+// An editor makes content too (canvas.go): blank pages, and drawings over
+// or under the content of any page.
+//
 // Pages keep their content as it is: every object a page refers to is
 // copied once per source document, byte for byte, and streams keep their
 // filters. What a page takes from its ancestors in the page tree
@@ -57,8 +60,8 @@ var ErrNoUpdate = errors.New("cera: the document cannot be updated incrementally
 // needs the permission to modify it or to assemble it, writing form values
 // the permission to fill in forms, to annotate or to modify, adding
 // annotations the permission to annotate or to modify, and flattening,
-// which changes the content of pages, and setting metadata the permission
-// to modify.
+// which changes the content of pages, drawing on pages and setting metadata
+// the permission to modify.
 var ErrNotPermitted = errors.New("cera: the document's permissions do not allow the change")
 
 // EditPage selects a page to import.
@@ -130,6 +133,11 @@ type editPage struct {
 	labels bool // an imported page keeps its label
 	// annots are the changes to the annotations of an own page.
 	annots *annotEdits
+	// A blank page, made by AddPage, has no src: it is w by h points.
+	blank bool
+	w, h  float64
+	// draws is what was drawn on the page, by Draw.
+	draws []*drawing
 }
 
 // Edit returns an editor of d with all its pages.
@@ -260,8 +268,8 @@ func (e *Editor) check(i int) error {
 // [NewEditor] and for a document that needed a repair, [ErrNotPermitted]
 // for a change an encrypted document's permissions do not allow, and
 // [ErrCertified] for changes a certification signature does not allow:
-// any with DocMDP permissions 1, changes of the pages and flattened
-// annotations with 2 and 3, added annotations with 1 and 2. The editor may
+// any with DocMDP permissions 1, changes of the pages, drawings on them
+// and flattened annotations with 2 and 3, added annotations with 1 and 2. The editor may
 // be updated again. Nothing is written when Update fails, but
 // for an error of w itself.
 func (e *Editor) Update(w io.Writer) (err error) {
@@ -271,7 +279,7 @@ func (e *Editor) Update(w io.Writer) (err error) {
 	}
 	if sg := e.base.signing(); !e.unguarded && (sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated() || e.meta != nil) ||
 		sg.mdp == 2 && (e.pagesChanged() || e.annotated()) || sg.mdp == 3 && e.pagesChanged() ||
-		sg.mdp != 0 && e.flattens()) {
+		sg.mdp != 0 && (e.flattens() || e.drawsOn())) {
 		return ErrCertified
 	}
 	if prot, ok := e.base.r.Protection(); ok && !prot.Owner {
@@ -279,7 +287,7 @@ func (e *Editor) Update(w io.Writer) (err error) {
 		if e.pagesChanged() && perm&(pdf.PermModify|pdf.PermAssemble) == 0 ||
 			len(e.fields) > 0 && perm&(pdf.PermFillForms|pdf.PermAnnotate|pdf.PermModify) == 0 ||
 			e.annotated() && perm&(pdf.PermAnnotate|pdf.PermModify) == 0 ||
-			(e.flattens() || e.meta != nil) && perm&pdf.PermModify == 0 {
+			(e.flattens() || e.drawsOn() || e.meta != nil) && perm&pdf.PermModify == 0 {
 			return ErrNotPermitted
 		}
 	}
@@ -300,6 +308,10 @@ func (e *Editor) plan() pdfedit.Doc {
 		doc.Base = e.base.r
 	}
 	for i, p := range e.pages {
+		if p.blank {
+			doc.Pages[i] = pdfedit.Page{Rotate: p.rotate, Width: p.w, Height: p.h}
+			continue
+		}
 		doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own, Fields: p.fields}
 	}
 	// Object 0 is Helvetica, written only when an appearance uses it.
@@ -331,6 +343,7 @@ func (e *Editor) plan() pdfedit.Doc {
 	if e.meta != nil {
 		e.metaPatches(&doc)
 	}
+	e.drawPlan(&doc)
 	e.gen.finish()
 	return doc
 }
@@ -384,7 +397,7 @@ func (e *Editor) SaveWith(w io.Writer, opt SaveOptions) (err error) {
 	// Embedded files that the password did not open would be written as
 	// nothing.
 	for _, p := range e.pages {
-		if p.src.r.FilesLocked() {
+		if !p.blank && p.src.r.FilesLocked() {
 			return ErrPassword
 		}
 	}
