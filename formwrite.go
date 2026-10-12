@@ -69,7 +69,7 @@ func (e *Editor) SetFields(state *FormState) error {
 		}
 		values[f] = state.Value(f)
 	}
-	if len(values) > 0 {
+	if len(values) > 0 && !e.unguarded {
 		sg := e.base.signing()
 		if sg.mdp == 1 {
 			return ErrCertified

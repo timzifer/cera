@@ -78,6 +78,11 @@ func (w *Writer) Write(out io.Writer, t Trailer) error {
 		}
 		offs = append(offs, c.n+int64(bw.Buffered()))
 		b.printf("%d 0 obj\n", i+1)
+		crypt := w.Crypt
+		if Ref(i+1) == w.Encrypt {
+			crypt = nil // the encryption dictionary is not encrypted
+		}
+		e.object(int32(i+1), 0, crypt)
 		e.value(s.o, 0)
 		b.str("\nendobj\n")
 	}
@@ -97,6 +102,9 @@ func (w *Writer) Write(out io.Writer, t Trailer) error {
 	b.printf("trailer\n<</Size %d /Root %d 0 R", len(offs)+1, t.Root)
 	if t.Info != 0 {
 		b.printf(" /Info %d 0 R", t.Info)
+	}
+	if w.Crypt != nil && w.Encrypt != 0 {
+		b.printf(" /Encrypt %d 0 R", w.Encrypt)
 	}
 	b.printf(" /ID [<%x> <%x>]>>\nstartxref\n%d\n%%%%EOF\n", first, sum, xref)
 	return bw.Flush()

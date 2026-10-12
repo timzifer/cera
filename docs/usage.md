@@ -325,6 +325,33 @@ Dates are read leniently (a missing `D:`, missing fields, `Z00'00'`); a
 date without a time zone is taken as UTC. PDF 2.0 deprecates `/Info`, but
 for its dates, in favour of XMP, which is returned raw.
 
+## Signatures
+
+`Document.Signatures` lists the signatures in the order they were made,
+and `Verify` checks one:
+
+```go
+for _, s := range doc.Signatures() {
+	st, err := s.Verify(cera.VerifyOptions{Roots: roots}) // roots: *x509.CertPool, or nil
+	switch {
+	case err != nil:           // cera.ErrSignatureUnsupported: cannot be checked
+	case !st.Intact:           // the signed bytes changed, or the signature is not the certificate's
+	case !st.ChangesAllowed:   // something was appended that the signatures do not allow
+	case st.Changes.Any():     // signed, then filled in, signed again or annotated: st.Changes
+	}
+	// s.Signer, s.Time (st.Timestamped: from a timestamp token), s.Reason,
+	// s.Certification; st.Trusted and st.TrustError for the chain
+}
+```
+
+`Intact` is the cryptography: the digest of the bytes the signature covers
+and the signature of the certificate's key (signed data of
+`adbe.pkcs7.detached`, `ETSI.CAdES.detached` and `adbe.pkcs7.sha1`, bare
+`adbe.x509.rsa_sha1`, document timestamps `ETSI.RFC3161`; RSA and ECDSA).
+`Changes` compares the document as signed with the document as it is.
+Trust is against the roots the caller gives: cera has no trust list, and
+does not check revocation.
+
 ## Attachments
 
 `Document.Attachments` lists the files a document embeds — the XML of an
@@ -343,6 +370,20 @@ for _, a := range doc.Attachments() {
 The file of a FileAttachment annotation is `Annotation.File` on its page.
 A document may encrypt its attachments alone: it opens without the
 password, and `Open` returns `ErrPassword` until it is given.
+
+`Editor.SetMetadata` writes one back, into `/Info` and into the XMP packet
+so that both agree — the properties that mirror `/Info` are changed in
+the packet the document has, the rest of it stays, and a document without
+a packet gets one:
+
+```go
+m := doc.Metadata()
+m.Title, m.Modified = "Annual report", time.Now()
+err = e.SetMetadata(m)
+```
+
+`Save` and `Update` set no date or producer on their own: the same edit
+gives the same file.
 
 ## Editing
 
@@ -380,11 +421,29 @@ form fields whose widgets were all on deleted pages; outline entries and
 links to it lose their target.
 
 Pages are copied as they are: every object once per source document, byte
-for byte, streams with their filters. The result is never encrypted: an
-encrypted document is written decrypted when its permissions allow
-reassembling it, else `Save` and `ImportPages` return `ErrNoAssembly`.
-`Save` may be called again; documents an editor uses may be rendered
-meanwhile.
+for byte, streams with their filters. An encrypted document may be
+reassembled when its permissions allow it, else `Save` and `ImportPages`
+return `ErrNoAssembly`. `Save` may be called again; documents an editor
+uses may be rendered meanwhile.
+
+`Save` keeps the protection of an encrypted document: the saved file opens
+with the same passwords and grants the same permissions. `SaveWith`
+changes that — it protects a file, or writes a protected one plain — and
+for an encrypted document either needs the owner password
+(`ErrNotPermitted` otherwise):
+
+```go
+err = e.SaveWith(w, cera.SaveOptions{Encrypt: &cera.Encryption{
+	UserPassword:  "to open",
+	OwnerPassword: "to change",
+	Permissions:   cera.PermPrint | cera.PermPrintFaithful,
+}})
+err = e.SaveWith(w, cera.SaveOptions{Decrypt: true})
+```
+
+New protection is AES-256 (PDF 2.0, revision 6) with a random file key.
+Pages imported from other documents are encrypted, or not, as the result
+is.
 
 `SetFields` records the values of a `FormState` of the edited document
 that differ from what the file holds: a text as a text string (its rich

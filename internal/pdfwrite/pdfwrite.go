@@ -10,9 +10,10 @@
 // a whole ([Importer.Copy]) is translated when it is written, so copying
 // follows the references of what is written, each object once per source.
 //
-// The file is written with a classic cross-reference table and is not
-// encrypted: streams copied from an encrypted source are written decrypted,
-// still filtered, with a leading /Crypt filter removed.
+// The file is written with a classic cross-reference table. Streams copied
+// from an encrypted source are taken decrypted, still filtered, with a
+// leading /Crypt filter removed; the output is encrypted when the writer
+// has an encryptor ([Writer.Crypt]), and plain otherwise.
 package pdfwrite
 
 import (
@@ -48,6 +49,12 @@ type Writer struct {
 	// Version is the version the header declares; "1.7" when empty. An
 	// update writes no header.
 	Version string
+	// Crypt, when set, encrypts the strings and streams of a new file,
+	// and Encrypt is the output object that holds its encryption
+	// dictionary, which is written as it is and named by the trailer.
+	// (An update takes both from its Base.)
+	Crypt   *pdf.Encryptor
+	Encrypt Ref
 
 	objs  []slot // new objects, numbered from first
 	first int32
