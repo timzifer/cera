@@ -677,6 +677,33 @@ its own before or after it. It belongs to its page — it moves and turns
 with it. In an encrypted document, drawing needs the permission to modify;
 a certification forbids it.
 
+`AddField` makes a form, or adds to one: a text field, a check box, the
+buttons of a radio group, a combo or list box, a push button, or a
+signature field for `Sign` to sign later. `RemoveField` takes one out,
+with its widgets.
+
+```go
+boxed := cera.Appearance{Border: &black, Background: &white}
+err = e.AddField(0, cera.Rect{60, 100, 260, 120}, cera.NewField{
+	Name: "address.street", // below a node "address", made if there is none
+	Type: cera.FieldText, Value: cera.TextValue("Main St 1"), Look: boxed,
+})
+// A radio group: a widget each, under one name.
+err = e.AddField(0, cera.Rect{60, 130, 74, 144}, cera.NewField{Name: "plan", Type: cera.FieldRadio, OnState: "basic", Value: cera.StateValue("basic"), Look: boxed})
+err = e.AddField(0, cera.Rect{90, 130, 104, 144}, cera.NewField{Name: "plan", OnState: "pro", Look: boxed})
+err = e.AddField(0, cera.Rect{60, 160, 260, 220}, cera.NewField{Name: "approval", Type: cera.FieldSignature})
+err = e.RemoveField("obsolete")
+```
+
+The rectangle is in points of the displayed page; a name the form has
+adds a widget to that field. A new field is written with a default
+appearance in Helvetica — the form's `/Helv`, added to its resources if
+it has none — and an appearance stream for its value, as cera draws
+fields that have none. Pages are those of the edited document; a
+certified document takes no fields and gives none up (`ErrCertified`), a
+field a signature locks stays (`ErrLocked`), and `Sign` wants the fields
+written first.
+
 `SetFields` records the values of a `FormState` of the edited document
 that differ from what the file holds: a text as a text string (its rich
 text value removed), a button state as a name with every widget's `/AS`,

@@ -122,6 +122,11 @@ type Editor struct {
 	meta *Metadata
 	// sign is the signature being made, while Sign writes.
 	sign *signPlan
+	// addFields are the fields added and the widgets added to fields of
+	// the edited document, by AddField, and delFields the names of its
+	// fields that are removed, by RemoveField.
+	addFields []*addedField
+	delFields map[string]bool
 }
 
 // editPage is one page of the result: page index of src, turned by rotate
@@ -297,7 +302,7 @@ func (e *Editor) updatable() error {
 	}
 	if sg := e.base.signing(); !e.unguarded && (sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated() || e.meta != nil) ||
 		sg.mdp == 2 && (e.pagesChanged() || e.annotated()) || sg.mdp == 3 && e.pagesChanged() ||
-		sg.mdp != 0 && (e.flattens() || e.drawsOn())) {
+		sg.mdp != 0 && (e.flattens() || e.drawsOn() || e.formed())) {
 		return ErrCertified
 	}
 	if prot, ok := e.base.r.Protection(); ok && !prot.Owner {
@@ -305,7 +310,7 @@ func (e *Editor) updatable() error {
 		if e.pagesChanged() && perm&(pdf.PermModify|pdf.PermAssemble) == 0 ||
 			len(e.fields) > 0 && perm&(pdf.PermFillForms|pdf.PermAnnotate|pdf.PermModify) == 0 ||
 			e.annotated() && perm&(pdf.PermAnnotate|pdf.PermModify) == 0 ||
-			(e.flattens() || e.drawsOn() || e.meta != nil) && perm&pdf.PermModify == 0 {
+			(e.flattens() || e.drawsOn() || e.formed() || e.meta != nil) && perm&pdf.PermModify == 0 {
 			return ErrNotPermitted
 		}
 	}
@@ -353,6 +358,9 @@ func (e *Editor) plan() pdfedit.Doc {
 	}
 	if e.meta != nil {
 		e.metaPatches(&doc)
+	}
+	if e.base != nil && e.formed() {
+		e.fieldPlan(&doc)
 	}
 	cf := e.canvasForms(&doc)
 	e.drawPlan(&doc, cf)

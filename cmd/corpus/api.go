@@ -30,8 +30,8 @@ import (
 // drawing it, over the files: the text with round trips of search and
 // selection, the links and where they lead, and the editor — a file saved
 // anew, an update with a highlight, the form and the annotations
-// flattened, a signature — each opened again and its first page compared
-// with what it was.
+// flattened, a field added, a signature — each opened again and its first
+// page compared with what it was.
 //
 // The gate is that of rendering: no panic, no hang, no deadline.
 // Everything else it finds is a difference, reported with its file.
@@ -254,6 +254,48 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		}
 		if op, err := od.Page(0); err == nil && len(op.Annotations()) <= had {
 			r.differ("update: %d annotations on page 1 after a highlight was added to %d", len(op.Annotations()), had)
+		}
+	})
+	r.step("field", func() {
+		const name = "cera.corpus.field"
+		e := doc.Edit()
+		if !r.check("field", e.AddField(0, cera.Rect{X0: 10, Y0: 10, X1: 110, Y1: 30}, cera.NewField{Name: name, Value: cera.TextValue("cera")})) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("field: update", e.Update(&out)) {
+			return
+		}
+		od := reopen("field", out.Bytes(), false)
+		if od == nil {
+			return
+		}
+		had := 0
+		if form := doc.Form(); form != nil {
+			had = len(form.Fields)
+		}
+		form := od.Form()
+		if f := form.Field(name); f == nil || len(f.Widgets) != 1 || f.Saved.Text() != "cera" || len(form.Fields) != had+1 {
+			r.differ("field: the form has %d fields after one was added to %d, the new one is %+v", len(form.Fields), had, f)
+			return
+		}
+		// And taken out again: the form as it was.
+		e = od.Edit()
+		if !r.check("field: remove", e.RemoveField(name)) {
+			return
+		}
+		out.Reset()
+		if !r.check("field: update", e.Update(&out)) {
+			return
+		}
+		if od := reopen("field removed", out.Bytes(), true); od != nil {
+			n := 0
+			if form := od.Form(); form != nil {
+				n = len(form.Fields)
+			}
+			if n != had {
+				r.differ("field: the form has %d fields after the added one was removed, it had %d", n, had)
+			}
 		}
 	})
 	r.step("sign", func() {

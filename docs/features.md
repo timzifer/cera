@@ -155,6 +155,9 @@ Fonts a file does not embed:
 - Native widgets through `FormWidgetProvider` and `FormLayer` (tab order,
   focus); fyne provider in [`form/fyneform`](../form/fyneform)
 - `cmd/cera -field name=value` fills a form
+- `Editor.AddField` and `RemoveField`: fields of every type added to
+  pages with generated appearances, widgets added to fields, names that
+  make the nodes above them; fields removed with their widgets
 - `FormState.ExportFDF`, `ExportXFDF`, `ImportFDF`, `ImportXFDF`: the
   values of a form in its exchange formats, with hierarchical names, the
   states of buttons and several options of a list box

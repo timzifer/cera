@@ -212,6 +212,9 @@ func (e *Editor) signCheck(opt SignOptions) (*signPlan, error) {
 		return nil, fmt.Errorf("%w: the catalogue is not an object of its own", ErrNoUpdate)
 	}
 
+	if e.formed() {
+		return nil, errors.New("cera: a signature is not written with fields added or removed: update the document first, then sign the result")
+	}
 	sp := &signPlan{opt: opt, name: opt.Field, room: cms.Room(opt.Certificate, opt.Chain...)}
 	if sp.opt.Time.IsZero() {
 		sp.opt.Time = time.Now()
@@ -388,36 +391,16 @@ func (e *Editor) signPlan(doc *pdfedit.Doc, cf *canvasForms) {
 
 	// The form: its fields, and that it has signatures, which a file is
 	// then to be updated for and not written anew (SigFlags 1 and 2).
-	cat, _ := d.r.Catalog()
-	af := cat.Get("AcroForm")
-	if v, ok := lastSet(doc.Patches, root, "AcroForm"); ok {
-		af = v
-	}
 	set := []pdf.Entry{{Key: "SigFlags", Val: pdf.Integer(3)}}
-	formDict := d.dict(af)
-	afRef, indirect := af.Ref()
 	if !added.IsNull() {
-		fields, ok := lastSet(doc.Patches, afRef, "Fields")
-		if !ok || !indirect {
-			fields = formDict.Get("Fields")
-		}
-		list, _ := d.resolve(fields).Array()
+		list, _ := d.resolve(e.formEntry(doc.Patches, "Fields")).Array()
 		set = append(set, pdf.Entry{Key: "Fields", Val: append(append(pdf.Array(nil), list...), added).Object()})
 	}
-	if indirect && !formDict.IsZero() {
-		doc.Patches = append(doc.Patches, pdfedit.Patch{Ref: afRef, Set: set})
-	} else {
-		var entries []pdf.Entry
-		for k, v := range formDict.All() {
-			if k != "SigFlags" && (k != "Fields" || added.IsNull()) {
-				entries = append(entries, pdf.Entry{Key: k, Val: v})
-			}
-		}
-		doc.Patches = append(doc.Patches, pdfedit.Patch{Ref: root, Set: []pdf.Entry{{Key: "AcroForm", Val: pdf.NewDict(append(entries, set...)...).Object()}}})
-	}
+	doc.Patches = e.formSet(doc.Patches, set...)
 
 	if o.Certify != 0 {
 		// The catalogue names the signature that certifies the document.
+		cat, _ := d.r.Catalog()
 		perms := cat.Get("Perms")
 		mdp := pdf.Entry{Key: "DocMDP", Val: sigRef}
 		if r, ok := perms.Ref(); ok && !d.dict(perms).IsZero() {
