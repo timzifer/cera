@@ -56,7 +56,7 @@ Fonts a file does not embed:
 | space | notes |
 |---|---|
 | DeviceGray, DeviceRGB | |
-| DeviceCMYK | through a SWOP press profile, or the caller's (`OpenOptions.CMYKProfile`); `OpenOptions.NaiveCMYK` for raw device values |
+| DeviceCMYK | through the CMYK profile of the document's output intent (PDF/X, PDF/A, PDF/E; `OpenOptions.IgnoreOutputIntent` to skip it), else a SWOP press profile; or the caller's (`OpenOptions.CMYKProfile`); `OpenOptions.NaiveCMYK` for raw device values |
 | CalGray, CalRGB, Lab | through CIE XYZ, D50 (Bradford) |
 | ICCBased | grey and RGB matrix/TRC profiles; CMYK profiles of lut8, lut16 or lutAtoB tables (Lab or XYZ); others by channel count |
 | Separation, DeviceN | tint transforms; `/None` paints nothing |
@@ -199,7 +199,7 @@ column says.
 |---|---|---|
 | `tint-transform` | tint transform that does not read | as grey |
 | `shading-function` | shading function that does not read | – |
-| `icc-lut` | CMYK ICC profile cera cannot read | through DeviceCMYK's profile |
+| `icc-lut` | CMYK ICC profile cera cannot read, of an ICCBased space or of the output intent | through DeviceCMYK's profile, the bundled one for the intent |
 | – | grey and RGB ICC profiles built from lookup tables | as device space of as many components |
 
 ### Transparency and graphics state

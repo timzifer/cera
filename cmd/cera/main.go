@@ -43,6 +43,7 @@ func main() {
 	imageFilter := flag.String("image-filter", "nearest", "how magnified images without /Interpolate are sampled: nearest or smooth (bilinearly below 2× magnification)")
 	cmykProfile := flag.String("cmyk-profile", "", "ICC profile `file` DeviceCMYK is converted through instead of the bundled SWOP profile")
 	naiveCMYK := flag.Bool("naive-cmyk", false, "convert CMYK naively, as device values, without a profile")
+	ignoreIntent := flag.Bool("ignore-output-intent", false, "convert DeviceCMYK through the bundled SWOP profile also where the document has an output intent")
 	pngMode := flag.String("png", "encode", "how PNGs are compressed: encode (calamus, after drawing), stream (calamus, bands while they are drawn) or stdlib (image/png)")
 	var fields []string
 	flag.Func("field", "set a form field, `name=value` (repeatable); a check box or radio button takes the name of its state", func(s string) error {
@@ -77,7 +78,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "cera: -png %q: want stream, encode or stdlib\n", *pngMode)
 		os.Exit(2)
 	}
-	opt := cera.OpenOptions{Password: *password, NaiveCMYK: *naiveCMYK}
+	opt := cera.OpenOptions{Password: *password, NaiveCMYK: *naiveCMYK, IgnoreOutputIntent: *ignoreIntent}
 	if *cmykProfile != "" {
 		b, err := os.ReadFile(*cmykProfile)
 		if err != nil {

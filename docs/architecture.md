@@ -129,8 +129,9 @@ transform is tabulated at 256 tints, so a spot-colour image costs a
 palette), Lab, CalGray, CalRGB and ICC profiles of the matrix/TRC kind
 through CIE XYZ, adapted to D50 with the Bradford transform. An ICC
 profile close to sRGB is taken as the device space; RGB images in another
-profile convert through tables per channel. DeviceCMYK converts through a
-SWOP press profile (colord's profile of CGATS TR 005, NPES, the
+profile convert through tables per channel. DeviceCMYK converts through
+the CMYK profile of the document's output intent, where it has one, else
+through a SWOP press profile (colord's profile of CGATS TR 005, NPES, the
 characterization data's source; `internal/cmyk`), as a press prints it,
 or through the caller's (`OpenOptions.CMYKProfile`), or with
 `OpenOptions.NaiveCMYK` naively, as device values. An ICCBased CMYK space

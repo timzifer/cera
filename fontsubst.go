@@ -72,15 +72,25 @@ type OpenOptions struct {
 	// NaiveCMYK converts DeviceCMYK, and ICCBased spaces of four
 	// components, with R = (1-C)(1-K) and its like instead of through a
 	// press profile, for callers who want the device values: fills,
-	// strokes, shadings and images. It takes precedence over CMYKProfile.
+	// strokes, shadings and images. It takes precedence over CMYKProfile
+	// and over the document's output intent.
 	NaiveCMYK bool
 	// CMYKProfile, if set, is an ICC profile (CMYK; lut8, lut16 or
 	// lutAtoB tables; Lab or XYZ connection space) that DeviceCMYK, and
 	// ICCBased spaces of four components whose own profile cera cannot
 	// read, are converted through instead of the bundled one (CGATS TR
 	// 005, SWOP), relative colorimetric with black point compensation.
-	// Documents opened with the same profile share its tables.
+	// Documents opened with the same profile share its tables. It takes
+	// precedence over the document's output intent.
 	CMYKProfile []byte
+	// IgnoreOutputIntent converts DeviceCMYK through the bundled profile
+	// also in a document that names the printing condition its device
+	// colours are meant for. Without it, DeviceCMYK is converted through
+	// the CMYK profile of the document's output intent (/OutputIntents of
+	// the catalogue: PDF/X, PDF/A, PDF/E), as Acrobat and MuPDF do: a file
+	// made for uncoated paper or for newsprint is shown with those
+	// colours. PDFium does not use output intents.
+	IgnoreOutputIntent bool
 }
 
 // Font descriptor flags.

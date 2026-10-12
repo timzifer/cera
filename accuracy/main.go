@@ -281,7 +281,9 @@ func (c config) compareFile(f corpusFile, ref **pdfium.Engine) (ps []page, skip 
 		return img, t, writePNG(path, img)
 	}
 
-	doc, err := cera.OpenWith(data, cera.OpenOptions{Password: f.password})
+	// PDFium does not use output intents: DeviceCMYK is compared as both
+	// convert it. The reference report shows cera with the intent.
+	doc, err := cera.OpenWith(data, cera.OpenOptions{Password: f.password, IgnoreOutputIntent: true})
 	if err != nil {
 		// Whether PDFium opens it decides whether this is cera's failure.
 		if _, _, rerr := refPage(0); rerr != nil {
@@ -549,7 +551,7 @@ func (c config) writeDiffs(dir string, ps []page, n int) error {
 			return err
 		}
 		pw, _ := corpus.Password(p.path)
-		doc, err := cera.OpenWith(data, cera.OpenOptions{Password: pw})
+		doc, err := cera.OpenWith(data, cera.OpenOptions{Password: pw, IgnoreOutputIntent: true})
 		if err != nil {
 			continue
 		}

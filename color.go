@@ -173,7 +173,7 @@ func (d *Document) colorSpace(o pdf.Object, res pdf.Dict, depth int) (cs *colorS
 		case "DeviceRGB", "RGB", "CalRGB":
 			return spaceRGB, ""
 		case "DeviceCMYK", "CMYK":
-			return d.cmykSpace(), ""
+			return d.deviceCMYK()
 		case "Pattern":
 			return spacePattern, ""
 		}
@@ -227,18 +227,21 @@ var defaultNames = [5]pdf.Name{1: "DefaultGray", 3: "DefaultRGB", 4: "DefaultCMY
 // Indexed space), else the device space itself. NaiveCMYK keeps
 // DeviceCMYK naive.
 func (d *Document) defaultSpace(res pdf.Dict, n int) (*colorSpace, string) {
-	dev := d.deviceSpace(n)
-	if n == 4 && d.naiveCMYK {
-		return dev, ""
+	dev, devApprox := d.deviceSpace(n), ""
+	if n == 4 {
+		dev, devApprox = d.deviceCMYK()
+		if d.naiveCMYK {
+			return dev, ""
+		}
 	}
 	o, ok := d.dict(res.Get("ColorSpace")).Lookup(defaultNames[n])
 	if !ok {
-		return dev, ""
+		return dev, devApprox
 	}
 	// Depth 1: the Default space is not remapped in turn.
 	cs, approx := d.colorSpace(o, pdf.Dict{}, 1)
 	if cs == nil || cs.n != n || cs.kind == csPattern || cs.kind == csIndexed {
-		return dev, ""
+		return dev, devApprox
 	}
 	return cs, approx
 }
@@ -264,7 +267,7 @@ func (d *Document) makeColorSpace(o pdf.Object, res pdf.Dict, depth int) (cs *co
 	case "DeviceRGB", "RGB":
 		return spaceRGB, ""
 	case "DeviceCMYK", "CMYK":
-		return d.cmykSpace(), ""
+		return d.deviceCMYK()
 	case "CalGray", "CalRGB":
 		n := 1
 		dev := spaceGray
@@ -349,6 +352,18 @@ func (d *Document) iccCMYK(ref pdf.Ref, s *pdf.Stream) (*colorSpace, string) {
 	if d.naiveCMYK {
 		return spaceCMYKNaive, ""
 	}
+	cs, approx := d.profileCMYK(ref, func() []byte { return d.r.Decode(s).Data })
+	if cs == nil {
+		cs = d.cmykSpace()
+	}
+	return cs, approx
+}
+
+// profileCMYK returns the conversion through the CMYK profile data returns
+// (of object ref, if it is one), or nil and what that is counted as:
+// "icc-lut" for a profile cera cannot read, "icc-budget" for one profile
+// too many. A profile object is loaded once, whatever names it.
+func (d *Document) profileCMYK(ref pdf.Ref, data func() []byte) (*colorSpace, string) {
 	if ref != (pdf.Ref{}) {
 		d.csMu.Lock()
 		e, ok := d.iccSpaces[ref]
@@ -357,15 +372,16 @@ func (d *Document) iccCMYK(ref pdf.Ref, s *pdf.Stream) (*colorSpace, string) {
 			return e.cs, e.approx
 		}
 	}
-	e := csEntry{d.cmykSpace(), "icc-lut"}
-	if t, err := cmyk.Load(d.r.Decode(s).Data); err == nil {
+	e := csEntry{nil, "icc-lut"}
+	if t, err := cmyk.Load(data()); err == nil {
 		e = csEntry{&colorSpace{kind: csCMYK, n: 4, cmyk: t}, ""}
 	}
 	d.csMu.Lock()
 	defer d.csMu.Unlock()
-	if t := e.cs.cmyk; e.approx == "" && !d.cmykTables[t] {
+	if e.cs != nil && !d.cmykTables[e.cs.cmyk] {
+		t := e.cs.cmyk
 		if len(d.cmykTables) >= maxCMYKProfiles {
-			e = csEntry{d.cmykSpace(), "icc-budget"}
+			e = csEntry{nil, "icc-budget"}
 		} else {
 			if d.cmykTables == nil {
 				d.cmykTables = map[*cmyk.Table]bool{}
@@ -380,6 +396,70 @@ func (d *Document) iccCMYK(ref pdf.Ref, s *pdf.Stream) (*colorSpace, string) {
 		d.iccSpaces[ref] = e
 	}
 	return e.cs, e.approx
+}
+
+// maxIntents is how many output intents of a document are looked at.
+const maxIntents = 32
+
+// deviceCMYK is DeviceCMYK as the document converts it, and what that is
+// counted as when it is not what the document asks for. In this order:
+// naively (OpenOptions.NaiveCMYK); through the caller's profile
+// (OpenOptions.CMYKProfile); through the profile of the document's output
+// intent; through the bundled SWOP profile of internal/cmyk.
+//
+// The output intent (PDF 2.0, 14.11.5) names the printing condition the
+// device colours of a PDF/X, PDF/A or PDF/E file are meant for. The first
+// intent of one of these kinds with a CMYK profile decides; one whose
+// profile is for RGB or grey says nothing about DeviceCMYK. It is read
+// when DeviceCMYK is first used. A profile cera cannot read is counted as
+// "icc-lut", one past maxCMYKProfiles as "icc-budget", as those of
+// ICCBased spaces are, and DeviceCMYK then goes through the bundled
+// profile.
+func (d *Document) deviceCMYK() (*colorSpace, string) {
+	switch {
+	case d.devCMYK != nil:
+		return d.devCMYK, ""
+	case d.ignoreIntent || d.r == nil:
+		return spaceCMYK, ""
+	}
+	d.intentOnce.Do(func() {
+		defer func() { _ = recover() }()
+		cat, err := d.r.Catalog()
+		if err != nil {
+			return
+		}
+		intents, _ := d.resolve(cat.Get("OutputIntents")).Array()
+		for _, o := range intents[:min(len(intents), maxIntents)] {
+			it := d.dict(o)
+			switch s, _ := d.name(it.Get("S")); s {
+			case "GTS_PDFX", "GTS_PDFA1", "ISO_PDFE1":
+			default:
+				continue
+			}
+			prof := it.Get("DestOutputProfile")
+			s, ok := d.resolve(prof).Stream()
+			if !ok {
+				continue
+			}
+			data := d.r.Decode(s).Data
+			// The colour space of the profile: of its header, or where
+			// that does not read, by the number of its components.
+			space := ""
+			if len(data) >= 20 {
+				space = string(data[16:20])
+			}
+			if n, _ := d.integer(s.Dict.Get("N")); space != "CMYK" && (space == "RGB " || space == "GRAY" || n != 4) {
+				continue
+			}
+			ref, _ := prof.Ref()
+			d.intent, d.intentApprox = d.profileCMYK(ref, func() []byte { return data })
+			return
+		}
+	})
+	if d.intent != nil {
+		return d.intent, ""
+	}
+	return spaceCMYK, d.intentApprox
 }
 
 // gammas reads /Gamma: a number for CalGray, three for CalRGB.

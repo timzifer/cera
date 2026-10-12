@@ -110,6 +110,13 @@ PDFium and MuPDF convert DeviceCMYK close to Adobe's U.S. Web Coated
 `CMYKProfile`, cera's CMYK colours come within a few levels of MuPDF's
 (ADR 0003).
 
+A PDF/X, PDF/A or PDF/E file names the printing condition its device
+colours are meant for, usually with the profile (`/OutputIntents`). Where
+the caller gives no profile, cera converts DeviceCMYK through that one, as
+Acrobat and MuPDF do, so a file made for uncoated paper or newsprint is
+shown with those colours. `OpenOptions.IgnoreOutputIntent` keeps the
+bundled profile, as PDFium does.
+
 Layers (optional content) are switched per render, not on the document, so
 several views can show different layers; switching draws the cached display
 list again without interpreting the page:
@@ -603,7 +610,7 @@ annotate or modify).
 ```sh
 go build -C cmd/cera -o "$PWD/cera" .
 ./cera -dpi 150 -v -o 'page-%d.png' input.pdf
-./cera -cmyk-profile USWebCoatedSWOP.icc -page 1 print.pdf   # or -naive-cmyk
+./cera -cmyk-profile USWebCoatedSWOP.icc -page 1 print.pdf   # or -naive-cmyk, -ignore-output-intent
 ```
 
 `cmd/cera` is a module of its own, so that cera itself depends on nothing
