@@ -57,6 +57,13 @@ type RenderOptions struct {
 	// returns true for are not drawn (a form overlay drawing its own
 	// widgets). Changing it does not interpret the page again.
 	SkipAnnotation func(index int) bool
+	// LinkBorders draws the border of a link annotation that has one
+	// (/Border, /BS) and no appearance stream, in its colour (/C): the
+	// boxes LaTeX's hyperref puts around links, for one. Acrobat and
+	// pdf.js draw them on screen; PDFium, MuPDF and Preview do not, and
+	// neither does cera unless this is set. Changing it does not
+	// interpret the page again.
+	LinkBorders bool
 	// SimulateOverprint composites objects painted with overprint (OP,
 	// op) in DeviceCMYK under OPM 1, Separation or DeviceN as Multiply
 	// with what is below them, approximating the mixed result of print;
@@ -281,7 +288,7 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 	if vis == nil && len(dl.ocTags) > 1 {
 		vis = p.doc.defaultVisibility(opt.Usage)
 	}
-	af := annotFilter{mode: opt.Annotations, skip: opt.SkipAnnotation}
+	af := annotFilter{mode: opt.Annotations, skip: opt.SkipAnnotation, linkBorders: opt.LinkBorders}
 	// Widgets showing values of opt.Form are drawn from lists of their
 	// own, over the page; the page's list leaves them out.
 	var overlays []*displayList
@@ -389,7 +396,7 @@ func (p *Page) recordWidget(w *Widget, vals map[*Field]Value, scale float64, ove
 		in.devBox = p.Bounds(scale)
 		in.formVals = vals
 		if a := &annots[i]; a.Flags&AnnotHidden == 0 && !in.expired() {
-			in.annotation(p, a, base, scale)
+			in.annotation(p, a, a.Flags&^annotLinkBorder, base, scale) // a widget
 		}
 		dl.complete = in.err == nil
 	}()
@@ -612,10 +619,12 @@ type RunOptions struct {
 	// a TextDevice does not see its text.
 	Layers *Visibility
 	Usage  Usage
-	// Annotations and SkipAnnotation select the annotations, as for
-	// RenderOptions. A TextDevice sees the text of their appearances.
+	// Annotations, SkipAnnotation and LinkBorders select the annotations,
+	// as for RenderOptions. A TextDevice sees the text of their
+	// appearances.
 	Annotations    AnnotMode
 	SkipAnnotation func(index int) bool
+	LinkBorders    bool
 	// SimulateOverprint is as for RenderOptions.
 	SimulateOverprint bool
 	// Form supplies field values, as for RenderOptions; a TextDevice
@@ -641,7 +650,7 @@ func (p *Page) RunWith(ctx context.Context, dev Device, opt RunOptions) (err err
 	}
 	lim := &limit{ctx: ctx}
 	in := recorders.Get().(*interp)
-	af := annotFilter{mode: opt.Annotations, skip: opt.SkipAnnotation}
+	af := annotFilter{mode: opt.Annotations, skip: opt.SkipAnnotation, linkBorders: opt.LinkBorders}
 	var vals map[*Field]Value
 	if opt.Form != nil && opt.Form.form == p.doc.Form() {
 		vals = opt.Form.snapshot()

@@ -146,8 +146,10 @@ func TestAnnotGenerated(t *testing.T) {
 		"<< /Subtype /Circle /Rect [60 50 100 90] /C [0 1 0] /Border [0 0 2] >>",
 		// A highlight across the black bar and the white above it.
 		"<< /Subtype /Highlight /Rect [110 0 150 20] /QuadPoints [110 20 150 20 110 0 150 0] /C [1 1 0] >>",
-		// A note without appearance: not drawn.
-		"<< /Subtype /Text /Rect [160 50 180 70] >>",
+		// A stamp of no standard name without appearance: not drawn. A
+		// popup shows nothing on the page and does not count.
+		"<< /Subtype /Stamp /Name /Mine /Rect [160 50 180 70] >>",
+		"<< /Subtype /Popup /Rect [160 50 180 70] >>",
 		// A thick line with a closed arrow at its end.
 		"<< /Subtype /Line /Rect [100 20 200 50] /L [110 30 180 30] /LE [/None /ClosedArrow] /IC [0 0 1] /C [0 0 1] /BS << /W 2 >> >>",
 	})

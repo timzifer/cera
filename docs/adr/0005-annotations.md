@@ -122,8 +122,24 @@ Implemented in `annot.go` (reading, links, drawing) and `annotgen.go`
 - Links: `Annotation.Link` holds URI and GoTo targets, explicit and named
   destinations (catalog `/Dests` and the `/Dests` name tree); other
   actions leave it nil.
+- Since #124 the types that show text or an icon are generated too
+  (`annotlook.go`): FreeText — box filled with `/C`, border and callout in
+  the colour of `/DA`, `/Contents` wrapped in the font and size of `/DA`
+  (size and colour of `/DS` where given) through the encoder of the form
+  generator —, the icons of Text and FileAttachment and the Caret as plain
+  shapes, the fourteen standard stamps as their name in a frame. A link
+  has a border when it has `/Border` or `/BS` with a width; without
+  either it has none, as in Acrobat and pdf.js, against the default of
+  the specification. The border is drawn only with
+  `RenderOptions.LinkBorders`: viewers disagree — Acrobat and pdf.js show
+  the boxes hyperref puts around every link of a LaTeX paper, PDFium,
+  MuPDF and Preview do not — and the references of the accuracy suite are
+  among those that do not. It is recorded like any annotation, under a
+  flag of its own, so the option does not interpret the page again.
 - `annot-no-ap` counts annotations without `/AP` that cera does not
-  generate (except `Link`, `Widget` and `Popup`). Annotations without a
+  generate, except the types that show nothing on the page without one
+  (`Link`, `Widget`, `Popup`, `Sound`, `Movie`, `Screen`, `3D`,
+  `RichMedia`, `PrinterMark`, `TrapNet`, `Projection`). Annotations without a
   readable `/Rect` count as content errors, except those with an empty one,
   which writers use for invisible annotations. `annot-bad` is not used.
 - `Page.Run`/`RunWith` and `Page.Text` take `RunOptions.Annotations` and
