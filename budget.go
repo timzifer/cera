@@ -52,6 +52,7 @@ const (
 	maxCompareNodes   = 1 << 20  // objects compared to tell what changed after a signature
 	maxLabelDepth     = 16       // levels of the number tree of page labels
 	maxLabelNodes     = 1 << 16  // nodes of the number tree of page labels
+	maxPrintRanges    = 1 << 10  // page ranges of /PrintPageRange
 )
 
 // Caches bound memory kept for reuse; past them entries are dropped and
@@ -116,6 +117,7 @@ var budgets = []budget{
 	{"maxCompareNodes", maxCompareNodes, "", "objects compared to tell what was appended after a signature; past it the changes count as Other"},
 	{"maxLabelDepth", maxLabelDepth, "", "levels of the number tree of page labels; deeper nodes are not read"},
 	{"maxLabelNodes", maxLabelNodes, "", "nodes of the number tree of page labels; further ones are not read"},
+	{"maxPrintRanges", maxPrintRanges, "", "page ranges of /PrintPageRange in ViewSettings; further ones are left out"},
 	{"content.MaxNesting", content.MaxNesting, "", "arrays and dictionaries nested in one operand (Stats.Errors)"},
 	{"content.MaxOperands", content.MaxOperands, "", "operands kept for one operator; the first are dropped"},
 	{"cmap.MaxSpans", cmap.MaxSpans, "", "code ranges of one CMap; further ones are ignored"},

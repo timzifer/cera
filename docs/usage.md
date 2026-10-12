@@ -346,6 +346,34 @@ show = func(items []cera.OutlineItem, depth int) {
 show(doc.Outline(), 0)
 ```
 
+`Document.ViewSettings` is how the document asks to be opened: where to
+start, which panel to show, how to lay out the pages, and what its print
+dialogue starts with. They are wishes, with the defaults of the
+specification where the document has none:
+
+```go
+vs := doc.ViewSettings()
+if d, ok := doc.Destination(vs.Open); ok {
+	goTo(d) // the page and zoom of /OpenAction
+}
+switch vs.PageMode {
+case "UseOutlines":
+	showOutline()
+case "UseThumbs":
+	showThumbnails()
+case "UseAttachments":
+	showAttachments()
+}
+setLayout(vs.PageLayout, vs.RightToLeft) // "TwoPageRight": spreads with a cover page
+if vs.DisplayDocTitle {
+	setTitle(doc.Metadata().Title)
+}
+printDialog(vs.Print.Ranges, vs.Print.Copies, vs.Print.Duplex, vs.Print.Scaling == "None")
+```
+
+`Open` is nil for an `/OpenAction` that does not lead to a place in the
+document — a script, an address, another file.
+
 ## Metadata
 
 ```go

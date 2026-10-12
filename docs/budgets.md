@@ -44,6 +44,7 @@ A test keeps this table in step with the code.
 | `maxCompareNodes` | 1 Mi | – | objects compared to tell what was appended after a signature; past it the changes count as Other |
 | `maxLabelDepth` | 16 | – | levels of the number tree of page labels; deeper nodes are not read |
 | `maxLabelNodes` | 64 Ki | – | nodes of the number tree of page labels; further ones are not read |
+| `maxPrintRanges` | 1 Ki | – | page ranges of /PrintPageRange in ViewSettings; further ones are left out |
 | `content.MaxNesting` | 32 | – | arrays and dictionaries nested in one operand (Stats.Errors) |
 | `content.MaxOperands` | 4 Ki | – | operands kept for one operator; the first are dropped |
 | `cmap.MaxSpans` | 128 Ki | – | code ranges of one CMap; further ones are ignored |

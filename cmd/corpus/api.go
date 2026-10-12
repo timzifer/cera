@@ -124,6 +124,11 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		n = min(n, c.pages)
 	}
 	r.pages = n
+	r.step("view settings", func() {
+		if o := doc.ViewSettings().Open; o != nil && o.Page >= doc.NumPages() {
+			r.differ("the document opens at page %d of %d", o.Page+1, doc.NumPages())
+		}
+	})
 
 	// The text and the links of the pages.
 	var first *cera.PageText
