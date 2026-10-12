@@ -263,8 +263,10 @@ func (e *Editor) plan() pdfedit.Doc {
 // Save writes the result to w as a new file, which is never encrypted: an
 // encrypted document is written decrypted when its permissions allow
 // reassembling it. A signed document is refused with [ErrSigned]: a new
-// file invalidates its signatures, and [Editor.Update] keeps them. The
-// editor may be saved again. Nothing is written when Save fails, but for
+// file invalidates its signatures, and [Editor.Update] keeps them. A
+// document whose embedded files alone are encrypted is refused with
+// [ErrPassword] unless it was opened with the password. The editor may be
+// saved again. Nothing is written when Save fails, but for
 // an error of w itself.
 func (e *Editor) Save(w io.Writer) (err error) {
 	defer recoverPanic(&err)
@@ -274,6 +276,13 @@ func (e *Editor) Save(w io.Writer) (err error) {
 	}
 	if e.base != nil && e.base.signing().signed {
 		return ErrSigned
+	}
+	// A new file is not encrypted: embedded files that the password did
+	// not open would be written as nothing.
+	for _, p := range e.pages {
+		if p.src.r.FilesLocked() {
+			return ErrPassword
+		}
 	}
 	if err := pdfedit.Write(w, doc); err != nil {
 		return fmt.Errorf("cera: %w", err)

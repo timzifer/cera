@@ -46,6 +46,9 @@ type Annotation struct {
 	// Link is the target of a Link annotation; nil for other types and
 	// for links with neither a destination nor an action.
 	Link *LinkTarget
+	// File is the file a FileAttachment annotation embeds; nil for other
+	// types, and for one that names a file outside the document.
+	File *Attachment
 	// Markup is what a markup annotation says about itself — author,
 	// dates, colours, geometry, popup, replies; nil for the other types:
 	// Link, Popup, Widget and those that hold media or printing marks.
@@ -215,8 +218,11 @@ func (d *Document) readAnnots(o pdf.Object) (annots []Annotation, bad int) {
 		a.Contents = textString(d.resolve(ad.Get("Contents")))
 		a.Name = textString(d.resolve(ad.Get("NM")))
 		a.state, _ = d.name(ad.Get("AS"))
-		if sub == "Link" {
+		switch sub {
+		case "Link":
 			a.Link = d.linkTarget(ad)
+		case "FileAttachment":
+			a.File = d.attachment(ad.Get("FS"), "")
 		}
 		annots = append(annots, a)
 	}

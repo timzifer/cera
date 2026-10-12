@@ -50,6 +50,9 @@ type Document struct {
 	outlineOnce sync.Once
 	outline     []OutlineItem // the document outline, read on first use
 
+	attachOnce  sync.Once
+	attachments []*Attachment // the embedded files, read on first use
+
 	labelOnce    sync.Once
 	labels       []labelRange // the page labels, read on first use
 	labelIdxOnce sync.Once

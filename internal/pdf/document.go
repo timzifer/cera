@@ -201,6 +201,13 @@ func (d *Document) Protection() (Protection, bool) {
 	return Protection{Method: dec.methodName(), Revision: dec.revision, Permissions: dec.perm, Owner: dec.owner}, true
 }
 
+// FilesLocked reports a file whose embedded files alone are encrypted,
+// opened without the password that decrypts them: everything else reads.
+func (d *Document) FilesLocked() bool {
+	dec := d.tab.Load().dec
+	return dec != nil && dec.filesLocked
+}
+
 // Get returns the object an indirect reference names, or [Null] when the
 // file does not define it.
 func (d *Document) Get(r Ref) (Object, error) {
@@ -345,7 +352,8 @@ func (d *Document) parseIndirect(ctx *loadCtx, t *table, p *parser) (Ref, *Objec
 	if err != nil {
 		return ref, nil, err
 	}
-	if st, ok := obj.Stream(); ok && dec != nil && dec.streams != cryptNone &&
+	if st, ok := obj.Stream(); ok && dec != nil &&
+		(dec.streams != cryptNone || dec.embedded != cryptNone && hasType(st.Dict.e, "EmbeddedFile")) &&
 		!dec.skips(ref.Num) && !isXRef(st.Dict.e) && !streamIsPlain(st.Dict) &&
 		(!dec.plainMetadata || !hasType(st.Dict.e, "Metadata")) {
 		st.dec = dec
@@ -754,7 +762,8 @@ func (d *Document) objectsOfType(ctx *loadCtx, t *table, want Name) []int32 {
 // Raw returns a stream's bytes as stored, decrypted but still filtered.
 func (d *Document) Raw(s *Stream) []byte {
 	if s.dec != nil {
-		return s.dec.decryptStream(s.Ref.Num, s.Ref.Gen, s.raw)
+		t, _ := s.Dict.Get("Type").Name()
+		return s.dec.decryptStream(s.Ref.Num, s.Ref.Gen, s.raw, t == "EmbeddedFile")
 	}
 	return s.raw
 }
