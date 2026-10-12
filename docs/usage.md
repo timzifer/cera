@@ -240,6 +240,7 @@ err = e.MovePage(from, to)
 err = e.RotatePage(i, 90)
 err = e.SetFields(state) // values of doc.Form().NewState() the user changed
 err = e.Flatten()        // draw the form into the pages and drop it
+err = e.FlattenAnnotations() // and the other annotations
 err = e.AddHighlight(i, cera.Highlight{Quads: text.Quads(sel), Note: "check"})
 err = e.Save(w)          // a new file
 err = e.Update(w)        // the file as it was, and an incremental update
@@ -276,8 +277,23 @@ them; check boxes and radio buttons switch between their appearances.
 `Flatten` draws every widget the document shows into the content of its
 page, as cera renders it (with values from `SetFields`), and removes the
 form: the widgets leave the pages, `/AcroForm` the catalogue. Hidden
-widgets are dropped, widgets in a layer stay in it. Flattened widgets lie
-under the annotations the page keeps.
+widgets are dropped, widgets in a layer stay in it. Page content lies
+under the annotations a page keeps, so an annotation that lay under a
+widget and overlaps it is flattened with the widget, and so on down the
+stack: the page shows what it showed. Annotations that touch no flattened
+one stay as they are.
+
+`FlattenAnnotations` does the same for the other annotations, for print
+or the archive: every annotation shown on screen is drawn into its page —
+with its appearance stream or the one cera generates, its opacity, and in
+its layer — and leaves the page with its popup. Links stay, as do
+annotations that show nothing, and the widgets of the form unless
+`Flatten` is called too; an annotation that lies on a widget then stays
+with it. Annotations added by the same editor are not flattened.
+
+Flattening changes the content of pages: `Update` refuses it with
+`ErrNotPermitted` for an encrypted document without the permission to
+modify, and `FlattenAnnotations` with `ErrCertified` for a certified one.
 
 `AddHighlight` marks text on a page of the edited document: a
 `/Highlight` (or `Underline`, `StrikeOut`, `Squiggly`) annotation from
