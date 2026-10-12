@@ -75,7 +75,20 @@ converts through, first match wins:
    in a document fall through as `icc-budget`.
 3. `OpenOptions.CMYKProfile`: the caller's profile, for DeviceCMYK. An
    unreadable one is an error from `OpenWith`, not a silent fallback.
-4. The bundled default (CGATS TR 005, SWOP; `internal/cmyk/swop.bin`).
+4. The document's output intent (#137), for DeviceCMYK: the profile of
+   the first entry of the catalogue's `/OutputIntents` of the kind
+   `GTS_PDFX`, `GTS_PDFA1` or `ISO_PDFE1` whose `/DestOutputProfile` is a
+   CMYK profile. It names the printing condition the device colours of
+   the file are meant for; Acrobat and MuPDF convert through it, PDFium
+   does not. An intent with an RGB or grey profile says nothing about
+   DeviceCMYK. A profile cera cannot read falls through to 5 as
+   `icc-lut`, one past the budget as `icc-budget`. It is read when
+   DeviceCMYK is first used. `OpenOptions.IgnoreOutputIntent` skips this
+   step — the accuracy runs against PDFium do, to compare like with
+   like. Output intents of single pages (PDF 2.0) are not read yet
+   (#186): colour spaces, shadings and decoded images are cached for the
+   document.
+5. The bundled default (CGATS TR 005, SWOP; `internal/cmyk/swop.bin`).
 
 Every profile converts the same way: relative colorimetric with black
 point compensation, as Little CMS does (`transicc -t 1 -b`), tabulated as

@@ -22,7 +22,11 @@ type Document struct {
 
 	fontProvider FontProvider // fonts the document does not embed
 	naiveCMYK    bool         // OpenOptions.NaiveCMYK
-	devCMYK      *colorSpace  // DeviceCMYK as the options convert it
+	devCMYK      *colorSpace  // DeviceCMYK as the options convert it; nil: as the document says, see deviceCMYK
+	ignoreIntent bool         // OpenOptions.IgnoreOutputIntent
+	intentOnce   sync.Once
+	intent       *colorSpace // DeviceCMYK through the output intent, nil without one
+	intentApprox string      // what an output intent cera cannot use is counted as
 
 	fontMu sync.Mutex
 	fonts  map[pdf.Ref]*Font // loaded fonts, by reference
@@ -71,7 +75,8 @@ type Document struct {
 	shadings map[pdf.Ref]*shadingEntry
 	patterns map[pdf.Ref]*patternEntry
 
-	// ICCBased CMYK spaces by profile object, and their profiles, at most
+	// CMYK profiles by profile object — a nil space for one that is not
+	// used, with the key it is counted under — and their tables, at most
 	// maxCMYKProfiles; under csMu.
 	iccSpaces  map[pdf.Ref]csEntry
 	cmykTables map[*cmyk.Table]bool
@@ -114,7 +119,7 @@ func OpenReaderAt(r io.ReaderAt, size int64, opt OpenOptions) (doc *Document, er
 
 func open(read func(pdf.Options) (*pdf.Document, error), opt OpenOptions) (doc *Document, err error) {
 	defer recoverPanic(&err)
-	devCMYK := spaceCMYK
+	var devCMYK *colorSpace
 	if opt.CMYKProfile != nil {
 		t, err := cmyk.Load(opt.CMYKProfile)
 		if err != nil {
@@ -129,7 +134,7 @@ func open(read func(pdf.Options) (*pdf.Document, error), opt OpenOptions) (doc *
 	if err != nil {
 		return nil, openError(err)
 	}
-	return &Document{r: d, fontProvider: opt.Fonts, naiveCMYK: opt.NaiveCMYK, devCMYK: devCMYK}, nil
+	return &Document{r: d, fontProvider: opt.Fonts, naiveCMYK: opt.NaiveCMYK, devCMYK: devCMYK, ignoreIntent: opt.IgnoreOutputIntent}, nil
 }
 
 // NumPages returns the number of pages.

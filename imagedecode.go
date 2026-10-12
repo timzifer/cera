@@ -919,14 +919,10 @@ func (d *Document) deviceSpace(n int) *colorSpace {
 	return spaceGray
 }
 
-// cmykSpace is DeviceCMYK as the document converts it: through the
-// caller's profile (OpenOptions.CMYKProfile) or the bundled SWOP profile
-// of internal/cmyk, or naively (OpenOptions.NaiveCMYK).
+// cmykSpace is DeviceCMYK as the document converts it; see deviceCMYK.
 func (d *Document) cmykSpace() *colorSpace {
-	if d.devCMYK == nil {
-		return spaceCMYK
-	}
-	return d.devCMYK
+	cs, _ := d.deviceCMYK()
+	return cs
 }
 
 // rgbaFrom converts a decoded picture to premultiplied pixels.
