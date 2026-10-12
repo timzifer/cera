@@ -322,6 +322,25 @@ Dates are read leniently (a missing `D:`, missing fields, `Z00'00'`); a
 date without a time zone is taken as UTC. PDF 2.0 deprecates `/Info`, but
 for its dates, in favour of XMP, which is returned raw.
 
+## Attachments
+
+`Document.Attachments` lists the files a document embeds — the XML of an
+e-invoice, the data behind a report — with name, description, media type,
+dates and `Relationship` (`/AFRelationship`), and `Open` reads one:
+
+```go
+for _, a := range doc.Attachments() {
+	if a.Relationship == "Alternative" && a.MIME == "text/xml" { // Factur-X, ZUGFeRD
+		r, err := a.Open()
+		// ...
+	}
+}
+```
+
+The file of a FileAttachment annotation is `Annotation.File` on its page.
+A document may encrypt its attachments alone: it opens without the
+password, and `Open` returns `ErrPassword` until it is given.
+
 ## Editing
 
 An `Editor` (ADR 0013) records changes to a document, or puts a new one

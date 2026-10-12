@@ -12,22 +12,23 @@ import (
 // and every time a budget is reached its key is counted in
 // Stats.Unsupported so the corpus reports show which inputs hit them.
 const (
-	maxFormDepth      = 12       // forms, Type 3 glyphs, pattern cells and soft masks nested
-	maxStateDepth     = 1 << 12  // q without Q
-	maxPatternDepth   = 4        // patterns painted inside pattern cells
-	maxTileBytes      = 64 << 20 // tiles made for one page
-	maxTileOffsets    = 64       // copies of a cell drawn into one tile
-	maxTileSide       = 1024     // pixels of a tile side
-	maxMasks          = 1 << 10  // soft masks drawn for one page
-	maxMaskDepth      = 4        // soft masks nested in each other
-	maxMeshTris       = 1 << 20  // triangles of one mesh shading
-	maxPatches        = 1 << 16  // patches of one type 6 or 7 shading
-	maxMeshRow        = 1 << 16  // vertices of a row of a type 5 shading
-	maxAnnots         = 1 << 12  // annotations drawn for one page
-	maxImageBytes     = 256 << 20
-	maxCodecPixels    = 64 << 20 // pixels a JPEG or JPEG 2000 codestream may declare
-	maxKnockoutGlyphs = 256      // glyphs of one run tested for overlap under TK
-	maxCMYKProfiles   = 16       // CMYK ICC profiles tabulated for one document, ~1 MB each
+	maxFormDepth       = 12       // forms, Type 3 glyphs, pattern cells and soft masks nested
+	maxStateDepth      = 1 << 12  // q without Q
+	maxPatternDepth    = 4        // patterns painted inside pattern cells
+	maxTileBytes       = 64 << 20 // tiles made for one page
+	maxTileOffsets     = 64       // copies of a cell drawn into one tile
+	maxTileSide        = 1024     // pixels of a tile side
+	maxMasks           = 1 << 10  // soft masks drawn for one page
+	maxMaskDepth       = 4        // soft masks nested in each other
+	maxMeshTris        = 1 << 20  // triangles of one mesh shading
+	maxPatches         = 1 << 16  // patches of one type 6 or 7 shading
+	maxMeshRow         = 1 << 16  // vertices of a row of a type 5 shading
+	maxAnnots          = 1 << 12  // annotations drawn for one page
+	maxImageBytes      = 256 << 20
+	maxAttachmentBytes = 256 << 20 // decoded bytes of an embedded file
+	maxCodecPixels     = 64 << 20  // pixels a JPEG or JPEG 2000 codestream may declare
+	maxKnockoutGlyphs  = 256       // glyphs of one run tested for overlap under TK
+	maxCMYKProfiles    = 16        // CMYK ICC profiles tabulated for one document, ~1 MB each
 )
 
 // Limits bound structures whose valid sizes the specification bounds or
@@ -46,6 +47,7 @@ const (
 	maxOutlineDepth  = 32       // levels of the document outline
 	maxOutlineItems  = 1 << 16  // entries of the document outline
 	maxActions       = 16       // actions chained to that of a link, and targets of a /GoToE
+	maxAttachments   = 1 << 12  // embedded files listed for a document
 	maxLabelDepth    = 16       // levels of the number tree of page labels
 	maxLabelNodes    = 1 << 16  // nodes of the number tree of page labels
 )
@@ -103,6 +105,8 @@ var budgets = []budget{
 	{"maxOutlineDepth", maxOutlineDepth, "", "levels of the document outline; deeper entries are not read"},
 	{"maxOutlineItems", maxOutlineItems, "", "entries of the document outline; further ones are not read"},
 	{"maxActions", maxActions, "", "actions chained to that of a link or outline entry (/Next), and targets of a /GoToE; further ones are not read"},
+	{"maxAttachments", maxAttachments, "", "embedded files listed by Document.Attachments, and nodes of their name tree; further ones are left out"},
+	{"maxAttachmentBytes", maxAttachmentBytes, "", "decoded bytes of an embedded file; Attachment.Open returns ErrAttachmentTooLarge for more"},
 	{"maxLabelDepth", maxLabelDepth, "", "levels of the number tree of page labels; deeper nodes are not read"},
 	{"maxLabelNodes", maxLabelNodes, "", "nodes of the number tree of page labels; further ones are not read"},
 	{"content.MaxNesting", content.MaxNesting, "", "arrays and dictionaries nested in one operand (Stats.Errors)"},

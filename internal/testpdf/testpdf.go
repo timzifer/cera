@@ -221,15 +221,26 @@ func Encrypted(password string, perm int32) []byte {
 // of EncryptedWith with the methods "rc4" and "aes128".
 const OwnerPassword = "owner"
 
+// AttachmentData is the content of the file "data.xml" the documents of
+// Encrypted and EncryptedWith embed.
+const AttachmentData = "<data>42</data>"
+
 // EncryptedWith builds the two-page document of Encrypted, with a text
-// field "secret" on its first page, encrypted under the user password
-// with the permissions perm and method: "rc4" (128-bit RC4, /V 2 /R 3),
-// "aes128" (/V 4 /R 4, AESV2) or "aes256" (/V 5 /R 5, AESV3).
+// field "secret" on its first page and an embedded file "data.xml",
+// encrypted under the user password with the permissions perm and method:
+// "rc4" (128-bit RC4, /V 2 /R 3), "aes128" (/V 4 /R 4, AESV2), "aes256"
+// (/V 5 /R 5, AESV3), or "aes256-files", which encrypts the embedded file
+// alone (/StmF and /StrF /Identity, /EFF AESV3).
 func EncryptedWith(method, password string, perm int32) []byte {
 	id := []byte("0123456789abcdef")
 	hex := func(b []byte) string { return fmt.Sprintf("<%x>", b) }
 	var key []byte
 	var encrypt string
+	const embedded = 13 // the embedded file stream
+	filesOnly := method == "aes256-files"
+	if filesOnly {
+		method = "aes256"
+	}
 	switch method {
 	case "aes256":
 		key = bytes.Repeat([]byte{0x42}, 32)
@@ -243,6 +254,9 @@ func EncryptedWith(method, password string, perm int32) []byte {
 		encrypt = fmt.Sprintf("<</Filter /Standard /V 5 /R 5 /Length 256 /P %d /O %s /OE %s /U %s /UE %s"+
 			" /CF <</StdCF <</CFM /AESV3 /Length 32 /AuthEvent /DocOpen>>>> /StmF /StdCF /StrF /StdCF>>",
 			perm, hex(bytes.Repeat([]byte("O"), 48)), hex(make([]byte, 32)), hex(u), hex(ue))
+		if filesOnly {
+			encrypt = strings.Replace(encrypt, "/StmF /StdCF /StrF /StdCF", "/StmF /Identity /StrF /Identity /EFF /StdCF", 1)
+		}
 	default:
 		padded := append([]byte(password), pad...)[:32]
 		// Algorithm 3: /O, the user password under the owner's.
@@ -287,6 +301,9 @@ func EncryptedWith(method, password string, perm int32) []byte {
 		}
 	}
 	enc := func(num int, b []byte) []byte {
+		if filesOnly && num != embedded {
+			return b
+		}
 		switch method {
 		case "aes256":
 			return aesObject(key, b)
@@ -302,7 +319,7 @@ func EncryptedWith(method, password string, perm int32) []byte {
 	return File{
 		Objs: map[int]string{
 			1: "<</Type /Catalog /Pages 2 0 R /AcroForm <</Fields [9 0 R] /DA " + hex(enc(1, []byte("/Helv 10 Tf 0 g"))) +
-				" /DR <</Font <</Helv 10 0 R>>>>>>>>",
+				" /DR <</Font <</Helv 10 0 R>>>>>> /Names <</EmbeddedFiles <</Names [" + hex(enc(1, []byte("data.xml"))) + " 12 0 R]>>>>>>",
 			2:  "<</Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 100] /Resources <<>>>>",
 			3:  "<</Type /Page /Parent 2 0 R /Contents 5 0 R /Annots [9 0 R]>>",
 			4:  "<</Type /Page /Parent 2 0 R /Contents 6 0 R>>",
@@ -313,6 +330,9 @@ func EncryptedWith(method, password string, perm int32) []byte {
 			9:  "<</Type /Annot /Subtype /Widget /FT /Tx /T " + hex(enc(9, []byte("secret"))) + " /V " + hex(enc(9, []byte("old"))) + " /Rect [100 70 190 90] /AP <</N 11 0 R>>>>",
 			11: Stream("/Type /XObject /Subtype /Form /BBox [0 0 90 20]", enc(11, []byte("0 1 0 rg 0 0 90 20 re f"))),
 			10: "<</Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding>>",
+			12: "<</Type /Filespec /F " + hex(enc(12, []byte("data.xml"))) + " /Desc " + hex(enc(12, []byte("The data"))) +
+				" /AFRelationship /Data /EF <</F 13 0 R>>>>",
+			embedded: Stream("/Type /EmbeddedFile /Subtype /application#2Fxml /Params <</Size 15>>", enc(embedded, []byte(AttachmentData))),
 		},
 		Trailer: "/Root 1 0 R /Info 7 0 R /Encrypt 8 0 R /ID [" + hex(id) + hex(id) + "]",
 	}.Bytes()

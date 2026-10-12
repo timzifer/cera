@@ -64,14 +64,21 @@ const (
 // A decryptor holds the file encryption key and how to apply it. It is
 // immutable once made.
 type decryptor struct {
-	key       []byte
-	strings   cryptMethod
-	streams   cryptMethod
-	revision  int
-	perm      Permissions
-	owner     bool  // the password given was the owner's
-	skipObj   int32 // the /Encrypt dictionary's own object number
-	skipKnown bool
+	key     []byte
+	strings cryptMethod
+	streams cryptMethod
+	// embedded is how embedded file streams are protected (/EFF): as
+	// other streams unless the file says otherwise — a file may encrypt
+	// its attachments alone.
+	embedded cryptMethod
+	// filesLocked: the embedded files alone are encrypted and the
+	// password does not open them. The document reads without it.
+	filesLocked bool
+	revision    int
+	perm        Permissions
+	owner       bool  // the password given was the owner's
+	skipObj     int32 // the /Encrypt dictionary's own object number
+	skipKnown   bool
 	// plainMetadata: /EncryptMetadata false, so metadata streams are
 	// stored as they are.
 	plainMetadata bool
@@ -128,28 +135,30 @@ func newDecryptor(enc Dict, id []byte, password string, resolve func(Object) Obj
 
 	dec.perm = Permissions(uint32(perm)) & AllPermissions
 	dec.plainMetadata = !metadata
-	if dec.streams == cryptNone && dec.strings == cryptNone {
+	if dec.streams == cryptNone && dec.strings == cryptNone && dec.embedded == cryptNone {
 		// Nothing in the body is encrypted, so the password is not checked.
 		return dec, nil
 	}
+	var err error
 	if rev >= 5 {
-		key, asOwner, err := deriveKeyR5(enc, password, get)
-		if err != nil {
-			return nil, err
-		}
-		dec.key, dec.owner = key, asOwner
+		dec.key, dec.owner, err = deriveKeyR5(enc, password, get)
 	} else {
 		n := length / 8
 		if rev == 2 {
 			n = 5
 		}
-		key, asOwner, err := deriveKeyLegacy(password, owner, user, id, perm, n, rev, metadata)
-		if err != nil {
-			return nil, err
-		}
-		dec.key, dec.owner = key, asOwner
+		dec.key, dec.owner, err = deriveKeyLegacy(password, owner, user, id, perm, n, rev, metadata)
 	}
-	if dec.streams == cryptAESV3 || dec.strings == cryptAESV3 {
+	if err != nil {
+		if errors.Is(err, ErrWrongPassword) && dec.streams == cryptNone && dec.strings == cryptNone {
+			// Only the embedded files are encrypted: the document reads
+			// without the password, its attachments do not.
+			dec.key, dec.owner, dec.filesLocked = nil, false, true
+			return dec, nil
+		}
+		return nil, err
+	}
+	if dec.streams == cryptAESV3 || dec.strings == cryptAESV3 || dec.embedded == cryptAESV3 {
 		dec.v3, _ = aes.NewCipher(dec.key)
 	}
 	return dec, nil
@@ -158,7 +167,7 @@ func newDecryptor(enc Dict, id []byte, password string, resolve func(Object) Obj
 // readMethods works out how strings and streams are protected.
 func (dec *decryptor) readMethods(enc Dict, v int, get func(Dict, Name) Object) error {
 	if v < 4 {
-		dec.strings, dec.streams = cryptRC4, cryptRC4
+		dec.strings, dec.streams, dec.embedded = cryptRC4, cryptRC4, cryptRC4
 		return nil
 	}
 	cf, _ := get(enc, "CF").Dict()
@@ -188,7 +197,13 @@ func (dec *decryptor) readMethods(enc Dict, v int, get func(Dict, Name) Object) 
 	if dec.streams, err = pick("StmF"); err != nil {
 		return err
 	}
-	dec.strings, err = pick("StrF")
+	if dec.strings, err = pick("StrF"); err != nil {
+		return err
+	}
+	dec.embedded = dec.streams
+	if !get(enc, "EFF").IsNull() {
+		dec.embedded, err = pick("EFF")
+	}
 	return err
 }
 
@@ -431,9 +446,17 @@ func (dec *decryptor) stringCrypt(num, gen int32) func([]byte) []byte {
 	}
 }
 
-// decryptStream returns a stream's raw bytes decrypted, in a new slice.
-func (dec *decryptor) decryptStream(num, gen int32, raw []byte) []byte {
-	switch dec.streams {
+// decryptStream returns a stream's raw bytes decrypted, in a new slice;
+// embedded says that it is an embedded file stream.
+func (dec *decryptor) decryptStream(num, gen int32, raw []byte, embedded bool) []byte {
+	method := dec.streams
+	if embedded {
+		if dec.filesLocked {
+			return nil
+		}
+		method = dec.embedded
+	}
+	switch method {
 	case cryptNone:
 		return raw
 	case cryptRC4:

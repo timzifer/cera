@@ -36,11 +36,18 @@ func (e *Encryptor) String(num, gen int32, s []byte) []byte {
 // metadata plain, and streams with a crypt filter of their own, are
 // returned as they are.
 func (e *Encryptor) Stream(num, gen int32, dict Dict, data []byte) []byte {
-	if e == nil || e.dec.streams == cryptNone || streamIsPlain(dict) ||
+	if e == nil {
+		return data
+	}
+	method := e.dec.streams
+	if hasType(dict.e, "EmbeddedFile") {
+		method = e.dec.embedded // /EFF
+	}
+	if method == cryptNone || streamIsPlain(dict) ||
 		e.dec.plainMetadata && hasType(dict.e, "Metadata") {
 		return data
 	}
-	return e.encrypt(e.dec.streams, num, gen, data)
+	return e.encrypt(method, num, gen, data)
 }
 
 // encrypt applies method m with the key of object num.
