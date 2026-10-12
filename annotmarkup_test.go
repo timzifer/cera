@@ -77,9 +77,8 @@ func TestMarkup(t *testing.T) {
 		Modified: time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("", 3600)),
 		RichText: "<body><p>A <b>note</b></p></body>",
 		Color:    []float64{1, 0.5, 0}, Opacity: 0.5, BorderWidth: 1,
-		Bounds:    Rect{150, 10, 170, 30},
-		Popup:     &Popup{Index: 1, Bounds: Rect{100, 40, 170, 140}, Open: true},
-		InReplyTo: -1,
+		Bounds: Rect{150, 10, 170, 30},
+		Popup:  &Popup{Index: 1, Bounds: Rect{100, 40, 170, 140}, Open: true},
 	}
 	if !note.Created.Equal(want.Created) || !note.Modified.Equal(want.Modified) {
 		t.Errorf("created %v, modified %v", note.Created, note.Modified)
@@ -91,7 +90,7 @@ func TestMarkup(t *testing.T) {
 	}
 
 	reply := annots[2].Markup
-	if reply.InReplyTo != 0 || reply.ReplyType != "R" || reply.State != "Accepted" || reply.StateModel != "Review" || reply.Author != "Bob" {
+	if reply.Reply == nil || *reply.Reply != (Reply{To: 0}) || reply.State != "Accepted" || reply.StateModel != "Review" || reply.Author != "Bob" {
 		t.Errorf("reply %+v", reply)
 	}
 	if reply.Popup != nil || reply.Opacity != 1 || !reply.Modified.IsZero() {
@@ -129,7 +128,7 @@ func TestMarkup(t *testing.T) {
 	ft := by["FreeText"]
 	if ft.DefaultAppearance != "/Helv 12 Tf 1 0 0 rg" || ft.Align != AlignCenter || ft.Intent != "FreeTextCallout" ||
 		!reflect.DeepEqual(ft.Callout, [][2]float64{turned(50, 50), turned(80, 120), turned(100, 125)}) ||
-		ft.LineEndings != [2]string{"ClosedArrow", ""} || ft.InReplyTo != 0 || ft.ReplyType != "Group" {
+		ft.LineEndings != [2]string{"ClosedArrow", ""} || ft.Reply == nil || *ft.Reply != (Reply{To: 0, Group: true}) {
 		t.Errorf("free text %+v", ft)
 	}
 	if by["Stamp"].Icon != "Approved" || by["Stamp"].Bounds != (Rect{100, 200, 150, 280}) {

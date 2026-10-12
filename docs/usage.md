@@ -244,7 +244,7 @@ to:
 ```go
 for _, a := range page.Annotations() {
 	m := a.Markup
-	if m == nil || m.InReplyTo >= 0 {
+	if m == nil || m.Reply != nil {
 		continue // no markup, or a reply: shown under its annotation
 	}
 	addComment(a.Index, a.Subtype, m.Author, m.Modified, a.Contents, m.Bounds)

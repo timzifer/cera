@@ -64,11 +64,9 @@ type Markup struct {
 
 	// Popup is the window that shows the text, nil for none.
 	Popup *Popup
-	// InReplyTo is the Index of the annotation of the page this one
-	// replies to (/IRT), -1 for none, and ReplyType how it relates to
-	// it: "R", a reply, or "Group", a part of it.
-	InReplyTo int
-	ReplyType string
+	// Reply names the annotation this one replies to (/IRT), nil for
+	// none.
+	Reply *Reply
 	// State and StateModel are the review state a reply sets on the
 	// annotation it replies to: "Accepted" of "Review", "Marked" of
 	// "Marked", ...
@@ -83,6 +81,15 @@ type Markup struct {
 	// text is aligned (/Q).
 	DefaultAppearance string
 	Align             Align
+}
+
+// Reply is the relation of a markup annotation to another one of its page.
+type Reply struct {
+	// To is the Index of the annotation replied to.
+	To int
+	// Group says that the annotation is a part of that one rather than
+	// a reply to it (/RT /Group): viewers show both as one.
+	Group bool
 }
 
 // Popup is the popup window of a markup annotation.
@@ -162,7 +169,6 @@ func (p *Page) readMarkup(annots []Annotation) {
 			Intent:     name("IT"),
 			Opacity:    1,
 			Bounds:     bounds(a.Rect),
-			InReplyTo:  -1,
 			State:      text("State"),
 			StateModel: text("StateModel"),
 		}
@@ -246,10 +252,7 @@ func (p *Page) readMarkup(annots []Annotation) {
 			mk.Popup = &Popup{Index: annots[pk].Index, Bounds: bounds(annots[pk].Rect), Open: open}
 		}
 		if rk, ok := index(ad.Get("IRT")); ok && rk != k {
-			mk.InReplyTo = annots[rk].Index
-			if mk.ReplyType = name("RT"); mk.ReplyType == "" {
-				mk.ReplyType = "R"
-			}
+			mk.Reply = &Reply{To: annots[rk].Index, Group: name("RT") == "Group"}
 		}
 		a.Markup = mk
 	}
