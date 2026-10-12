@@ -95,7 +95,10 @@ Fonts a file does not embed:
 
 - Drawn from normal appearance streams (`/AS`, `/CA`, `NoZoom`, `NoRotate`, `/OC`)
 - Appearance generated when missing: Square, Circle, Line (endings, leader
-  lines), PolyLine, Polygon, Ink, Highlight, Underline, StrikeOut, Squiggly
+  lines), PolyLine, Polygon, Ink, Highlight, Underline, StrikeOut, Squiggly;
+  FreeText (box, border, callout, wrapped text from `/DA`, `/DS`, `/Q`),
+  the icons of Text and FileAttachment, Caret, the standard stamps, and
+  the border of a link that has `/Border` or `/BS`
 - `Page.Annotations` with link targets and, for markup annotations,
   `Markup`: author, subject, dates, rich text, colours, opacity, border,
   geometry in displayed points (quads, ink strokes, vertices, line and its
@@ -176,7 +179,7 @@ column says.
 |---|---|---|
 | `pattern` | pattern colour on an operation that cannot paint patterns | not drawn |
 | `oc-bad` | optional-content membership that does not read | visible |
-| `annot-no-ap` | annotation without appearance cera does not generate (FreeText, Text, Stamp …) | not drawn |
+| `annot-no-ap` | annotation without appearance cera does not generate (a stamp of no standard name, Redact, Watermark, an unknown type) | not drawn |
 | `xfa` | XFA form | from AcroForm fallback |
 
 ### Budgets

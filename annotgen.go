@@ -9,10 +9,11 @@ import (
 
 // Appearances for annotations without /AP, generated as content streams
 // in default user space and run through the interpreter like any other
-// content. Only the markup types whose look PDF 2.0 (12.5.6) fixes are
-// generated: geometry, border, colours and line endings come from the
+// content. This file draws the markup types whose look PDF 2.0 (12.5.6)
+// fixes: geometry, border, colours and line endings come from the
 // annotation dictionary; sizes the specification leaves open (line
-// endings, underline thickness) follow common viewers.
+// endings, underline thickness) follow common viewers. annotlook.go draws
+// those that show text or an icon.
 
 // csw writes a content stream.
 type csw []byte
@@ -100,8 +101,28 @@ func (d *Document) annotPad(a *Annotation) float64 {
 	return endingSize(w) + w + 1
 }
 
-// generateAnnot appends the appearance of a to b.
-func (d *Document) generateAnnot(b []byte, a *Annotation) []byte {
+// generateAnnot appends the appearance of a to b, in default user space,
+// and returns the resources it needs, in which fonts names the fonts of
+// its text.
+func (d *Document) generateAnnot(b []byte, a *Annotation, fonts genFonts) ([]byte, pdf.Dict) {
+	switch a.Subtype {
+	case "FreeText":
+		return d.freeText(b, a, fonts)
+	case "Text", "FileAttachment":
+		return d.icon(b, a, fonts)
+	case "Stamp":
+		return d.stamp(b, a, fonts)
+	case "Caret":
+		return d.caret(b, a), pdf.Dict{}
+	case "Link":
+		return d.linkBorder(b, a), pdf.Dict{}
+	}
+	return d.generateShape(b, a), pdf.Dict{}
+}
+
+// generateShape appends the appearance of a, an annotation that is a
+// shape or marks text, to b.
+func (d *Document) generateShape(b []byte, a *Annotation) []byte {
 	ad := a.dict
 	w := csw(b)
 	bw, dash := d.border(ad)

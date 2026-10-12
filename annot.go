@@ -359,10 +359,18 @@ func (d *Document) appearance(a *Annotation, state pdf.Name) *pdf.Stream {
 }
 
 // generated lists the types whose appearance cera draws when /AP is
-// missing.
+// missing; see Document.generates for stamps and links.
 var generated = map[string]bool{
 	"Square": true, "Circle": true, "Line": true, "PolyLine": true, "Polygon": true, "Ink": true,
 	"Highlight": true, "Underline": true, "StrikeOut": true, "Squiggly": true,
+	"FreeText": true, "Text": true, "FileAttachment": true, "Caret": true,
+}
+
+// nothingToDraw lists the types that show nothing on the page without an
+// appearance stream: they are no loss, and not counted as annot-no-ap.
+var nothingToDraw = map[string]bool{
+	"Link": true, "Widget": true, "Popup": true, "Sound": true, "Movie": true, "Screen": true,
+	"3D": true, "RichMedia": true, "PrinterMark": true, "TrapNet": true, "Projection": true,
 }
 
 // drawAnnots draws the annotations of page p after its content. A display
@@ -416,10 +424,10 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 		ap, gen = doc.widgetLook(a, w, wv)
 	} else {
 		ap = doc.appearance(a, a.state)
-		gen = ap == nil && generated[a.Subtype]
+		gen = ap == nil && doc.generates(a)
 	}
 	if ap == nil && !gen {
-		if _, hasAP := a.dict.Lookup("AP"); !hasAP && a.Subtype != "Link" && a.Subtype != "Widget" {
+		if _, hasAP := a.dict.Lookup("AP"); !hasAP && !nothingToDraw[a.Subtype] {
 			in.st.unsupported("annot-no-ap")
 		}
 		return
@@ -471,8 +479,9 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 		in.annotBuf, res = in.generateWidget(in.annotBuf[:0], w, wv)
 		in.exec(in.annotBuf, res, 1)
 	case gen:
-		in.annotBuf = doc.generateAnnot(in.annotBuf[:0], a)
-		in.exec(in.annotBuf, pdf.Dict{}, 1)
+		var res pdf.Dict
+		in.annotBuf, res = doc.generateAnnot(in.annotBuf[:0], a, renderFonts{})
+		in.exec(in.annotBuf, res, 1)
 	default:
 		in.gs.ctm = appearanceMatrix(doc, ap, a.Rect).Mul(ctm)
 		in.form(ap, pdf.Dict{}, 0)

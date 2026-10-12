@@ -97,7 +97,7 @@ func (d *Document) shown(a *Annotation) bool {
 	if a.Flags&(AnnotHidden|AnnotNoView) != 0 {
 		return false
 	}
-	return d.appearance(a, a.state) != nil || generated[a.Subtype]
+	return d.appearance(a, a.state) != nil || d.generates(a)
 }
 
 // draws reports whether the renderer draws a, a link or a widget of page
@@ -327,7 +327,7 @@ func (e *Editor) flatLook(p *Page, a *Annotation, w *Widget, objs *[]pdf.Object,
 		ap, gen = d.widgetLook(a, w, wv)
 	} else {
 		ap = d.appearance(a, a.state)
-		gen = ap == nil && generated[a.Subtype]
+		gen = ap == nil && d.generates(a)
 	}
 
 	// The renderer draws an annotation that is not opaque, and a
@@ -392,7 +392,8 @@ func (e *Editor) flatLook(p *Page, a *Annotation, w *Widget, objs *[]pdf.Object,
 			// leave the rectangle of its annotation.
 			box = Rect{min(box.X0, p.Box.X0), min(box.Y0, p.Box.Y0), max(box.X1, p.Box.X1), max(box.Y1, p.Box.Y1)}
 		}
-		return made(box, pdf.Dict{}, d.generateAnnot(nil, a)), m, gs, true
+		content, res := d.generateAnnot(nil, a, e.gen)
+		return made(box, res, content), m, gs, true
 	case ap != nil && ap.Ref.Num > 0:
 		var set []pdf.Entry
 		if sub, _ := d.name(ap.Dict.Get("Subtype")); sub != "Form" {

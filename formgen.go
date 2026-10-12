@@ -183,12 +183,19 @@ func (f *Font) encoding() map[rune]byte {
 // can encode all of them, else Helvetica, with the fallback fonts for what
 // Helvetica lacks.
 func (d *Document) genFont(w *Widget, texts []string, fonts genFonts) *encoder {
-	form := w.Field.form
-	if o := d.dict(form.dr.Get("Font")).Get(w.fontRes); !o.IsNull() && w.fontRes != "" {
-		if f := d.font(o); f != nil && !f.composite() && !f.Type3() {
-			e := &encoder{f: f, name: w.fontRes, obj: o, d: d, fonts: fonts}
-			if !slices.ContainsFunc(texts, func(t string) bool { return !e.encodes(t) }) {
-				return e
+	return d.drFont(w.Field.form, w.fontRes, texts, fonts)
+}
+
+// drFont returns the font for showing texts: the font named res in the
+// /DR of form (nil: none) if it can encode all of them, else Helvetica.
+func (d *Document) drFont(form *Form, res pdf.Name, texts []string, fonts genFonts) *encoder {
+	if form != nil && res != "" {
+		if o := d.dict(form.dr.Get("Font")).Get(res); !o.IsNull() {
+			if f := d.font(o); f != nil && !f.composite() && !f.Type3() {
+				e := &encoder{f: f, name: res, obj: o, d: d, fonts: fonts}
+				if !slices.ContainsFunc(texts, func(t string) bool { return !e.encodes(t) }) {
+					return e
+				}
 			}
 		}
 	}
