@@ -114,23 +114,12 @@ func (e *Editor) MissingGlyphs() []*Field {
 }
 
 // fieldPatches encodes the recorded values as changes of the edited
-// document's objects, and reports whether viewers must make appearances.
-func (e *Editor) fieldPatches() ([]pdfedit.Patch, []pdf.Object) {
+// document's objects, with the new objects they need in objs.
+func (e *Editor) fieldPatches(objs *[]pdf.Object) []pdfedit.Patch {
 	var out []pdfedit.Patch
-	// Object 0 is Helvetica, written only when an appearance uses it.
-	objs := []pdf.Object{pdf.NewDict(
-		pdf.Entry{Key: "Type", Val: pdf.Name("Font").Object()},
-		pdf.Entry{Key: "Subtype", Val: pdf.Name("Type1").Object()},
-		pdf.Entry{Key: "BaseFont", Val: pdf.Name("Helvetica").Object()},
-		pdf.Entry{Key: "Encoding", Val: pdf.Name("WinAnsiEncoding").Object()},
-	).Object()}
-	e.gen = &editFonts{objs: &objs}
-	defer func() { e.gen = nil }()
 	if e.flatten {
 		// The widgets go into the pages: no field is written.
-		out = e.flattenPatches(&objs)
-		e.gen.finish()
-		return out, objs
+		return e.flattenPatches(objs)
 	}
 	fields := make([]*Field, 0, len(e.fields))
 	for f := range e.fields {
@@ -158,7 +147,7 @@ func (e *Editor) fieldPatches() ([]pdfedit.Patch, []pdf.Object) {
 		}
 		out = append(out, p)
 		for _, w := range f.Widgets {
-			if wp, ok := e.widgetPatch(w, v, &objs); ok {
+			if wp, ok := e.widgetPatch(w, v, objs); ok {
 				out = append(out, wp)
 			}
 		}
@@ -168,10 +157,9 @@ func (e *Editor) fieldPatches() ([]pdfedit.Patch, []pdf.Object) {
 	}
 	if e.flattenAnnots {
 		// The form stays, with the values written.
-		out = append(out, e.flattenPatches(&objs)...)
+		out = append(out, e.flattenPatches(objs)...)
 	}
-	e.gen.finish()
-	return out, objs
+	return out
 }
 
 // widgetPatch returns the change of widget w for the value v of its field:

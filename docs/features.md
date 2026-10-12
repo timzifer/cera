@@ -104,6 +104,10 @@ Fonts a file does not embed:
   `Markup`: author, subject, dates, rich text, colours, opacity, border,
   geometry in displayed points (quads, ink strokes, vertices, line and its
   endings, callout), popup, reply thread and review state, icon
+- Written by the editor (`AddAnnotation`, `SetAnnotation`,
+  `RemoveAnnotation`): notes, free text, ink, shapes, lines, text markup,
+  carets, standard stamps and links, with generated appearance streams,
+  popups and reply threads
 - `Document.Outline`: the bookmarks as a tree, with titles, style, open
   state and targets (destinations, GoTo, URI, GoToR and Launch actions,
   structure elements)

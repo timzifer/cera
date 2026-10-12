@@ -109,7 +109,7 @@ func (d *Document) caret(w csw, a *Annotation) csw {
 	if len(c) == 0 {
 		return w
 	}
-	r := d.inner(a)
+	r, turned := d.upright(&w, a, d.inner(a))
 	cx, h := (r.X0+r.X1)/2, r.Dy()
 	w.color(c, true)
 	w.moveTo(r.X0, r.Y0)
@@ -121,6 +121,9 @@ func (d *Document) caret(w csw, a *Annotation) csw {
 	w.pt(cx+r.Dx()/8, r.Y0+h/3)
 	w.pt(r.X1, r.Y0)
 	w.op("c h f")
+	if turned {
+		w.op("Q")
+	}
 	return w
 }
 
@@ -206,9 +209,38 @@ func (d *Document) freeText(w csw, a *Annotation, fonts genFonts) (csw, pdf.Dict
 	}
 	w.op("q")
 	clipBox(&w, in)
-	textBlock(&w, e, tc, text, in, size, al)
+	box, turned := d.upright(&w, a, in)
+	textBlock(&w, e, tc, text, box, size, al)
+	if turned {
+		w.op("Q")
+	}
 	w.op("Q")
 	return w, e.resources()
+}
+
+// upright starts drawing in the rectangle r turned by the annotation's
+// /Rotate, a multiple of 90 degrees counterclockwise about its centre.
+// Writers set it to the rotation of the page, so that the text of a free
+// text or a stamp reads upright, and a caret points up, on the page as it
+// is shown. It returns the
+// box to draw in — r itself when nothing is turned — and whether it wrote
+// a q, which the caller ends with Q.
+func (d *Document) upright(w *csw, a *Annotation, r Rect) (Rect, bool) {
+	rot, _ := d.integer(a.dict.Get("Rotate"))
+	if rot = (rot%360 + 360) % 360; rot == 0 || rot%90 != 0 {
+		return r, false
+	}
+	width, height := r.Dx(), r.Dy()
+	if rot != 180 {
+		width, height = height, width
+	}
+	sin, cos := [4]float64{0, 1, 0, -1}[rot/90], [4]float64{1, 0, -1, 0}[rot/90]
+	w.op("q")
+	for _, v := range [6]float64{cos, sin, -sin, cos, (r.X0 + r.X1) / 2, (r.Y0 + r.Y1) / 2} {
+		w.num(v)
+	}
+	w.op("cm")
+	return Rect{-width / 2, -height / 2, width / 2, height / 2}, true
 }
 
 // parseStyle reads the font size in points and the colour of a default
@@ -357,7 +389,16 @@ func (d *Document) stamp(w csw, a *Annotation, fonts genFonts) (csw, pdf.Dict) {
 			c = []float64{0.75, 0, 0}
 		}
 	}
-	r := a.Rect
+	r, turned := d.upright(&w, a, a.Rect)
+	w, res := d.stampIn(w, r, name, c, fonts)
+	if turned {
+		w.op("Q")
+	}
+	return w, res
+}
+
+// stampIn draws the stamp name in the colour c into r.
+func (d *Document) stampIn(w csw, r Rect, name string, c []float64, fonts genFonts) (csw, pdf.Dict) {
 	lw := max(min(r.Dx(), r.Dy())/16, 0.5)
 	in := Rect{r.X0 + lw/2, r.Y0 + lw/2, r.X1 - lw/2, r.Y1 - lw/2}
 	if in.Dx() <= 4*lw || in.Dy() <= 4*lw {
