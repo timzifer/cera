@@ -108,8 +108,12 @@ Implemented in `annot.go` (reading, links, drawing) and `annotgen.go`
   the mode or the skip function draws the cached list again.
 - `Hidden` and `Popup` are never recorded; `NoView` and `Print` are
   evaluated per render. `Invisible` and `ToggleNoView` are ignored.
-- `/CA` of every annotation, and the Multiply blend of generated
-  highlights, apply to the annotation as one isolated group.
+- `/CA` of an annotation whose appearance cera generates, and the
+  Multiply blend of generated highlights, apply to the annotation as one
+  isolated group. An appearance stream says how transparent it is
+  itself, and `/CA` is not used then (PDF 2.0, table 173): writers that
+  set both, as Acrobat does, would be applied twice. (Until #171 cera
+  applied `/CA` to every annotation.)
 - `NoRotate` rotates the annotation about the upper-left corner of its
   `Rect` so that it stays upright on screen; `NoZoom` scales it by
   1/`Scale` about the same corner.

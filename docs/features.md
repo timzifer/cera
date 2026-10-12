@@ -93,13 +93,13 @@ Fonts a file does not embed:
 
 ### Annotations
 
-- Drawn from normal appearance streams (`/AS`, `/CA`, `NoZoom`, `NoRotate`, `/OC`)
+- Drawn from normal appearance streams (`/AS`, `NoZoom`, `NoRotate`, `/OC`)
 - Appearance generated when missing: Square, Circle, Line (endings, leader
   lines), PolyLine, Polygon, Ink, Highlight, Underline, StrikeOut, Squiggly;
   FreeText (box, border, callout, wrapped text from `/DA`, `/DS`, `/Q`),
   the icons of Text and FileAttachment, Caret, the standard stamps, and
   with `RenderOptions.LinkBorders` the border of a link that has `/Border`
-  or `/BS`
+  or `/BS`; with `/CA`, which an appearance stream overrides
 - `Page.Annotations` with link targets and, for markup annotations,
   `Markup`: author, subject, dates, rich text, colours, opacity, border,
   geometry in displayed points (quads, ink strokes, vertices, line and its

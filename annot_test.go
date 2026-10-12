@@ -124,18 +124,27 @@ func TestAnnotFlagsAndSkip(t *testing.T) {
 	}
 }
 
+// TestAnnotOpacityAndLayer applies /CA to an appearance cera makes and not
+// to an appearance stream, which says how transparent it is itself.
 func TestAnnotOpacityAndLayer(t *testing.T) {
 	data := buildPDFCatalog("/OCProperties << /OCGs [102 0 R] /D << /OFF [102 0 R] >> >>", []string{""},
-		"/Annots [100 0 R 101 0 R]",
+		"/Annots [100 0 R 101 0 R 104 0 R 105 0 R]",
 		"<< /Subtype /Stamp /Rect [0 0 20 20] /CA 0.5 /AP << /N 103 0 R >> >>",
 		"<< /Subtype /Stamp /Rect [40 0 60 20] /OC 102 0 R /AP << /N 103 0 R >> >>",
 		"<< /Type /OCG /Name (Stamps) >>",
-		apSquare)
+		apSquare,
+		"<< /Subtype /Square /Rect [70 0 90 20] /IC [0 0 1] /Border [0 0 0] /CA 0.5 >>",
+		// As Acrobat writes it: /CA, and the same in the appearance.
+		"<< /Subtype /Square /Rect [100 0 120 20] /CA 0.5 /AP << /N 106 0 R >> >>",
+		stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /ExtGState << /G << /ca 0.5 >> >> >>", "/G gs 0 0 1 rg 0 0 10 10 re f"))
 	img, _ := renderAnnots(t, data, RenderOptions{})
-	if c := img.RGBAAt(10, 90); diff(c, color.RGBA{127, 127, 255, 255}) > 1 {
-		t.Errorf("half-transparent blue is %v", c)
-	}
+	assertPixel(t, img, 10, 90, blue)
 	assertPixel(t, img, 50, 90, white)
+	for _, x := range []int{80, 110} {
+		if c := img.RGBAAt(x, 90); diff(c, color.RGBA{127, 127, 255, 255}) > 1 {
+			t.Errorf("half-transparent blue at %d is %v", x, c)
+		}
+	}
 }
 
 func TestAnnotGenerated(t *testing.T) {
@@ -302,8 +311,9 @@ func TestAnnotSteadyStateAllocations(t *testing.T) {
 		t.Skip("sync.Pool drops items under the race detector")
 	}
 	data := annotPDF("", []string{
-		"<< /Subtype /Stamp /Rect [20 20 40 40] /CA 0.5 /AP << /N 102 0 R >> >>",
+		"<< /Subtype /Stamp /Rect [20 20 40 40] /AP << /N 102 0 R >> >>",
 		"<< /Subtype /Square /Rect [60 20 90 50] /C [1 0 0] >>",
+		"<< /Subtype /Circle /Rect [100 20 130 50] /IC [0 0 1] /CA 0.5 >>", // a group
 	}, apSquare)
 	doc, _ := Open(data)
 	p, _ := doc.Page(0)

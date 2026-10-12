@@ -13,7 +13,7 @@ import (
 
 // Flattening (ADR 0013) draws annotations into the content of their page,
 // as the renderer draws them: with their appearance stream, or one made
-// for them, their opacity, and in their optional content group.
+// for them with their opacity, and in their optional content group.
 //
 // Flattening a form draws every widget the document shows — with its
 // appearance stream, or one made for its value — and the form goes: its
@@ -308,10 +308,10 @@ func (r resourceNames) add(key pdf.Name, o pdf.Object) pdf.Name {
 // (interp.annotation): a form XObject, the matrix that puts it on the page
 // (PDF 2.0, 12.5.5) and the graphics state it is drawn with, zero for the
 // default. A widget shows the value written with SetFields; its
-// appearance is made when the document's cannot show it. An opaque
-// appearance stream of the document is drawn as it is — one that lacks
-// what a form XObject needs, /Subtype /Form and /BBox, which annotations
-// tolerate but content does not, gets it by a patch.
+// appearance is made when the document's cannot show it. An appearance
+// stream of the document is drawn as it is — one that lacks what a form
+// XObject needs, /Subtype /Form and /BBox, which annotations tolerate but
+// content does not, gets it by a patch.
 func (e *Editor) flatLook(p *Page, a *Annotation, w *Widget, objs *[]pdf.Object, patches *[]pdfedit.Patch) (form pdf.Object, m Matrix, gs pdf.Dict, ok bool) {
 	d := e.base
 	var (
@@ -330,10 +330,10 @@ func (e *Editor) flatLook(p *Page, a *Annotation, w *Widget, objs *[]pdf.Object,
 		gen = ap == nil && d.generates(a)
 	}
 
-	// The renderer draws an annotation that is not opaque, and a
-	// generated highlight, which multiplies, as an isolated group.
+	// The renderer draws a generated appearance that is not opaque, and
+	// a generated highlight, which multiplies, as an isolated group.
 	alpha := 1.0
-	if v, ok := d.num(a.dict.Get("CA")); ok {
+	if v, ok := d.num(a.dict.Get("CA")); ok && gen {
 		alpha = clamp01(v)
 	}
 	multiply := gen && a.Subtype == "Highlight"
@@ -408,18 +408,7 @@ func (e *Editor) flatLook(p *Page, a *Annotation, w *Widget, objs *[]pdf.Object,
 		if len(set) > 0 {
 			*patches = append(*patches, pdfedit.Patch{Ref: ap.Ref, Set: set})
 		}
-		am := appearanceMatrix(d, ap, a.Rect)
-		if !grouped {
-			return ap.Ref.Object(), am.Mul(m), gs, true
-		}
-		// The group: a form around the appearance, whose own box clips
-		// it. A second clip at the same edge would lighten the edge.
-		var cw csw
-		cw.matrix(am)
-		cw.op("cm /A Do")
-		res := pdf.NewDict(pdf.Entry{Key: "XObject", Val: pdf.NewDict(pdf.Entry{Key: "A", Val: ap.Ref.Object()}).Object()})
-		box := Rect{a.Rect.X0 - 1, a.Rect.Y0 - 1, a.Rect.X1 + 1, a.Rect.Y1 + 1}
-		return made(box, res, cw), m, gs, true
+		return ap.Ref.Object(), appearanceMatrix(d, ap, a.Rect).Mul(m), gs, true
 	}
 	return pdf.Null, Matrix{}, pdf.Dict{}, false
 }
