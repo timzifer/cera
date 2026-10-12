@@ -445,6 +445,22 @@ New protection is AES-256 (PDF 2.0, revision 6) with a random file key.
 Pages imported from other documents are encrypted, or not, as the result
 is.
 
+`ImportPages` brings what is on the pages. `ImportPagesWith` brings what
+their document says about them too, so that a merged file is no worse than
+its parts:
+
+```go
+err = e.ImportPagesWith(e.NumPages(), other, cera.ImportOptions{
+	Outline:      true,       // the bookmarks that lead to the imported pages
+	OutlineTitle: "Appendix", // under one entry; "" puts them at the top level
+	Destinations: true,       // named destinations, renamed name_2 where taken
+	Labels:       true,       // the page numbers printed on them
+}, pages...)
+```
+
+Bookmarks and names whose page is not in the result are left out. The
+structure tree does not come: imported pages are untagged.
+
 `SetFields` records the values of a `FormState` of the edited document
 that differ from what the file holds: a text as a text string (its rich
 text value removed), a button state as a name with every widget's `/AS`,

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/timzifer/cera/internal/pdf"
-	"github.com/timzifer/cera/internal/pdfedit"
 )
 
 // Page labels (PDF 2.0, 12.4.2): the numbers printed on the pages — i to
@@ -182,19 +181,19 @@ func (d *Document) PageByLabel(label string) (int, bool) {
 	return i, ok
 }
 
-// labelPatch returns the change of the catalogue that keeps the labels of
-// the edited document with their pages: /PageLabels is keyed by the index
-// of a page, so after pages are deleted, moved or put in front of others
-// the labels would sit on other pages. The ranges are written anew for the
-// pages of the result; a page from another document has no label.
-func (e *Editor) labelPatch() (pdfedit.Patch, bool) {
-	d := e.base
-	if d == nil || len(d.labelRanges()) == 0 || !e.pagesMoved() {
-		return pdfedit.Patch{}, false
+// pageLabels returns the /PageLabels of the result, which keeps the labels
+// with their pages: the tree is keyed by the index of a page, so after
+// pages are deleted, moved or put in front of others the labels would sit
+// on other pages. The ranges are written anew for the pages of the result;
+// a page from another document has its label when it was imported with it
+// ([ImportOptions.Labels]), and else none. It reports false when no page
+// has a label to keep, or none moved.
+func (e *Editor) pageLabels() (pdf.Dict, bool) {
+	keeps := func(p editPage) bool {
+		return (p.own || p.labels) && len(p.src.labelRanges()) > 0
 	}
-	root, ok := d.r.Trailer().Get("Root").Ref()
-	if !ok {
-		return pdfedit.Patch{}, false
+	if !slices.ContainsFunc(e.pages, keeps) || e.base != nil && !e.pagesMoved() {
+		return pdf.Dict{}, false
 	}
 	var nums pdf.Array
 	var prev labelRange
@@ -202,8 +201,8 @@ func (e *Editor) labelPatch() (pdfedit.Patch, bool) {
 	for k, p := range e.pages {
 		var r labelRange
 		n, has := 0, false
-		if p.own {
-			r, n, has = d.labelAt(p.index)
+		if p.own || p.labels {
+			r, n, has = p.src.labelAt(p.index)
 		}
 		// A page goes on with the range of the page before it when it
 		// has the next number in the same style after the same prefix.
@@ -225,14 +224,13 @@ func (e *Editor) labelPatch() (pdfedit.Patch, bool) {
 		}
 		nums = append(nums, pdf.Integer(int64(k)), pdf.NewDict(entries...).Object())
 	}
-	labels := pdf.NewDict(pdf.Entry{Key: "Nums", Val: nums.Object()})
-	return pdfedit.Patch{Ref: root, Set: []pdf.Entry{{Key: "PageLabels", Val: labels.Object()}}}, true
+	return pdf.NewDict(pdf.Entry{Key: "Nums", Val: nums.Object()}), true
 }
 
 // pagesMoved reports whether a page of the result is not where it was in
 // the edited document.
 func (e *Editor) pagesMoved() bool {
-	if len(e.pages) != e.base.NumPages() {
+	if e.base == nil || len(e.pages) != e.base.NumPages() {
 		return true
 	}
 	for i, p := range e.pages {

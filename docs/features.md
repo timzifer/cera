@@ -157,6 +157,8 @@ Fonts a file does not embed:
 - Text strings in UTF-16BE, UTF-8 and PDFDocEncoding (all of it, accents at
   0x18–0x1F included), language escapes dropped; lenient dates
 - With `/EncryptMetadata false` the XMP stream is read as stored
+- `Editor.ImportPagesWith`: imported pages bring their outline entries,
+  named destinations and page labels
 - `Editor.Save` keeps the encryption of a document; `Editor.SaveWith`
   encrypts (AES-256, user and owner password, permissions) or decrypts
 - `Editor.SetMetadata` writes `/Info` and the XMP packet in agreement,

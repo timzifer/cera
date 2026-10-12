@@ -46,6 +46,11 @@ type Doc struct {
 	// the file it extends is.
 	Crypt   *pdf.Encryptor
 	Encrypt pdf.Dict
+	// Imports says what the pages imported from a document bring besides
+	// themselves (merge.go). PageLabels, when not zero, is the /PageLabels
+	// of a new document; the edited document's is changed by a patch.
+	Imports    map[*pdf.Document]Import
+	PageLabels pdf.Dict
 }
 
 // MayAssemble reports whether the permissions of d allow reassembling it
@@ -139,6 +144,12 @@ type builder struct {
 	// names the root field names the output has.
 	form  pdf.Object
 	names map[string]bool
+	// outlines is the outline of the output where the edited document
+	// has none to extend, names2 the /Names of its catalogue with the
+	// named destinations imported pages bring; dropDests says that the
+	// names of an old /Dests dictionary are in that tree.
+	outlines, names2 pdf.Object
+	dropDests        bool
 }
 
 type srcKey struct {
@@ -343,6 +354,10 @@ func (b *builder) build() error {
 	for _, x := range b.sources {
 		x.finishFields()
 	}
+	if len(b.doc.Imports) > 0 {
+		b.mergeOutlines()
+		b.mergeDests()
+	}
 	b.form = b.formDict()
 
 	b.w.Set(b.pages, pdf.NewDict(
@@ -534,6 +549,18 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 				if !b.form.IsNull() {
 					continue // below
 				}
+			case "Outlines":
+				if !b.outlines.IsNull() {
+					continue
+				}
+			case "Names":
+				if !b.names2.IsNull() {
+					continue
+				}
+			case "Dests":
+				if b.dropDests {
+					continue
+				}
 			}
 			entries = append(entries, pdf.Entry{Key: k, Val: x.im.Map(v)})
 		}
@@ -551,6 +578,15 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 	}
 	if oc := b.ocProperties(); !oc.IsNull() {
 		entries = append(entries, pdf.Entry{Key: "OCProperties", Val: oc})
+	}
+	if !b.outlines.IsNull() {
+		entries = append(entries, pdf.Entry{Key: "Outlines", Val: b.outlines})
+	}
+	if !b.names2.IsNull() {
+		entries = append(entries, pdf.Entry{Key: "Names", Val: b.names2})
+	}
+	if !b.doc.PageLabels.IsZero() && !b.sources[0].own {
+		entries = append(entries, pdf.Entry{Key: "PageLabels", Val: b.doc.PageLabels.Object()})
 	}
 	if b.doc.XMP != nil {
 		meta := b.w.Add(pdf.NewStream(pdf.NewDict(
