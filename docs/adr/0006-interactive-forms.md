@@ -302,7 +302,15 @@ module `form/fyneform`. Where it refines the decision above:
   three rules of section 5.
 - **Generation.** The `/DA` font comes from the form's `/DR`; when it is
   missing, composite, Type 3 or cannot encode the value, Helvetica (with
-  its stand-in) is used. Check marks are drawn as shapes for the
+  its stand-in) is used. Characters Helvetica lacks are shown, stretch by
+  stretch, with the first fallback font that has them (`formfont.go`):
+  Arimo, then what the document's `FontProvider` returns for the
+  collections Japan1, GB1, CNS1 and Korea1, a variable font lighter than
+  regular at weight 400. They are composite fonts with Identity-H whose
+  codes are glyph indices of the whole program; the editor embeds a
+  subset with a `/CIDToGIDMap` from those codes, widths and `/ToUnicode`,
+  so the renderer and the editor write the same content. Stretches are
+  placed by the widths cera measured, not by those a font declares. Check marks are drawn as shapes for the
   ZapfDingbats characters of `/MK /CA` (check, circle, cross, diamond,
   square, star), so they do not wait for ADR 0008. Auto-size fits a
   single line to the height and shrinks it to the width; multiline text

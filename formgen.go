@@ -2,9 +2,11 @@ package cera
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/go-opentype/opentype"
 	"github.com/timzifer/cera/internal/pdf"
 )
 
@@ -15,7 +17,8 @@ import (
 // and are generated only when the state has no appearance. The content is
 // drawn in the widget's own box, rotated by /MK /R, with the /DA font
 // from the form's /DR (Helvetica when it has none, or cannot encode the
-// value), and the colours and border of /MK and /BS.
+// value, and a fallback font for what Helvetica lacks), and the colours
+// and border of /MK and /BS.
 
 // widgetLook decides how annotation a, the widget w with value v, is drawn:
 // from the appearance stream ap, generated (gen), or not at all.
@@ -45,7 +48,8 @@ func (d *Document) widgetLook(a *Annotation, w *Widget, v Value) (ap *pdf.Stream
 
 // helvRef stands for the document's Helvetica, the stand-in generated
 // appearances use, in the resource dictionaries they are drawn with. No
-// file defines a negative object number; Document.font recognizes it.
+// file defines a negative object number; Document.font recognizes it, and
+// the numbers below it, which stand for the fallback fonts.
 var helvRef = pdf.Ref{Num: -1}
 
 // helvetica returns the document's Helvetica with WinAnsiEncoding.
@@ -61,57 +65,97 @@ func (d *Document) helvetica() *Font {
 	return d.ff.helv
 }
 
-// encoder is a font of a generated appearance and how it encodes text.
+// encoder is the font of a generated appearance and how it shows text: the
+// font of the field or Helvetica, and for the characters that font lacks
+// the first fallback font that has them (formfont.go).
 type encoder struct {
-	f    *Font
-	name pdf.Name
+	f     *Font
+	name  pdf.Name
+	obj   pdf.Object // f in the resources
+	d     *Document
+	fonts genFonts
+	// The text object being written: its size, and the fallback font
+	// selected in it, nil for f.
+	size float64
+	cur  *fallbackFont
+	used []*fallbackFont // the fallback fonts the appearance shows text with
 }
 
-// encode returns the codes of s, false if the font lacks a character.
-func (e encoder) encode(s string) ([]byte, bool) {
+// genGlyph is how an encoder shows a character: with code of its own font,
+// or with a glyph of a fallback font.
+type genGlyph struct {
+	fb   *fallbackFont
+	code uint16
+	adv  float64 // in em
+}
+
+// own returns the code of r in the encoder's own font.
+func (e *encoder) own(r rune) (byte, bool) {
 	enc := e.f.encoding()
-	out := make([]byte, 0, len(s))
-	for _, r := range s {
-		c, ok := enc[r]
-		if !ok {
-			if r == '\t' || r == 0xa0 {
-				c, ok = enc[' ']
-			}
-			if !ok {
-				return out, false
-			}
-		}
-		out = append(out, c)
+	c, ok := enc[r]
+	if !ok && (r == '\t' || r == 0xa0) {
+		c, ok = enc[' ']
 	}
-	return out, true
+	return c, ok
 }
 
-// width returns the width of s in em, characters the font lacks left out.
-func (e encoder) width(s string) float64 {
-	codes, _ := e.encodeLossy(s)
+// encodes reports whether the encoder's own font has every character of s.
+func (e *encoder) encodes(s string) bool {
+	for _, r := range s {
+		if _, ok := e.own(r); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// glyph returns how r is shown: as '?' when no font has it.
+func (e *encoder) glyph(r rune) genGlyph {
+	c, ok := e.own(r)
+	if !ok {
+		if fb, gid, ok := e.d.fallbackGlyph(r); ok {
+			return genGlyph{fb: fb, code: uint16(gid), adv: fb.advance(gid)}
+		}
+		e.fonts.missing(r)
+		c = e.f.encoding()['?']
+	}
+	return genGlyph{code: uint16(c), adv: e.f.advance(int(c))}
+}
+
+// width returns the width of s in em.
+func (e *encoder) width(s string) float64 {
 	w := 0.0
-	for _, c := range codes {
-		w += e.f.advance(int(c))
+	for _, r := range s {
+		w += e.glyph(r).adv
 	}
 	return w
 }
 
-// encodeLossy encodes s, writing '?' for characters the font lacks.
-func (e encoder) encodeLossy(s string) ([]byte, bool) {
-	enc := e.f.encoding()
-	out := make([]byte, 0, len(s))
-	all := true
-	for _, r := range s {
-		c, ok := enc[r]
-		if !ok && (r == '\t' || r == 0xa0) {
-			c, ok = enc[' ']
+// selectFont makes fb, or the encoder's own font for nil, the font of the
+// text object.
+func (e *encoder) selectFont(w *csw, fb *fallbackFont) {
+	name := e.name
+	if fb != nil {
+		name = fb.res
+		if !slices.Contains(e.used, fb) {
+			e.used = append(e.used, fb)
 		}
-		if !ok {
-			c, all = enc['?'], false
-		}
-		out = append(out, c)
 	}
-	return out, all
+	*w = append(*w, '/')
+	*w = append(*w, name...)
+	*w = append(*w, ' ')
+	w.num(e.size)
+	w.op("Tf")
+	e.cur = fb
+}
+
+// resources returns the resources of what the encoder wrote.
+func (e *encoder) resources() pdf.Dict {
+	fonts := []pdf.Entry{{Key: e.name, Val: e.obj}}
+	for _, fb := range e.used {
+		fonts = append(fonts, pdf.Entry{Key: fb.res, Val: e.fonts.fallback(fb)})
+	}
+	return pdf.NewDict(pdf.Entry{Key: "Font", Val: pdf.NewDict(fonts...).Object()})
 }
 
 // encoding returns the code of each character a simple font can show.
@@ -135,33 +179,20 @@ func (f *Font) encoding() map[rune]byte {
 	return f.enc
 }
 
-// genFont returns the font for showing the texts of w and the resources
-// that name it: the /DA font if it can encode all of them, else Helvetica.
-func (d *Document) genFont(w *Widget, texts []string, helv pdf.Object) (encoder, pdf.Dict) {
+// genFont returns the font for showing the texts of w: the /DA font if it
+// can encode all of them, else Helvetica, with the fallback fonts for what
+// Helvetica lacks.
+func (d *Document) genFont(w *Widget, texts []string, fonts genFonts) *encoder {
 	form := w.Field.form
 	if o := d.dict(form.dr.Get("Font")).Get(w.fontRes); !o.IsNull() && w.fontRes != "" {
 		if f := d.font(o); f != nil && !f.composite() && !f.Type3() {
-			e := encoder{f, w.fontRes}
-			ok := true
-			for _, t := range texts {
-				if _, all := e.encode(t); !all {
-					ok = false
-					break
-				}
-			}
-			if ok {
-				return e, fontResources(w.fontRes, o)
+			e := &encoder{f: f, name: w.fontRes, obj: o, d: d, fonts: fonts}
+			if !slices.ContainsFunc(texts, func(t string) bool { return !e.encodes(t) }) {
+				return e
 			}
 		}
 	}
-	e := encoder{d.helvetica(), "CeraHelv"}
-	return e, fontResources(e.name, helv)
-}
-
-// fontResources is a resource dictionary naming one font.
-func fontResources(name pdf.Name, font pdf.Object) pdf.Dict {
-	fonts := pdf.NewDict(pdf.Entry{Key: name, Val: font})
-	return pdf.NewDict(pdf.Entry{Key: "Font", Val: fonts.Object()})
+	return &encoder{f: d.helvetica(), name: "CeraHelv", obj: fonts.helvetica(), d: d, fonts: fonts}
 }
 
 // widgetMatrix maps the widget's box, [0 W]×[0 H] with its content
@@ -195,16 +226,16 @@ func (in *interp) generateWidget(b []byte, w *Widget, v Value) ([]byte, pdf.Dict
 		cw.num(x)
 	}
 	cw.op("cm")
-	cw, res := in.doc.widgetContent(cw, w, v, W, H, helvRef.Object())
+	cw, res := in.doc.widgetContent(cw, w, v, W, H, renderFonts{})
 	cw.op("Q")
 	return cw, res
 }
 
 // widgetContent appends the appearance of w showing v to cw, drawn in the
 // widget's box [0 W]×[0 H] with its content upright, and returns the
-// resources it needs. helv stands for Helvetica in them, the font used
-// when the form's font cannot show the text.
-func (d *Document) widgetContent(cw csw, w *Widget, v Value, W, H float64, helv pdf.Object) (csw, pdf.Dict) {
+// resources it needs. fonts names in them the fonts used when the form's
+// font cannot show the text: Helvetica, and the fallback fonts.
+func (d *Document) widgetContent(cw csw, w *Widget, v Value, W, H float64, fonts genFonts) (csw, pdf.Dict) {
 	f := w.Field
 	wd := w.dict
 
@@ -303,8 +334,7 @@ func (d *Document) widgetContent(cw csw, w *Widget, v Value, W, H float64, helv 
 		if !multi {
 			text = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(text)
 		}
-		e, r := d.genFont(w, []string{text}, helv)
-		res = r
+		e := d.genFont(w, []string{text}, fonts)
 		clipBox(&cw, inner)
 		switch {
 		case multi:
@@ -314,35 +344,36 @@ func (d *Document) widgetContent(cw csw, w *Widget, v Value, W, H float64, helv 
 		default:
 			textLine(&cw, e, tc, text, inner, a.FontSize, a.Align)
 		}
+		res = e.resources()
 
 	case FieldComboBox:
 		text := v.text
 		if v.kind == ValueChoice && len(v.sel) > 0 {
 			text = f.Options[v.sel[0]].Text
 		}
-		e, r := d.genFont(w, []string{text}, helv)
-		res = r
+		e := d.genFont(w, []string{text}, fonts)
 		clipBox(&cw, inner)
 		textLine(&cw, e, tc, text, inner, a.FontSize, a.Align)
+		res = e.resources()
 
 	case FieldListBox:
 		texts := make([]string, len(f.Options))
 		for i, o := range f.Options {
 			texts[i] = o.Text
 		}
-		e, r := d.genFont(w, texts, helv)
-		res = r
+		e := d.genFont(w, texts, fonts)
 		clipBox(&cw, inner)
 		listRows(&cw, e, tc, f, v, inner, a.FontSize, a.Align)
+		res = e.resources()
 
 	case FieldPushButton:
 		if a.Caption == "" {
 			break
 		}
-		e, r := d.genFont(w, []string{a.Caption}, helv)
-		res = r
+		e := d.genFont(w, []string{a.Caption}, fonts)
 		clipBox(&cw, inner)
 		textLine(&cw, e, tc, a.Caption, inner, a.FontSize, AlignCenter)
+		res = e.resources()
 	}
 	return cw, res
 }
@@ -464,7 +495,7 @@ func mark(w *csw, ch byte, r Rect, s float64) {
 const textPad = 2
 
 // lineHeight returns the height of a line of e at size 1.
-func lineHeight(e encoder) (asc, desc float64) {
+func lineHeight(e *encoder) (asc, desc float64) {
 	asc, desc = e.f.Metrics()
 	if asc-desc < 0.5 {
 		asc, desc = 0.8, -0.2
@@ -472,33 +503,60 @@ func lineHeight(e encoder) (asc, desc float64) {
 	return asc, desc
 }
 
-// show appends the text s of e at (x, y).
-func show(w *csw, e encoder, s string, x, y float64) {
-	codes, _ := e.encodeLossy(s)
+// show appends the text s of e at (x, y), a move from the start of the
+// line as Td makes it. Each stretch of s that another font shows is a
+// string of its own, placed by the widths the encoder measured, so that
+// the line is as long as it was laid out whatever widths a font declares;
+// the start of the line is then put back to (x, y).
+func show(w *csw, e *encoder, s string, x, y float64) {
 	w.pt(x, y)
 	w.op("Td")
-	*w = append(*w, '<')
 	const hex = "0123456789ABCDEF"
-	for _, c := range codes {
-		*w = append(*w, hex[c>>4], hex[c&15])
+	*w = append(*w, '<')
+	font, start := e.cur, len(*w) // of the string being written
+	at, moved := 0.0, 0.0         // the pen and the start of the line, from x
+	for _, r := range s {
+		g := e.glyph(r)
+		if g.fb != font {
+			if len(*w) == start {
+				*w = (*w)[:start-1] // nothing in it
+			} else {
+				w.op("> Tj")
+			}
+			e.selectFont(w, g.fb)
+			if at != moved {
+				w.pt(at-moved, 0)
+				w.op("Td")
+				moved = at
+			}
+			*w = append(*w, '<')
+			font, start = g.fb, len(*w)
+		}
+		if g.fb != nil {
+			e.fonts.used(g.fb, opentype.GlyphIndex(g.code), r)
+			*w = append(*w, hex[g.code>>12], hex[g.code>>8&15])
+		}
+		*w = append(*w, hex[g.code>>4&15], hex[g.code&15])
+		at += g.adv * e.size
 	}
 	w.op("> Tj")
+	if moved != 0 {
+		w.pt(-moved, 0)
+		w.op("Td")
+	}
 }
 
 // beginText starts a text object in font e at size with colour tc.
-func beginText(w *csw, e encoder, size float64, tc []float64) {
+func beginText(w *csw, e *encoder, size float64, tc []float64) {
 	w.op("BT")
-	*w = append(*w, '/')
-	*w = append(*w, e.name...)
-	*w = append(*w, ' ')
-	w.num(size)
-	w.op("Tf")
+	e.size = size
+	e.selectFont(w, nil)
 	w.color(tc, true)
 }
 
 // textLine draws one line of text in r, vertically centred; size 0 fits
 // it to the height, and shrinks it to the width.
-func textLine(w *csw, e encoder, tc []float64, s string, r Rect, size float64, al Align) {
+func textLine(w *csw, e *encoder, tc []float64, s string, r Rect, size float64, al Align) {
 	asc, desc := lineHeight(e)
 	avail := r.Dx() - 2*textPad
 	tw := e.width(s)
@@ -528,7 +586,7 @@ func alignX(r Rect, width float64, al Align) float64 {
 
 // combLine draws s into max equal cells across r, a character centred in
 // each, with dividers in the border colour.
-func combLine(w *csw, e encoder, tc []float64, s string, r Rect, size float64, n int, bc []float64, bw float64) {
+func combLine(w *csw, e *encoder, tc []float64, s string, r Rect, size float64, n int, bc []float64, bw float64) {
 	asc, desc := lineHeight(e)
 	cell := r.Dx() / float64(n)
 	if size <= 0 {
@@ -563,7 +621,7 @@ func combLine(w *csw, e encoder, tc []float64, s string, r Rect, size float64, n
 }
 
 // wrap breaks s into lines no wider than width em at size 1.
-func wrap(e encoder, s string, width float64) []string {
+func wrap(e *encoder, s string, width float64) []string {
 	var lines []string
 	s = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(s)
 	for _, para := range strings.Split(s, "\n") {
@@ -597,7 +655,7 @@ func wrap(e encoder, s string, width float64) []string {
 
 // textBlock draws s wrapped into r from the top; size 0 starts at 12
 // points and shrinks until the text fits.
-func textBlock(w *csw, e encoder, tc []float64, s string, r Rect, size float64, al Align) {
+func textBlock(w *csw, e *encoder, tc []float64, s string, r Rect, size float64, al Align) {
 	asc, desc := lineHeight(e)
 	avail := r.Dx() - 2*textPad
 	auto := size <= 0
@@ -630,7 +688,7 @@ func textBlock(w *csw, e encoder, tc []float64, s string, r Rect, size float64, 
 
 // listRows draws the options of a list box from its TopIndex, the
 // selected ones highlighted.
-func listRows(w *csw, e encoder, tc []float64, f *Field, v Value, r Rect, size float64, al Align) {
+func listRows(w *csw, e *encoder, tc []float64, f *Field, v Value, r Rect, size float64, al Align) {
 	asc, desc := lineHeight(e)
 	if size <= 0 {
 		size = 12

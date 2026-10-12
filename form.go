@@ -760,4 +760,7 @@ func rgbaOf(c []float64) *color.RGBA {
 type formFonts struct {
 	once sync.Once
 	helv *Font
+
+	fbOnce sync.Once
+	fb     []*fallbackFont // see formfont.go
 }

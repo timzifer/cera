@@ -31,6 +31,12 @@ import (
 // form, or Helvetica when that cannot show the text. It replaces the
 // widget's /AP. Check boxes and radio buttons switch between the
 // appearances they have; one is made for a state they lack.
+//
+// Characters Helvetica lacks are shown with a fallback font (formfont.go),
+// of which a subset with the glyphs used is embedded. A character no font
+// has is drawn as '?'; the form then gets /NeedAppearances, which asks a
+// viewer to draw the fields itself, and [Editor.MissingGlyphs] names the
+// fields.
 
 // SetFields records the values of the fields of state that differ from
 // what the document holds, to be written by [Editor.Save] and
@@ -41,7 +47,8 @@ import (
 // change, and [ErrLocked] for a field a signature locks. Writing values
 // removes an XFA form (/XFA), which would show the old ones. Calculated
 // and formatted fields ([Field.HasActions]) are not computed again: cera
-// runs no JavaScript.
+// runs no JavaScript. See [Editor.MissingGlyphs] for values with
+// characters that cannot be drawn.
 func (e *Editor) SetFields(state *FormState) error {
 	if e.base == nil {
 		return errors.New("cera: a new document has no form")
@@ -75,6 +82,37 @@ func (e *Editor) SetFields(state *FormState) error {
 	return nil
 }
 
+// MissingGlyphs returns the fields, among those whose values SetFields
+// recorded, with characters in the value that cera has no font for:
+// neither the field's font nor Helvetica, the fallback fonts (Latin, Greek
+// and Cyrillic) or the fonts the document's [FontProvider] has for Chinese,
+// Japanese and Korean. The value is written whole, but its appearance, in
+// the file and on a flattened page, shows '?' in place of such a
+// character. Written as a field, the form gets /NeedAppearances, so that a
+// viewer with a font for it draws the value itself.
+func (e *Editor) MissingGlyphs() []*Field {
+	var out []*Field
+	for f, v := range e.fields {
+		for _, w := range f.Widgets {
+			_, W, H := widgetMatrix(w)
+			if W <= 0 || H <= 0 {
+				continue
+			}
+			var objs []pdf.Object
+			probe := &editFonts{objs: &objs}
+			e.base.widgetContent(nil, w, v, W, H, probe)
+			if probe.lacking {
+				out = append(out, f)
+				break
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b *Field) int {
+		return slices.Index(a.form.Fields, a) - slices.Index(b.form.Fields, b)
+	})
+	return out
+}
+
 // fieldPatches encodes the recorded values as changes of the edited
 // document's objects, and reports whether viewers must make appearances.
 func (e *Editor) fieldPatches() ([]pdfedit.Patch, []pdf.Object) {
@@ -86,9 +124,13 @@ func (e *Editor) fieldPatches() ([]pdfedit.Patch, []pdf.Object) {
 		pdf.Entry{Key: "BaseFont", Val: pdf.Name("Helvetica").Object()},
 		pdf.Entry{Key: "Encoding", Val: pdf.Name("WinAnsiEncoding").Object()},
 	).Object()}
+	e.gen = &editFonts{objs: &objs}
+	defer func() { e.gen = nil }()
 	if e.flatten {
 		// The widgets go into the pages: no field is written.
-		return e.flattenPatches(&objs), objs
+		out = e.flattenPatches(&objs)
+		e.gen.finish()
+		return out, objs
 	}
 	fields := make([]*Field, 0, len(e.fields))
 	for f := range e.fields {
@@ -122,14 +164,13 @@ func (e *Editor) fieldPatches() ([]pdfedit.Patch, []pdf.Object) {
 		}
 	}
 	if len(out) > 0 {
-		if p, ok := e.xfaPatch(); ok {
-			out = append(out, p)
-		}
+		out = append(out, e.formPatch(e.gen.lacking)...)
 	}
 	if e.flattenAnnots {
 		// The form stays, with the values written.
 		out = append(out, e.flattenPatches(&objs)...)
 	}
+	e.gen.finish()
 	return out, objs
 }
 
@@ -184,7 +225,7 @@ func (e *Editor) appearance(w *Widget, v Value, objs *[]pdf.Object) (pdf.Ref, bo
 	if W <= 0 || H <= 0 {
 		return pdf.Ref{}, false
 	}
-	content, res := e.base.widgetContent(nil, w, v, W, H, pdfedit.NewRef(0).Object())
+	content, res := e.base.widgetContent(nil, w, v, W, H, e.gen)
 	turn := map[int]pdf.Array{
 		0:   {pdf.Integer(1), pdf.Integer(0), pdf.Integer(0), pdf.Integer(1), pdf.Integer(0), pdf.Integer(0)},
 		90:  {pdf.Integer(0), pdf.Integer(1), pdf.Integer(-1), pdf.Integer(0), pdf.Integer(0), pdf.Integer(0)},

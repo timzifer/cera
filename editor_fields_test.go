@@ -82,6 +82,8 @@ func TestSetFields(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		values map[string]Value
+		// lacking: a value has characters no font shows.
+		lacking bool
 	}{
 		{"pdfdoc", map[string]Value{
 			"name":   TextValue("Zoë (€) \\ x"),
@@ -91,13 +93,19 @@ func TestSetFields(t *testing.T) {
 			"langs":  ChoiceValue(0, 2),
 			"turned": TextValue("up"),
 			"plain":  StateValue("Yes"),
-		}},
+		}, false},
 		{"unicode", map[string]Value{
 			"name":  TextValue("漢字 ✓"),
 			"color": StateValue("Off"),
 			"city":  TextValue("Köln"),
 			"langs": ChoiceValue(),
-		}},
+		}, true},
+		{"fallback", map[string]Value{
+			"name":   TextValue("Zürich Привет Ελλάδα €"),
+			"color":  StateValue("Off"),
+			"langs":  ChoiceValue(),
+			"turned": TextValue("Ж"),
+		}, false},
 	} {
 		for _, stm := range []bool{false, true} {
 			src := fieldsFile(stm)
@@ -123,8 +131,12 @@ func TestSetFields(t *testing.T) {
 							t.Errorf("%s: saved %+v, want %+v", name, got, want)
 						}
 					}
-					if form.NeedAppearances {
-						t.Error("/NeedAppearances is set")
+					// Only a value cera cannot draw asks viewers to.
+					if form.NeedAppearances != tt.lacking {
+						t.Errorf("/NeedAppearances %v, want %v", form.NeedAppearances, tt.lacking)
+					}
+					if got := e.MissingGlyphs(); (len(got) > 0) != tt.lacking || tt.lacking && got[0].Name != "name" {
+						t.Errorf("fields with missing glyphs: %v", got)
 					}
 					// The saved appearances look as cera draws the values.
 					want := renderState(t, doc, fill(t, doc, tt.values))

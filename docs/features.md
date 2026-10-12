@@ -103,7 +103,9 @@ Fonts a file does not embed:
 - AcroForm fields with inheritance; values in a caller-owned `FormState`
 - Appearances generated for text fields (single line, multiline, comb,
   password, auto-size), check boxes, radio buttons, combo and list boxes,
-  push buttons
+  push buttons; text beyond the field's font and Helvetica in fallback
+  fonts (Greek, Cyrillic; CJK with `fonts/cjk`), embedded as subsets when
+  the form is saved
 - Native widgets through `FormWidgetProvider` and `FormLayer` (tab order,
   focus); fyne provider in [`form/fyneform`](../form/fyneform)
 - `cmd/cera -field name=value` fills a form

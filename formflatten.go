@@ -378,7 +378,7 @@ func (e *Editor) flatLook(p *Page, a *Annotation, w *Widget, objs *[]pdf.Object,
 		if W <= 0 || H <= 0 {
 			return pdf.Null, Matrix{}, pdf.Dict{}, false
 		}
-		content, res := d.widgetContent(nil, w, wv, W, H, pdfedit.NewRef(0).Object())
+		content, res := d.widgetContent(nil, w, wv, W, H, e.gen)
 		// The renderer does not clip a generated appearance. A box that
 		// ended at the widget's edge would clip its border there, and the
 		// edge of the clip and the edge of the border, both antialiased,
