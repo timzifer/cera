@@ -81,6 +81,9 @@ type Editor struct {
 	// noAppearance leaves the appearance streams of annotations out, for
 	// tests that compare them with what the renderer draws without.
 	noAppearance bool
+	// unguarded writes what a certification or a signature's lock does
+	// not allow, for tests of how such changes are found.
+	unguarded bool
 }
 
 // editPage is one page of the result: page index of src, turned by rotate
@@ -207,9 +210,9 @@ func (e *Editor) Update(w io.Writer) (err error) {
 	if e.base == nil {
 		return fmt.Errorf("%w: %v", ErrNoUpdate, pdfedit.ErrNoBase)
 	}
-	if sg := e.base.signing(); sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated()) ||
+	if sg := e.base.signing(); !e.unguarded && (sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated()) ||
 		sg.mdp == 2 && (e.pagesChanged() || e.annotated()) || sg.mdp == 3 && e.pagesChanged() ||
-		sg.mdp != 0 && e.flattens() {
+		sg.mdp != 0 && e.flattens()) {
 		return ErrCertified
 	}
 	if prot, ok := e.base.r.Protection(); ok && !prot.Owner {

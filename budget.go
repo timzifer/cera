@@ -36,20 +36,22 @@ const (
 // not fit is ignored like other damage (Stats.Errors or the key of the
 // feature that does not read).
 const (
-	maxComps         = 32 // components of a colour (DeviceN allows 32)
-	maxFunctionDepth = 8  // stitching functions naming functions
-	maxPSStack       = 100
-	maxLayerDepth    = 16       // /Order nesting and /VE expressions
-	maxFieldDepth    = 32       // the AcroForm field tree
-	maxInfoEntries   = 256      // entries of /Info beyond the standard ones
-	maxInfoString    = 64 << 10 // bytes of one decoded /Info string
-	maxXMPBytes      = 16 << 20 // bytes of the decoded XMP metadata stream
-	maxOutlineDepth  = 32       // levels of the document outline
-	maxOutlineItems  = 1 << 16  // entries of the document outline
-	maxActions       = 16       // actions chained to that of a link, and targets of a /GoToE
-	maxAttachments   = 1 << 12  // embedded files listed for a document
-	maxLabelDepth    = 16       // levels of the number tree of page labels
-	maxLabelNodes    = 1 << 16  // nodes of the number tree of page labels
+	maxComps          = 32 // components of a colour (DeviceN allows 32)
+	maxFunctionDepth  = 8  // stitching functions naming functions
+	maxPSStack        = 100
+	maxLayerDepth     = 16       // /Order nesting and /VE expressions
+	maxFieldDepth     = 32       // the AcroForm field tree
+	maxInfoEntries    = 256      // entries of /Info beyond the standard ones
+	maxInfoString     = 64 << 10 // bytes of one decoded /Info string
+	maxXMPBytes       = 16 << 20 // bytes of the decoded XMP metadata stream
+	maxOutlineDepth   = 32       // levels of the document outline
+	maxOutlineItems   = 1 << 16  // entries of the document outline
+	maxActions        = 16       // actions chained to that of a link, and targets of a /GoToE
+	maxAttachments    = 1 << 12  // embedded files listed for a document
+	maxSignatureBytes = 16 << 20 // bytes of the data of a signature
+	maxCompareNodes   = 1 << 20  // objects compared to tell what changed after a signature
+	maxLabelDepth     = 16       // levels of the number tree of page labels
+	maxLabelNodes     = 1 << 16  // nodes of the number tree of page labels
 )
 
 // Caches bound memory kept for reuse; past them entries are dropped and
@@ -107,6 +109,8 @@ var budgets = []budget{
 	{"maxActions", maxActions, "", "actions chained to that of a link or outline entry (/Next), and targets of a /GoToE; further ones are not read"},
 	{"maxAttachments", maxAttachments, "", "embedded files listed by Document.Attachments, and nodes of their name tree; further ones are left out"},
 	{"maxAttachmentBytes", maxAttachmentBytes, "", "decoded bytes of an embedded file; Attachment.Open returns ErrAttachmentTooLarge for more"},
+	{"maxSignatureBytes", maxSignatureBytes, "", "bytes of the data of a signature (/Contents); a larger one is not checked"},
+	{"maxCompareNodes", maxCompareNodes, "", "objects compared to tell what was appended after a signature; past it the changes count as Other"},
 	{"maxLabelDepth", maxLabelDepth, "", "levels of the number tree of page labels; deeper nodes are not read"},
 	{"maxLabelNodes", maxLabelNodes, "", "nodes of the number tree of page labels; further ones are not read"},
 	{"content.MaxNesting", content.MaxNesting, "", "arrays and dictionaries nested in one operand (Stats.Errors)"},

@@ -115,6 +115,10 @@ Fonts a file does not embed:
 - Text extraction puts right-to-left text (Arabic, Hebrew) into logical
   order and gives the letters for presentation forms; lines, selection
   and columns follow the direction
+- `Document.Signatures` and `Signature.Verify`: integrity (CMS signed
+  data, RSA and ECDSA, timestamp tokens), what was appended after a
+  signature and whether certification and field locks allow it, and the
+  certificate chain against roots the caller gives
 - `Document.Attachments` and `Annotation.File`: embedded files with
   their metadata and `/AFRelationship`, decoded and decrypted (also where
   the files alone are encrypted, `/EFF`)

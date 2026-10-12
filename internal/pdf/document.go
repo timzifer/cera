@@ -189,6 +189,43 @@ func (d *Document) WriteSource(w io.Writer) error {
 	return fmt.Errorf("pdf: unknown source %T", d.src)
 }
 
+// SourceSize returns the length of the file.
+func (d *Document) SourceSize() int64 { return d.src.size() }
+
+// SourceRange returns a reader of n bytes of the file from off on, as they
+// were read; of fewer where the file ends before.
+func (d *Document) SourceRange(off, n int64) io.Reader {
+	size := d.src.size()
+	if off < 0 || n <= 0 || off >= size {
+		return bytes.NewReader(nil)
+	}
+	n = min(n, size-off)
+	switch s := d.src.(type) {
+	case memSource:
+		return bytes.NewReader(s[off : off+n])
+	case readerSource:
+		return io.NewSectionReader(s.r, off, n)
+	}
+	return bytes.NewReader(nil)
+}
+
+// Revision opens the first size bytes of the file as a document of their
+// own, with the password this one was opened with: the file as it was
+// before the incremental updates after them.
+func (d *Document) Revision(size int64) (*Document, error) {
+	if size <= 0 || size > d.src.size() {
+		return nil, fmt.Errorf("pdf: no revision of %d bytes in a file of %d", size, d.src.size())
+	}
+	opt := Options{Password: d.password}
+	switch s := d.src.(type) {
+	case memSource:
+		return open(s[:size], opt)
+	case readerSource:
+		return open(readerSource{s.r, size}, opt)
+	}
+	return nil, fmt.Errorf("pdf: unknown source %T", d.src)
+}
+
 // Encrypted reports whether the file declares an /Encrypt dictionary.
 func (d *Document) Encrypted() bool { return !d.Trailer().Get("Encrypt").IsNull() }
 

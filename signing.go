@@ -8,8 +8,9 @@ import (
 	"github.com/timzifer/cera/internal/pdfedit"
 )
 
-// What signatures allow an editor to change (PDF 2.0, 12.8). cera checks
-// no signature; it reads what they declare:
+// What signatures allow an editor to change (PDF 2.0, 12.8). The editor
+// checks no signature (signature.go does, for a viewer); it reads what
+// they declare:
 //
 //   - a certification signature's DocMDP permissions (12.8.2.2): with P 1
 //     no change is allowed, with P 2 and 3 filling in the form is, but no
