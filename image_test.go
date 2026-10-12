@@ -379,10 +379,10 @@ func TestImageCache(t *testing.T) {
 		if err := p.Render(context.Background(), dst, RenderOptions{}); err != nil {
 			t.Fatal(err)
 		}
-		if len(doc.imgs) != 1 {
-			t.Fatalf("%d cached images", len(doc.imgs))
+		if n, _ := doc.imgs.len(); n != 1 {
+			t.Fatalf("%d cached images", n)
 		}
-		img := doc.imgLRU.Front().Value.(*imageEntry).res.img
+		img := doc.imgs.lru.Front().Value.(*imageEntry).res.img
 		if first == nil {
 			first = img
 		} else if img != first {
@@ -430,8 +430,8 @@ func TestImageConcurrentMisses(t *testing.T) {
 			t.Fatalf("request %d got image %p, request 0 %p", i, results[i].img, results[0].img)
 		}
 	}
-	if len(doc.imgs) != 1 || len(doc.imgFlights) != 0 {
-		t.Errorf("%d cached images, %d decodes pending", len(doc.imgs), len(doc.imgFlights))
+	if n, _ := doc.imgs.len(); n != 1 || len(doc.imgFlights) != 0 {
+		t.Errorf("%d cached images, %d decodes pending", n, len(doc.imgFlights))
 	}
 }
 

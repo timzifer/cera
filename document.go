@@ -1,10 +1,10 @@
 package cera
 
 import (
-	"container/list"
 	"fmt"
 	"io"
 	"math"
+	"runtime"
 	"sync"
 
 	"github.com/timzifer/cera/internal/pdf"
@@ -31,13 +31,12 @@ type Document struct {
 	fontMu sync.Mutex
 	fonts  map[pdf.Ref]*Font // loaded fonts, by reference
 
-	// Decoded images by reference, least recently used last, bounded by
-	// imageCacheBytes.
-	imgMu    sync.Mutex
-	imgs     map[pdf.Ref]*list.Element
-	imgLRU   list.List
-	imgBytes int
-	// Decodes in progress by reference; under imgMu.
+	// Decoded images: the document's own cache or the one it shares
+	// (OpenOptions.Cache), which knows its images by id.
+	imgs *imageCache
+	id   uint64
+	// Decodes in progress by reference.
+	imgMu      sync.Mutex
 	imgFlights map[pdf.Ref]*imageFlight
 
 	ocOnce sync.Once
@@ -101,8 +100,8 @@ func OpenWithPassword(data []byte, password string) (*Document, error) {
 }
 
 // OpenWith parses a PDF file with options: a password, a provider of
-// fonts the document does not embed, and how CMYK is converted. It fails
-// on a CMYKProfile it cannot read.
+// fonts the document does not embed, how CMYK is converted, and how much
+// the document keeps decoded. It fails on a CMYKProfile it cannot read.
 func OpenWith(data []byte, opt OpenOptions) (doc *Document, err error) {
 	return open(func(o pdf.Options) (*pdf.Document, error) { return pdf.OpenWith(data, o) }, opt)
 }
@@ -130,11 +129,27 @@ func open(read func(pdf.Options) (*pdf.Document, error), opt OpenOptions) (doc *
 	if opt.NaiveCMYK {
 		devCMYK = spaceCMYKNaive
 	}
-	d, err := read(pdf.Options{Password: opt.Password})
+	po := pdf.Options{Password: opt.Password}
+	var imgs *imageCache
+	if c := opt.Cache; c != nil {
+		po.StreamCache, imgs = c.streams, c.images
+	} else {
+		// The reader takes 0 for its default and a negative number for none.
+		po.StreamCacheBytes = int(max(min(opt.StreamCacheBytes, math.MaxInt), -1))
+		imgs = newImageCache(opt.ImageCacheBytes)
+	}
+	d, err := read(po)
 	if err != nil {
 		return nil, openError(err)
 	}
-	return &Document{r: d, fontProvider: opt.Fonts, naiveCMYK: opt.NaiveCMYK, devCMYK: devCMYK, ignoreIntent: opt.IgnoreOutputIntent}, nil
+	doc = &Document{r: d, fontProvider: opt.Fonts, naiveCMYK: opt.NaiveCMYK, devCMYK: devCMYK, ignoreIntent: opt.IgnoreOutputIntent,
+		imgs: imgs, id: docIDs.Add(1)}
+	if opt.Cache != nil {
+		// A shared cache outlives the document: what it has of it goes
+		// with it.
+		runtime.AddCleanup(doc, func(id uint64) { imgs.drop(id) }, doc.id)
+	}
+	return doc, nil
 }
 
 // NumPages returns the number of pages.

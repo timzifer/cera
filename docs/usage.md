@@ -39,6 +39,35 @@ A file need not be in memory: `cera.OpenReaderAt(f, size, opts)` reads
 through an `io.ReaderAt` (an `*os.File`, a browser `File` in `js/wasm`)
 only what the pages drawn need.
 
+A document keeps what it decodes for the next page that needs it: 256 MB
+of images and 64 MB of streams (content, forms, Type 3 glyphs) at most,
+least recently used dropped first. That suits one document in a viewer.
+The bounds are options, and the caches can be emptied and shared:
+
+```go
+// A thumbnailer draws each page once: keep nothing.
+doc, err := cera.OpenWith(data, cera.OpenOptions{ImageCacheBytes: -1, StreamCacheBytes: -1})
+
+// js/wasm, where the heap is small.
+doc, err = cera.OpenWith(data, cera.OpenOptions{ImageCacheBytes: 32 << 20, StreamCacheBytes: 8 << 20})
+doc.Trim() // the tab went to the background: drop what is decoded
+
+// A server with many documents open: one bound for all of them.
+cache := cera.NewCache(512<<20, 128<<20)
+doc, err = cera.OpenWith(data, cera.OpenOptions{Cache: cache})
+doc.Trim() // done with the document; otherwise its entries leave as others come in
+
+// What the process keeps between renders, whatever the document.
+cera.SetPoolLimits(cera.PoolLimits{GlyphCaches: 4, LayerBytes: 8 << 20})
+```
+
+`Trim` leaves the document and its pages usable: what they show is decoded
+again when it is drawn. It does not free the display list of a page —
+`Page.Release` does — nor the fonts and colour spaces the document has
+loaded, which go with the document. A bound of 0 is the default, a negative
+one none. The budgets on what one input may cost
+([budgets.md](budgets.md)) are not options.
+
 An encrypted file opens with its password. `ErrPassword` says that it
 needs one, or another one, and `ErrUnsupportedEncryption` that no password
 helps:

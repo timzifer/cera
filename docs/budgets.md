@@ -58,11 +58,11 @@ A test keeps this table in step with the code.
 | `pdf.MaxObjects` | 8 Mi | – | cross-reference entries of one file; past it the file is rebuilt by scanning |
 | `pdf.MaxPageTreeDepth` | 64 | – | page tree nodes nested in each other; deeper pages are not found |
 | `pdf.MaxObjectWindow` | 64 Mi | – | bytes read to parse one object of a file opened with OpenReaderAt; a larger object is not read |
-| `imageCacheBytes` | 256 Mi | – | decoded images a document keeps |
-| `pdf.DefaultStreamCacheBytes` | 64 Mi | – | decoded streams (content, forms, Type 3 glyphs, functions) a document keeps |
+| `imageCacheBytes` | 256 Mi | – | decoded images a document keeps, unless OpenOptions.ImageCacheBytes or a Cache says otherwise |
+| `pdf.DefaultStreamCacheBytes` | 64 Mi | – | decoded streams (content, forms, Type 3 glyphs, functions) a document keeps, unless OpenOptions.StreamCacheBytes or a Cache says otherwise |
 | `pdf.MaxCachedStream` | 8 Mi | – | largest decoded stream kept; larger ones are decoded on every use |
-| `maxFreeLayerBytes` | 64 Mi | – | transparency layer buffers a device keeps |
-| `maxIdleGlyphCaches` | 64 | – | glyph mask caches kept between renders |
+| `maxFreeLayerBytes` | 64 Mi | – | transparency layer buffers a device keeps, unless SetPoolLimits says otherwise |
+| `maxIdleGlyphCaches` | 64 | – | glyph mask caches kept between renders, unless SetPoolLimits says otherwise |
 | `maxMeshShaders` | 8 | – | mesh shaders kept per mesh |
 | `maxReplayCells` | 64 | – | pattern cells drawn as vector operations instead of a tile |
 | `maxRunPoints` | 4 Ki | – | points of consecutive strokes or fills of one pen drawn as one union; past it, the next union starts |

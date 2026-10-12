@@ -2,7 +2,6 @@ package cera
 
 import (
 	"bytes"
-	"container/list"
 	"image"
 	"image/draw"
 	"math"
@@ -62,9 +61,7 @@ func (d *Document) image(ref pdf.Ref, s *pdf.Stream, res pdf.Dict) imageResult {
 	}
 	for {
 		d.imgMu.Lock()
-		if e, ok := d.imgs[ref]; ok {
-			d.imgLRU.MoveToFront(e)
-			r := e.Value.(*imageEntry).res
+		if r, ok := d.imgs.get(imageKey{d.id, ref}); ok {
 			d.imgMu.Unlock()
 			return r
 		}
@@ -104,42 +101,10 @@ func (d *Document) decodeShared(ref pdf.Ref, s *pdf.Stream, res pdf.Dict, f *ima
 		close(f.done)
 	}()
 	f.res = d.decodeImage(s.Dict, d.r.Raw(s), res)
-	d.cacheImage(ref, f.res)
+	// Cached before the flight ends, so that a request finds one of them.
+	d.imgs.put(imageKey{d.id, ref}, f.res)
 	f.ok = true
 	return f.res
-}
-
-type imageEntry struct {
-	ref  pdf.Ref
-	res  imageResult
-	size int
-}
-
-func (d *Document) cacheImage(ref pdf.Ref, r imageResult) {
-	size := 64
-	if r.img != nil {
-		size += r.img.size
-	}
-	if size > imageCacheBytes {
-		return
-	}
-	d.imgMu.Lock()
-	defer d.imgMu.Unlock()
-	if d.imgs == nil {
-		d.imgs = map[pdf.Ref]*list.Element{}
-	}
-	if _, ok := d.imgs[ref]; ok {
-		return
-	}
-	d.imgs[ref] = d.imgLRU.PushFront(&imageEntry{ref: ref, res: r, size: size})
-	d.imgBytes += size
-	for d.imgBytes > imageCacheBytes {
-		e := d.imgLRU.Back()
-		old := e.Value.(*imageEntry)
-		d.imgLRU.Remove(e)
-		delete(d.imgs, old.ref)
-		d.imgBytes -= old.size
-	}
 }
 
 // decodeImage decodes an image from its (expanded) dictionary and its

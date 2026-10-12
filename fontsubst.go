@@ -91,6 +91,20 @@ type OpenOptions struct {
 	// made for uncoated paper or for newsprint is shown with those
 	// colours. PDFium does not use output intents.
 	IgnoreOutputIntent bool
+	// ImageCacheBytes bounds the decoded images the document keeps for
+	// the next page that shows them: 0 means 256 MB, a negative number
+	// none, for a thumbnailer that draws each page once. An image larger
+	// than the bound is decoded for each page that is recorded with it.
+	ImageCacheBytes int64
+	// StreamCacheBytes bounds the decoded streams the document keeps —
+	// the content of pages, forms, Type 3 glyphs, functions: 0 means
+	// 64 MB, a negative number none.
+	StreamCacheBytes int64
+	// Cache, if set, keeps the decoded images and streams of the document
+	// with those of the other documents opened with it, under its one
+	// bound; ImageCacheBytes and StreamCacheBytes are ignored. See
+	// [NewCache].
+	Cache *Cache
 }
 
 // Font descriptor flags.
