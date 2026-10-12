@@ -169,6 +169,18 @@ broken across lines. `String` separates lines by a line break and blocks
 by an empty line. `Page.TextWith` selects layers, annotations and form
 values, and can ignore the structure tree.
 
+Arabic and Hebrew come out as they are read and typed: a page shows them
+in visual order and as presentation forms, and the layout puts the
+characters of such a line into logical order (the Unicode bidirectional
+algorithm, numbers and Latin words inside kept as they read) and gives
+the letters for the forms, so the text can be searched and copied.
+`TextLine.RTL` marks a line that reads from the right — its first
+character is at its right end, and `PosAt` and `Select` follow the
+pointer there; `Quads` of a range across both directions gives a box for
+each stretch. The columns of a page that reads from the right, by its
+lines or by `/ViewerPreferences /Direction /R2L`, are read from the
+right.
+
 Selection works on the `PageText` alone, in points of the displayed page;
 a viewer divides its pointer positions by its zoom:
 

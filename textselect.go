@@ -85,14 +85,45 @@ func (t *PageText) PosAt(x, y float64) TextPos {
 	l := &t.Lines[best]
 	f := frame{l.Dir}
 	u := f.u(p)
+	if !l.mixed(t) {
+		for i := l.Start; i < l.End; i++ {
+			c := &t.Chars[i]
+			mid := f.u(c.Origin) + c.Advance/2
+			if u < mid {
+				return TextPos(i)
+			}
+		}
+		return TextPos(l.End)
+	}
+	// A line with text that reads from the right: the character nearest
+	// to the point, and the half of it the point is in — its start is on
+	// the right when it reads from the right.
+	at, nearest := l.Start, math.Inf(1)
 	for i := l.Start; i < l.End; i++ {
 		c := &t.Chars[i]
-		mid := f.u(c.Origin) + c.Advance/2
-		if u < mid {
-			return TextPos(i)
+		u0 := f.u(c.Origin)
+		if d := max(u0-u, 0, u-u0-c.Advance); d < nearest {
+			at, nearest = i, d
 		}
 	}
-	return TextPos(l.End)
+	c := &t.Chars[at]
+	if left := u < f.u(c.Origin)+c.Advance/2; left != c.rtl {
+		return TextPos(at)
+	}
+	return TextPos(at + 1)
+}
+
+// mixed reports whether the line has characters that read from the right.
+func (l *TextLine) mixed(t *PageText) bool {
+	if l.RTL {
+		return true
+	}
+	for i := l.Start; i < l.End; i++ {
+		if t.Chars[i].rtl {
+			return true
+		}
+	}
+	return false
 }
 
 // Select returns the range between the positions a and b, in either
@@ -215,6 +246,10 @@ func (t *PageText) lineOf(i int) int {
 
 // Quads returns the boxes that highlight r: one per line it touches, from
 // the first to the last character of r on the line, as high as the line.
+// Where the direction of the text changes within the range a new box
+// starts, since what follows in the range need not stand beside what came
+// before: a line with right-to-left and left-to-right text has one box for
+// each stretch.
 func (t *PageText) Quads(r TextRange) []Quad {
 	if r.Empty() {
 		return nil
@@ -225,7 +260,12 @@ func (t *PageText) Quads(r TextRange) []Quad {
 		l := &t.Lines[li]
 		f := frame{l.Dir}
 		e := extent{u0: math.Inf(1), u1: math.Inf(-1), v0: f.v(l.Quad.P[0]), v1: f.v(l.Quad.P[2])}
-		for i := max(start, l.Start); i < min(end, l.End); i++ {
+		from := max(start, l.Start)
+		for i := from; i < min(end, l.End); i++ {
+			if i > from && t.Chars[i].rtl != t.Chars[i-1].rtl && e.u0 <= e.u1 {
+				qs = append(qs, e.quad(f))
+				e.u0, e.u1 = math.Inf(1), math.Inf(-1)
+			}
 			for _, p := range t.Chars[i].Quad.P {
 				u := f.u(p)
 				e.u0, e.u1 = min(e.u0, u), max(e.u1, u)
