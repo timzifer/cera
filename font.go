@@ -45,6 +45,10 @@ type Font struct {
 	// document carries one cera cannot read.
 	substituted bool
 	bad         bool
+	// glyphWidths says the codes are glyphs of the program and move the
+	// pen by its advances: a fallback font of generated appearances,
+	// which declares no widths (formfont.go).
+	glyphWidths bool
 	// stretch scales the outlines of a stand-in horizontally (narrow
 	// faces); 0 is 1.
 	stretch float64
@@ -153,6 +157,9 @@ func (d *Document) font(o pdf.Object) *Font {
 	ref, isRef := o.Ref()
 	if isRef && ref == helvRef {
 		return d.helvetica()
+	}
+	if isRef && ref.Num < helvRef.Num {
+		return d.fallbackFont(ref)
 	}
 	if isRef {
 		d.fontMu.Lock()
@@ -332,6 +339,9 @@ func parseSFNT(data []byte) (*opentype.Font, error) {
 // advances (all stand-ins are metric-compatible with Helvetica, Times or
 // Courier).
 func (f *Font) advance(code int) float64 {
+	if f.glyphWidths {
+		return float64(f.program.GlyphAdvance(opentype.GlyphIndex(code))) / f.perEm
+	}
 	if f.pdf.HasWidth(code) || !f.substituted || f.composite() {
 		return f.pdf.Width(code)
 	}

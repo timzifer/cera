@@ -299,6 +299,14 @@ made as cera draws it (the form's `/DA` font, or Helvetica when that cannot
 show the text), so every viewer shows the values without regenerating
 them; check boxes and radio buttons switch between their appearances.
 
+What Helvetica lacks is drawn with a fallback font — Arimo for Greek and
+Cyrillic, and for Chinese, Japanese and Korean the fonts of the document's
+`FontProvider` (`fonts/cjk`) — on screen and in the file, which gets a
+subset of the font with the glyphs used and a `/ToUnicode` map. A character
+no font has is drawn as `?`: `e.MissingGlyphs()` returns the fields with
+such a value, and the written form gets `/NeedAppearances`, which asks a
+viewer that has a font to draw the fields itself.
+
 `Flatten` draws every widget the document shows into the content of its
 page, as cera renders it (with values from `SetFields`), and removes the
 form: the widgets leave the pages, `/AcroForm` the catalogue. Hidden

@@ -73,6 +73,9 @@ type Editor struct {
 	flatten bool             // the form is flattened, by Flatten
 	// flattenAnnots: the annotations are flattened, by FlattenAnnotations.
 	flattenAnnots bool
+	// gen names the fonts of the appearances being written, while plan
+	// puts the result together.
+	gen *editFonts
 }
 
 // editPage is one page of the result: page index of src, turned by rotate

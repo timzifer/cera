@@ -128,31 +128,44 @@ func (e *Editor) pagesChanged() bool {
 	return false
 }
 
-// xfaPatch removes /XFA from the edited document's form, so that viewers
-// show the fields written rather than the stale XFA data. A form direct in
-// the catalogue is changed there.
-func (e *Editor) xfaPatch() (pdfedit.Patch, bool) {
+// formPatch changes the edited document's form for the values written: it
+// removes /XFA, so that viewers show the fields written rather than the
+// stale XFA data, and with needAppearances it sets /NeedAppearances, so
+// that a viewer with the fonts for it draws what cera could not. A form
+// direct in the catalogue is changed there.
+func (e *Editor) formPatch(needAppearances bool) []pdfedit.Patch {
 	d := e.base
 	cat, err := d.r.Catalog()
 	if err != nil {
-		return pdfedit.Patch{}, false
+		return nil
 	}
 	af := cat.Get("AcroForm")
-	if d.dict(af).Get("XFA").IsNull() {
-		return pdfedit.Patch{}, false
+	form := d.dict(af)
+	xfa := !form.Get("XFA").IsNull()
+	if !xfa && !needAppearances || form.IsZero() {
+		return nil
+	}
+	var set []pdf.Entry
+	if needAppearances {
+		set = []pdf.Entry{{Key: "NeedAppearances", Val: pdf.Boolean(true)}}
 	}
 	if r, ok := af.Ref(); ok {
-		return pdfedit.Patch{Ref: r, Del: []pdf.Name{"XFA"}}, true
+		p := pdfedit.Patch{Ref: r, Set: set}
+		if xfa {
+			p.Del = []pdf.Name{"XFA"}
+		}
+		return []pdfedit.Patch{p}
 	}
 	root, ok := d.r.Trailer().Get("Root").Ref()
 	if !ok {
-		return pdfedit.Patch{}, false
+		return nil
 	}
 	var entries []pdf.Entry
-	for k, v := range d.dict(af).All() {
+	for k, v := range form.All() {
 		if k != "XFA" {
 			entries = append(entries, pdf.Entry{Key: k, Val: v})
 		}
 	}
-	return pdfedit.Patch{Ref: root, Set: []pdf.Entry{{Key: "AcroForm", Val: pdf.NewDict(entries...).Object()}}}, true
+	entries = append(entries, set...)
+	return []pdfedit.Patch{{Ref: root, Set: []pdf.Entry{{Key: "AcroForm", Val: pdf.NewDict(entries...).Object()}}}}
 }
