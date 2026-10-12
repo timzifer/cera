@@ -50,7 +50,8 @@ var ErrNoUpdate = errors.New("cera: the document cannot be updated incrementally
 // needs the permission to modify it or to assemble it, writing form values
 // the permission to fill in forms, to annotate or to modify, adding
 // annotations the permission to annotate or to modify, and flattening,
-// which changes the content of pages, the permission to modify.
+// which changes the content of pages, and setting metadata the permission
+// to modify.
 var ErrNotPermitted = errors.New("cera: the document's permissions do not allow the change")
 
 // EditPage selects a page to import.
@@ -84,6 +85,9 @@ type Editor struct {
 	// unguarded writes what a certification or a signature's lock does
 	// not allow, for tests of how such changes are found.
 	unguarded bool
+	// meta is the metadata of the result, by SetMetadata; nil to leave
+	// what the edited document has.
+	meta *Metadata
 }
 
 // editPage is one page of the result: page index of src, turned by rotate
@@ -210,7 +214,7 @@ func (e *Editor) Update(w io.Writer) (err error) {
 	if e.base == nil {
 		return fmt.Errorf("%w: %v", ErrNoUpdate, pdfedit.ErrNoBase)
 	}
-	if sg := e.base.signing(); !e.unguarded && (sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated()) ||
+	if sg := e.base.signing(); !e.unguarded && (sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated() || e.meta != nil) ||
 		sg.mdp == 2 && (e.pagesChanged() || e.annotated()) || sg.mdp == 3 && e.pagesChanged() ||
 		sg.mdp != 0 && e.flattens()) {
 		return ErrCertified
@@ -220,7 +224,7 @@ func (e *Editor) Update(w io.Writer) (err error) {
 		if e.pagesChanged() && perm&(pdf.PermModify|pdf.PermAssemble) == 0 ||
 			len(e.fields) > 0 && perm&(pdf.PermFillForms|pdf.PermAnnotate|pdf.PermModify) == 0 ||
 			e.annotated() && perm&(pdf.PermAnnotate|pdf.PermModify) == 0 ||
-			e.flattens() && perm&pdf.PermModify == 0 {
+			(e.flattens() || e.meta != nil) && perm&pdf.PermModify == 0 {
 			return ErrNotPermitted
 		}
 	}
@@ -258,6 +262,9 @@ func (e *Editor) plan() pdfedit.Doc {
 		if p, ok := e.labelPatch(); ok {
 			doc.Patches = append(doc.Patches, p)
 		}
+	}
+	if e.meta != nil {
+		e.metaPatches(&doc)
 	}
 	e.gen.finish()
 	return doc

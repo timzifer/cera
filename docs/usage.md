@@ -371,6 +371,20 @@ The file of a FileAttachment annotation is `Annotation.File` on its page.
 A document may encrypt its attachments alone: it opens without the
 password, and `Open` returns `ErrPassword` until it is given.
 
+`Editor.SetMetadata` writes one back, into `/Info` and into the XMP packet
+so that both agree — the properties that mirror `/Info` are changed in
+the packet the document has, the rest of it stays, and a document without
+a packet gets one:
+
+```go
+m := doc.Metadata()
+m.Title, m.Modified = "Annual report", time.Now()
+err = e.SetMetadata(m)
+```
+
+`Save` and `Update` set no date or producer on their own: the same edit
+gives the same file.
+
 ## Editing
 
 An `Editor` (ADR 0013) records changes to a document, or puts a new one

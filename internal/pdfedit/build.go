@@ -35,6 +35,12 @@ type Doc struct {
 	// ones, in its space; patches and they refer to them by NewRef.
 	Patches []Patch
 	Objects []pdf.Object
+	// Info, when not zero, is the document information dictionary of the
+	// result, of direct values, in place of the edited document's or the
+	// first source's. XMP, when not nil, is its XMP packet, the catalogue's
+	// /Metadata stream; the edited document's is changed by a patch.
+	Info pdf.Dict
+	XMP  []byte
 }
 
 // MayAssemble reports whether the permissions of d allow reassembling it
@@ -350,7 +356,9 @@ func (b *builder) build() error {
 	// source's.
 	x := b.sources[0]
 	info := x.d.Trailer().Get("Info")
-	if r, ok := info.Ref(); ok {
+	if !b.doc.Info.IsZero() {
+		b.info = b.w.Add(b.doc.Info.Object())
+	} else if r, ok := info.Ref(); ok {
 		b.info = x.ref(r)
 	} else if info.Kind() == pdf.KindDict {
 		b.info = b.w.Add(x.im.Map(info))
@@ -538,6 +546,13 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 	}
 	if oc := b.ocProperties(); !oc.IsNull() {
 		entries = append(entries, pdf.Entry{Key: "OCProperties", Val: oc})
+	}
+	if b.doc.XMP != nil {
+		meta := b.w.Add(pdf.NewStream(pdf.NewDict(
+			pdf.Entry{Key: "Type", Val: pdf.Name("Metadata").Object()},
+			pdf.Entry{Key: "Subtype", Val: pdf.Name("XML").Object()},
+		), b.doc.XMP).Object())
+		entries = append(entries, pdf.Entry{Key: "Metadata", Val: meta.Object()})
 	}
 	if !b.form.IsNull() {
 		entries = append(entries, pdf.Entry{Key: "AcroForm", Val: b.form})
@@ -752,7 +767,9 @@ func (b *builder) buildPatches() error {
 		return ErrRepaired
 	}
 	b.catalog = pdfwrite.Ref(r.Num)
-	if info, ok := x.d.Trailer().Get("Info").Ref(); ok {
+	if !b.doc.Info.IsZero() {
+		b.info = b.w.Add(b.doc.Info.Object())
+	} else if info, ok := x.d.Trailer().Get("Info").Ref(); ok {
 		b.info = x.ref(info)
 	}
 	x.setPatched()
