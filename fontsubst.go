@@ -61,7 +61,10 @@ type FontRequest struct {
 
 // OpenOptions are the options of OpenWith.
 type OpenOptions struct {
-	// Password opens an encrypted document.
+	// Password opens an encrypted document: its user password, or the
+	// owner password, which lifts the restrictions of
+	// [Document.Permissions]. The empty password is tried when none is
+	// given; [ErrPassword] says that the document needs another.
 	Password string
 	// Fonts supplies programs for fonts the document does not embed; nil
 	// for the built-in stand-ins only.

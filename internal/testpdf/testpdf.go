@@ -217,6 +217,10 @@ func Encrypted(password string, perm int32) []byte {
 	return EncryptedWith("rc4", password, perm)
 }
 
+// OwnerPassword is the owner password of the documents of Encrypted and
+// of EncryptedWith with the methods "rc4" and "aes128".
+const OwnerPassword = "owner"
+
 // EncryptedWith builds the two-page document of Encrypted, with a text
 // field "secret" on its first page, encrypted under the user password
 // with the permissions perm and method: "rc4" (128-bit RC4, /V 2 /R 3),
@@ -240,8 +244,20 @@ func EncryptedWith(method, password string, perm int32) []byte {
 			" /CF <</StdCF <</CFM /AESV3 /Length 32 /AuthEvent /DocOpen>>>> /StmF /StdCF /StrF /StdCF>>",
 			perm, hex(bytes.Repeat([]byte("O"), 48)), hex(make([]byte, 32)), hex(u), hex(ue))
 	default:
-		owner := bytes.Repeat([]byte("O"), 32)
 		padded := append([]byte(password), pad...)[:32]
+		// Algorithm 3: /O, the user password under the owner's.
+		ok := md5.Sum(append([]byte(OwnerPassword), pad...)[:32])
+		for range 50 {
+			ok = md5.Sum(ok[:])
+		}
+		owner := rc4Bytes(ok[:], padded)
+		for i := 1; i <= 19; i++ {
+			k := slices.Clone(ok[:])
+			for j := range k {
+				k[j] ^= byte(i)
+			}
+			owner = rc4Bytes(k, owner)
+		}
 		// Algorithm 2: the file key.
 		h := md5.New()
 		h.Write(padded)
