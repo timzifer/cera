@@ -14,7 +14,10 @@ import (
 // sets a state on it, a highlight, an ink annotation, a polygon, a line,
 // a free text with a callout, a stamp, and a link and a widget, which are
 // no markup annotations.
-func markupFile() []byte {
+func markupFile() []byte { return markupFileWith("") }
+
+// markupFileWith is markupFile with more entries in its ink annotation.
+func markupFileWith(ink string) []byte {
 	return testpdf.File{
 		Objs: map[int]string{
 			1: "<</Type /Catalog /Pages 2 0 R>>",
@@ -26,7 +29,7 @@ func markupFile() []byte {
 			11: "<</Type /Annot /Subtype /Popup /Rect [40 100 140 170] /Parent 10 0 R /Open true>>",
 			12: "<</Type /Annot /Subtype /Text /Rect [10 150 30 170] /Contents (Accepted) /T (Bob) /IRT 10 0 R /State (Accepted) /StateModel (Review) /F 2>>",
 			13: "<</Type /Annot /Subtype /Highlight /Rect [50 20 150 40] /QuadPoints [50 40 150 40 50 20 150 20] /C [1 1 0] /Popup 11 0 R>>",
-			14: "<</Type /Annot /Subtype /Ink /Rect [0 0 100 100] /InkList [[10 10 20 30 40 20] [50 50 60 60] []] /BS <</W 3>> /C [0 0 1]>>",
+			14: "<</Type /Annot /Subtype /Ink " + ink + " /Rect [0 0 100 100] /InkList [[10 10 20 30 40 20] [50 50 60 60] []] /BS <</W 3>> /C [0 0 1]>>",
 			15: "<</Type /Annot /Subtype /Polygon /Rect [0 0 100 100] /Vertices [10 10 90 10 50 80] /IC [0 1 0] /BS <</W 2 /S /D /D [4 2]>> /IT /PolygonCloud>>",
 			16: "<</Type /Annot /Subtype /Line /Rect [0 0 200 100] /L [10 20 190 80] /LE [/OpenArrow /Circle] /Border [0 0 0.5]>>",
 			17: "<</Type /Annot /Subtype /FreeText /Rect [100 100 200 150] /Contents (Text) /DA (/Helv 12 Tf 1 0 0 rg) /Q 1" +

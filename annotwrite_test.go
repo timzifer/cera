@@ -56,7 +56,8 @@ func TestAddHighlight(t *testing.T) {
 			d := editOpen(t, out)
 			sp, _ := d.Page(0)
 			as := sp.Annotations()
-			if len(as) != 3 || as[0].Subtype != "Highlight" || as[1].Subtype != "Popup" || as[2].Subtype != "Underline" {
+			// New annotations in the order added, their popups after them.
+			if len(as) != 3 || as[0].Subtype != "Highlight" || as[1].Subtype != "Underline" || as[2].Subtype != "Popup" {
 				t.Fatalf("rotate %s, %s: annotations %+v", rot, name, as)
 			}
 			h := &as[0]

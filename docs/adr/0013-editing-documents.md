@@ -45,6 +45,7 @@ e.DeletePages(3, 4)
 e.MovePage(from, to)
 e.RotatePage(i, 90)
 e.SetFields(state)        // state from d.Form().NewState() (#92)
+e.AddAnnotation(i, a)     // and SetAnnotation, RemoveAnnotation (#125)
 
 e.Save(w)                 // the whole file, new
 e.Update(w)               // d's bytes and the changes appended (#91)

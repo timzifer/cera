@@ -76,6 +76,9 @@ type Editor struct {
 	// gen names the fonts of the appearances being written, while plan
 	// puts the result together.
 	gen *editFonts
+	// noAppearance leaves the appearance streams of annotations out, for
+	// tests that compare them with what the renderer draws without.
+	noAppearance bool
 }
 
 // editPage is one page of the result: page index of src, turned by rotate
@@ -86,8 +89,8 @@ type editPage struct {
 	rotate int
 	own    bool
 	fields bool
-	// highlights are added to an own page, by AddHighlight.
-	highlights []Highlight
+	// annots are the changes to the annotations of an own page.
+	annots *annotEdits
 }
 
 // Edit returns an editor of d with all its pages.
@@ -235,10 +238,20 @@ func (e *Editor) plan() pdfedit.Doc {
 	for i, p := range e.pages {
 		doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own, Fields: p.fields}
 	}
-	doc.Patches, doc.Objects = e.fieldPatches()
+	// Object 0 is Helvetica, written only when an appearance uses it.
+	doc.Objects = []pdf.Object{pdf.NewDict(
+		pdf.Entry{Key: "Type", Val: pdf.Name("Font").Object()},
+		pdf.Entry{Key: "Subtype", Val: pdf.Name("Type1").Object()},
+		pdf.Entry{Key: "BaseFont", Val: pdf.Name("Helvetica").Object()},
+		pdf.Entry{Key: "Encoding", Val: pdf.Name("WinAnsiEncoding").Object()},
+	).Object()}
+	e.gen = &editFonts{objs: &doc.Objects}
+	defer func() { e.gen = nil }()
+	doc.Patches = e.fieldPatches(&doc.Objects)
 	if e.base != nil {
-		doc.Patches = e.highlightPatches(doc.Patches, &doc.Objects)
+		doc.Patches = e.annotPatches(doc.Patches, &doc.Objects)
 	}
+	e.gen.finish()
 	return doc
 }
 

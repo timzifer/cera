@@ -303,6 +303,8 @@ err = e.SetFields(state) // values of doc.Form().NewState() the user changed
 err = e.Flatten()        // draw the form into the pages and drop it
 err = e.FlattenAnnotations() // and the other annotations
 err = e.AddHighlight(i, cera.Highlight{Quads: text.Quads(sel), Note: "check"})
+k, err := e.AddAnnotation(i, cera.NewAnnotation{Subtype: "Text", Contents: "A note",
+	Markup: cera.Markup{Bounds: cera.Rect{X0: 40, Y0: 40, X1: 60, Y1: 60}, Author: "Ada"}})
 err = e.Save(w)          // a new file
 err = e.Update(w)        // the file as it was, and an incremental update
 ```
@@ -372,6 +374,34 @@ user space and an appearance stream (a highlight multiplies with the page
 below it), so every viewer shows it alike; a `Note` goes into `/Contents`
 with a closed popup. The highlight stays with its page when the page
 moves, and goes when it is deleted.
+
+`AddAnnotation` does the same for the other annotations a user comments
+with: notes (`Text`), `FreeText`, `Ink`, `Square`, `Circle`, `Line`,
+`Polygon`, `PolyLine`, `Caret`, the standard stamps and links. A
+`NewAnnotation` is a type, a text and a `Markup`, the struct
+`Annotation.Markup` reads: geometry in points of the displayed page,
+colours, border, author and dates, the popup, what it replies to. The
+appearance stream is what cera draws for the annotation without one, so
+every viewer shows it alike; on a turned page text, stamps and icons stay
+upright. It returns the index of the annotation, for a reply to it or to
+change it again.
+
+`SetAnnotation` changes an annotation of the document and
+`RemoveAnnotation` removes one with its popup and its replies:
+
+```go
+a, _ := page.EditAnnotation(index) // as it is
+a.Contents, a.Color = "Done", []float64{0, 0.6, 0}
+err = e.SetAnnotation(i, index, a)
+err = e.RemoveAnnotation(i, other)
+```
+
+What `SetAnnotation` does not describe stays in the annotation; its
+appearance is made anew. Changes to annotations need the permission to
+annotate or to modify, and a certification with DocMDP permissions 1 or 2
+refuses them (`ErrCertified`); a signature's lock covers fields, not
+annotations. A flatten in the same editor draws the document's annotations
+as they were and leaves added ones alone: write the changes first.
 
 Signatures are not checked, but what they declare is kept: a signed
 document is not saved as a new file (`ErrSigned`, use `Update`), a field a
