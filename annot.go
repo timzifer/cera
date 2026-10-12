@@ -62,6 +62,12 @@ type LinkTarget struct {
 	// Named is the name of a named destination, which Page, Fit and
 	// Params resolve when the document defines it.
 	Named string
+	// External reports a link out of the document: to another PDF file
+	// (/GoToR), where Page, Fit, Params and Named are in that file, or to
+	// a file or application (/Launch). File names it. cera follows
+	// neither, and a viewer should ask before it does.
+	External bool
+	File     string
 }
 
 // AnnotMode selects the annotations a render draws.
@@ -167,8 +173,50 @@ func (d *Document) linkTarget(ad pdf.Dict) *LinkTarget {
 		return &LinkTarget{URI: string(b), Page: -1}
 	case "GoTo":
 		return d.destination(act.Get("D"))
+	case "GoToR":
+		t := &LinkTarget{Page: -1, External: true, File: d.fileSpec(act.Get("F"))}
+		switch o := d.resolve(act.Get("D")); o.Kind() {
+		case pdf.KindName:
+			n, _ := o.Name()
+			t.Named = string(n)
+		case pdf.KindString:
+			t.Named = textString(o)
+		case pdf.KindArray:
+			// The page is a number in the other file, not a page of this
+			// document.
+			a, _ := o.Array()
+			if len(a) > 0 {
+				if n, ok := d.integer(a[0]); ok && n >= 0 {
+					t.Page = n
+				}
+				view := &LinkTarget{}
+				d.explicitDest(view, append(pdf.Array{pdf.Null}, a[1:]...))
+				t.Fit, t.Params = view.Fit, view.Params
+			}
+		}
+		return t
+	case "Launch":
+		f := act.Get("F")
+		if f.IsNull() {
+			// /Win, /Mac, /Unix: the file of a platform.
+			f = d.dict(act.Get("Win")).Get("F")
+		}
+		return &LinkTarget{Page: -1, External: true, File: d.fileSpec(f)}
 	}
 	return nil
+}
+
+// fileSpec returns the file name of a file specification: a string, or a
+// dictionary with /UF or /F.
+func (d *Document) fileSpec(o pdf.Object) string {
+	o = d.resolve(o)
+	if fd, ok := o.Dict(); ok {
+		if s := textString(d.resolve(fd.Get("UF"))); s != "" {
+			return s
+		}
+		o = d.resolve(fd.Get("F"))
+	}
+	return textString(o)
 }
 
 // destination reads an explicit or named destination.

@@ -133,6 +133,8 @@ type searchCache struct {
 	joined     joinedText
 	once       [4]sync.Once
 	norm       [4]normText
+	urlsOnce   sync.Once
+	urls       []Link
 }
 
 // joinedText is the text of a page with the words broken across lines

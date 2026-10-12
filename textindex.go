@@ -41,6 +41,10 @@ type indexPage struct {
 	text  *PageText
 	err   error
 	elem  *list.Element
+
+	page      *Page // set by layout
+	linksOnce sync.Once
+	links     []Link
 }
 
 // NewTextIndex returns an index of the text of d, laid out with opt, that
@@ -93,6 +97,7 @@ func (x *TextIndex) Page(ctx context.Context, i int) (*PageText, error) {
 func (x *TextIndex) layout(ctx context.Context, e *indexPage) {
 	defer close(e.ready)
 	p, err := x.doc.Page(e.index)
+	e.page = p
 	if err == nil {
 		e.text, err = p.TextWith(ctx, x.opt)
 	}
