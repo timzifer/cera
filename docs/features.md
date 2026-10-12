@@ -96,7 +96,10 @@ Fonts a file does not embed:
 - Drawn from normal appearance streams (`/AS`, `/CA`, `NoZoom`, `NoRotate`, `/OC`)
 - Appearance generated when missing: Square, Circle, Line (endings, leader
   lines), PolyLine, Polygon, Ink, Highlight, Underline, StrikeOut, Squiggly
-- `Page.Annotations` with link targets
+- `Page.Annotations` with link targets and, for markup annotations,
+  `Markup`: author, subject, dates, rich text, colours, opacity, border,
+  geometry in displayed points (quads, ink strokes, vertices, line and its
+  endings, callout), popup, reply thread and review state, icon
 - `Document.Outline`: the bookmarks as a tree, with titles, style, open
   state and targets (destinations, GoTo, URI, GoToR and Launch actions,
   structure elements)
