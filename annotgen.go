@@ -95,14 +95,13 @@ func endingSize(w float64) float64 { return 6 * max(w, 1) }
 
 // annotPad is how far a generated appearance may reach beyond the
 // annotation's rectangle.
-func (in *interp) annotPad(a *Annotation) float64 {
-	w, _ := in.doc.border(a.dict)
+func (d *Document) annotPad(a *Annotation) float64 {
+	w, _ := d.border(a.dict)
 	return endingSize(w) + w + 1
 }
 
-// generate appends the appearance of a to b.
-func (in *interp) generate(b []byte, a *Annotation) []byte {
-	d := in.doc
+// generateAnnot appends the appearance of a to b.
+func (d *Document) generateAnnot(b []byte, a *Annotation) []byte {
 	ad := a.dict
 	w := csw(b)
 	bw, dash := d.border(ad)
@@ -188,7 +187,7 @@ func (in *interp) generate(b []byte, a *Annotation) []byte {
 		w.moveTo(x1, y1)
 		w.lineTo(x2, y2)
 		paint(false)
-		in.endings(&w, ad, [][2]float64{{x1, y1}, {x2, y2}}, bw, paint)
+		d.endings(&w, ad, [][2]float64{{x1, y1}, {x2, y2}}, bw, paint)
 
 	case "PolyLine", "Polygon":
 		v := d.floats(ad.Get("Vertices"))
@@ -205,7 +204,7 @@ func (in *interp) generate(b []byte, a *Annotation) []byte {
 			paint(true)
 		} else {
 			paint(false)
-			in.endings(&w, ad, pts, bw, paint)
+			d.endings(&w, ad, pts, bw, paint)
 		}
 
 	case "Ink":
@@ -316,8 +315,8 @@ func markup(w *csw, kind string, q []float64) {
 }
 
 // endings draws the line endings (/LE) at the ends of the polyline pts.
-func (in *interp) endings(w *csw, ad pdf.Dict, pts [][2]float64, bw float64, paint func(closed bool)) {
-	le, _ := in.doc.resolve(ad.Get("LE")).Array()
+func (d *Document) endings(w *csw, ad pdf.Dict, pts [][2]float64, bw float64, paint func(closed bool)) {
+	le, _ := d.resolve(ad.Get("LE")).Array()
 	if len(le) != 2 || len(pts) < 2 {
 		return
 	}
@@ -328,7 +327,7 @@ func (in *interp) endings(w *csw, ad pdf.Dict, pts [][2]float64, bw float64, pai
 	}
 	size := endingSize(bw)
 	for i, e := range ends {
-		kind, _ := in.doc.name(le[i])
+		kind, _ := d.name(le[i])
 		ux, uy := unit(e[2], e[3]) // outward
 		if ux == 0 && uy == 0 {
 			continue

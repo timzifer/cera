@@ -126,6 +126,10 @@ func (e *Editor) fieldPatches() ([]pdfedit.Patch, []pdf.Object) {
 			out = append(out, p)
 		}
 	}
+	if e.flattenAnnots {
+		// The form stays, with the values written.
+		out = append(out, e.flattenPatches(&objs)...)
+	}
 	return out, objs
 }
 

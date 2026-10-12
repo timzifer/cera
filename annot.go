@@ -432,22 +432,7 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 	}
 	defer in.setOC(0)
 
-	// NoZoom keeps the size of the annotation and NoRotate its
-	// orientation on screen, both about its upper-left corner.
-	m := identity
-	if a.Flags&(AnnotNoZoom|AnnotNoRotate) != 0 {
-		x, y := a.Rect.X0, a.Rect.Y1
-		m = Matrix{1, 0, 0, 1, -x, -y}
-		if a.Flags&AnnotNoZoom != 0 {
-			m = m.Mul(Matrix{1 / scale, 0, 0, 1 / scale, 0, 0})
-		}
-		if a.Flags&AnnotNoRotate != 0 && p.Rotate != 0 {
-			s, c := math.Sincos(float64(p.Rotate) * math.Pi / 180)
-			m = m.Mul(Matrix{c, s, -s, c, 0, 0})
-		}
-		m = m.Mul(Matrix{1, 0, 0, 1, x, y})
-	}
-	ctm := m.Mul(base)
+	ctm := flagMatrix(a, p.Rotate, scale).Mul(base)
 
 	in.initState(ctm)
 	in.base = ctm
@@ -462,7 +447,7 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 	grouped := g.Alpha != 255 || g.Blend != BlendNormal
 	box := a.Rect
 	if gen && w == nil {
-		pad := in.annotPad(a)
+		pad := doc.annotPad(a)
 		box = Rect{box.X0 - pad, box.Y0 - pad, box.X1 + pad, box.Y1 + pad}
 	}
 	if grouped {
@@ -478,7 +463,7 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 		in.annotBuf, res = in.generateWidget(in.annotBuf[:0], w, wv)
 		in.exec(in.annotBuf, res, 1)
 	case gen:
-		in.annotBuf = in.generate(in.annotBuf[:0], a)
+		in.annotBuf = doc.generateAnnot(in.annotBuf[:0], a)
 		in.exec(in.annotBuf, pdf.Dict{}, 1)
 	default:
 		in.gs.ctm = appearanceMatrix(doc, ap, a.Rect).Mul(ctm)
@@ -490,6 +475,25 @@ func (in *interp) annotation(p *Page, a *Annotation, base Matrix, scale float64)
 	if grouped {
 		in.dev.EndGroup()
 	}
+}
+
+// flagMatrix places a on a page turned by rotate degrees and shown at
+// scale: NoZoom keeps the size of the annotation and NoRotate its
+// orientation on screen, both about its upper-left corner.
+func flagMatrix(a *Annotation, rotate int, scale float64) Matrix {
+	if a.Flags&(AnnotNoZoom|AnnotNoRotate) == 0 {
+		return identity
+	}
+	x, y := a.Rect.X0, a.Rect.Y1
+	m := Matrix{1, 0, 0, 1, -x, -y}
+	if a.Flags&AnnotNoZoom != 0 {
+		m = m.Mul(Matrix{1 / scale, 0, 0, 1 / scale, 0, 0})
+	}
+	if a.Flags&AnnotNoRotate != 0 && rotate != 0 {
+		s, c := math.Sincos(float64(rotate) * math.Pi / 180)
+		m = m.Mul(Matrix{c, s, -s, c, 0, 0})
+	}
+	return m.Mul(Matrix{1, 0, 0, 1, x, y})
 }
 
 // appearanceMatrix returns the matrix A of PDF 2.0, 12.5.5, which maps
