@@ -83,6 +83,9 @@ type Form struct {
 	pages  map[int][]*Widget // widgets by page, in /Annots order
 	byAnn  map[annotPlace]*Widget
 	dr     pdf.Dict // default resources
+	// calc are the fields that calculate their value, in the order they
+	// are calculated in (/CO, then the others in form order).
+	calc []*Field
 }
 
 // Option is an entry of a choice field: the value exported and the text
@@ -113,14 +116,21 @@ type Field struct {
 	TopIndex int
 	// HasActions reports JavaScript or other additional actions (/AA)
 	// on the field or its widgets (format, keystroke, validate,
-	// calculate). cera does not run them: computed fields do not update.
+	// calculate) that cera does not run: what they compute does not
+	// update. It is false for a Computed field.
 	HasActions bool
-	Widgets    []*Widget
+	// Computed reports a field whose scripts cera does without running
+	// them, because each is a call of one of the functions Acrobat's form
+	// editor writes: the field is formatted ([Field.Format]), validated
+	// and calculated by [FormState.SetValue] as they say.
+	Computed bool
+	Widgets  []*Widget
 
-	form *Form
-	da   string  // the inherited /DA
-	q    int     // the inherited /Q
-	ref  pdf.Ref // the terminal field node, where /V is written; zero if direct
+	scripts fieldScripts
+	form    *Form
+	da      string  // the inherited /DA
+	q       int     // the inherited /Q
+	ref     pdf.Ref // the terminal field node, where /V is written; zero if direct
 }
 
 // Widget is a widget annotation of a field: where and how the field is
@@ -245,6 +255,8 @@ type inherited struct {
 	opt    pdf.Object
 	ti     int
 	aa     bool
+	// aaAbove: a node above the one being read has /AA.
+	aaAbove bool
 }
 
 // formReader reads the field tree.
@@ -287,6 +299,25 @@ func (d *Document) readForm() *Form {
 	}
 	for _, ws := range f.pages {
 		slices.SortFunc(ws, func(a, b *Widget) int { return a.Annotation - b.Annotation })
+	}
+	// The order of calculation.
+	byRef := map[pdf.Ref]*Field{}
+	for _, g := range f.Fields {
+		if g.scripts.calc != nil && g.ref != (pdf.Ref{}) {
+			byRef[g.ref] = g
+		}
+	}
+	co, _ := d.resolve(af.Get("CO")).Array()
+	for _, o := range co {
+		if ref, ok := o.Ref(); ok && byRef[ref] != nil {
+			f.calc = append(f.calc, byRef[ref])
+			delete(byRef, ref)
+		}
+	}
+	for _, g := range f.Fields {
+		if g.scripts.calc != nil && !slices.Contains(f.calc, g) {
+			f.calc = append(f.calc, g)
+		}
 	}
 	return f
 }
@@ -360,6 +391,7 @@ func (fr *formReader) walk(o pdf.Object, parent string, inh inherited, depth int
 	if v, ok := d.integer(node.Get("TI")); ok {
 		inh.ti = v
 	}
+	inh.aaAbove = inh.aa
 	if !d.dict(node.Get("AA")).IsZero() {
 		inh.aa = true
 	}
@@ -436,6 +468,12 @@ func (fr *formReader) field(node pdf.Dict, ref pdf.Ref, name string, inh inherit
 		return // not a field cera knows
 	}
 	f.Options = fr.options(inh.opt)
+	// The scripts of the field: done by cera when each is a call it
+	// knows, and nothing above the field or on its widgets acts too.
+	scripts, has, all := d.readScripts(d.dict(node.Get("AA")))
+	if has && all && !inh.aaAbove {
+		f.scripts, f.Computed, f.HasActions = scripts, true, false
+	}
 
 	for _, o := range widgets {
 		ref, ok := o.Ref()
@@ -451,8 +489,10 @@ func (fr *formReader) field(node pdf.Dict, ref pdf.Ref, name string, inh inherit
 			continue
 		}
 		w.ref = ref
-		if !d.dict(w.dict.Get("AA")).IsZero() {
-			f.HasActions = true
+		// A widget that is the field's own node has the field's scripts;
+		// actions of the widget itself are those of the mouse and focus.
+		if _, has, all := d.readScripts(d.dict(w.dict.Get("AA"))); has && !all {
+			f.HasActions, f.Computed, f.scripts = true, false, fieldScripts{}
 		}
 		f.Widgets = append(f.Widgets, w)
 		if _, dup := fr.f.byAnn[pl]; !dup {

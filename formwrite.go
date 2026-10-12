@@ -45,8 +45,10 @@ import (
 //
 // It returns [ErrCertified] for a document whose certification allows no
 // change, and [ErrLocked] for a field a signature locks. Writing values
-// removes an XFA form (/XFA), which would show the old ones. Calculated
-// and formatted fields ([Field.HasActions]) are not computed again: cera
+// removes an XFA form (/XFA), which would show the old ones. Fields
+// calculated and formatted by scripts cera recognises ([Field.Computed])
+// are written as the state calculated them, shown in their format; those
+// with other scripts ([Field.HasActions]) are not computed again: cera
 // runs no JavaScript. See [Editor.MissingGlyphs] for values with
 // characters that cannot be drawn.
 func (e *Editor) SetFields(state *FormState) error {

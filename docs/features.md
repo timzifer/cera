@@ -138,6 +138,11 @@ Fonts a file does not embed:
 - Native widgets through `FormWidgetProvider` and `FormLayer` (tab order,
   focus); fyne provider in [`form/fyneform`](../form/fyneform)
 - `cmd/cera -field name=value` fills a form
+- Format, validation and calculation without JavaScript where a field's
+  scripts are calls of Acrobat's form functions (`AFNumber_Format`,
+  `AFPercent_Format`, `AFDate_FormatEx`, `AFTime_Format`,
+  `AFSpecial_Format`, `AFRange_Validate`, `AFSimple_Calculate`):
+  `Field.Computed`, `Field.Format`, recalculation in `FormState.SetValue`
 - Not run: JavaScript. XFA: drawn from the AcroForm fallback, counted as `xfa`
 
 ### Metadata

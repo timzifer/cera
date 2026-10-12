@@ -132,6 +132,9 @@ func (s *FormState) SetValue(f *Field, v Value) error {
 	if err != nil {
 		return err
 	}
+	if err := f.valid(v); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	old := s.value(f)
 	if old.Equal(v) {
@@ -145,12 +148,38 @@ func (s *FormState) SetValue(f *Field, v Value) error {
 		}
 	}
 	s.vals[f] = v
+	changed := append([]*Field{f}, s.recalculate()...)
 	subs := s.subscribers()
 	s.mu.Unlock()
-	for _, fn := range subs {
-		fn(f)
+	for _, g := range changed {
+		for _, fn := range subs {
+			fn(g)
+		}
 	}
 	return nil
+}
+
+// recalculate gives the fields that calculate their value the value their
+// calculation has now, once each in the order the form calculates in, and
+// returns those that changed. A field calculated from one calculated
+// later keeps what that one had before, as in Acrobat: a cycle ends there.
+// Read-only fields are calculated too: the calculation is the document's.
+// The caller holds s.mu.
+func (s *FormState) recalculate() []*Field {
+	var changed []*Field
+	for _, f := range s.form.calc {
+		v, ok := f.calculate(s.value)
+		if !ok || s.value(f).Equal(v) {
+			continue
+		}
+		if v.Equal(f.Saved) {
+			delete(s.vals, f)
+		} else {
+			s.vals[f] = v
+		}
+		changed = append(changed, f)
+	}
+	return changed
 }
 
 // check validates v for f and returns it in its canonical form.
@@ -228,6 +257,11 @@ func (s *FormState) Reset() {
 			delete(s.vals, f)
 		} else {
 			s.vals[f] = f.Default
+		}
+	}
+	for _, f := range s.recalculate() {
+		if !slices.Contains(changed, f) {
+			changed = append(changed, f)
 		}
 	}
 	subs := s.subscribers()

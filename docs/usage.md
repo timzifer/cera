@@ -149,6 +149,9 @@ its own so that cera stays free of toolkits and cgo:
 form := doc.Form() // nil without /AcroForm
 state := form.NewState()
 err = state.SetValue(form.Field("address.street"), cera.TextValue("Main St 1"))
+// A field with Computed set is formatted, validated and calculated as its
+// scripts say: SetValue refuses a number out of range (ErrInvalidValue)
+// and recalculates the totals; f.Format(state.Value(f)) is what it shows.
 
 layer := cera.NewFormLayer(page, state, provider)
 layer.Update(cera.View{Scale: scale, Viewport: visible})

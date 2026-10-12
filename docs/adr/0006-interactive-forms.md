@@ -246,7 +246,20 @@ follow the same pattern.
 - **JavaScript** (`/AA`, format, keystroke, validate, calculate actions):
   not executed. Fields with calculate or format actions are still editable;
   computed fields do not update. Exposed as `Field.HasActions` so a viewer
-  can warn.
+  can warn. Since #131 the scripts Acrobat's form editor writes are done
+  without running them (`formscript.go`): a script that is one call of
+  `AFNumber_Format`, `AFPercent_Format`, `AFDate_Format(Ex)`,
+  `AFTime_Format`, `AFSpecial_Format`, `AFRange_Validate` or
+  `AFSimple_Calculate` with literal arguments is parsed, and the field is
+  `Computed` when all its scripts are such (keystroke scripts count: what
+  may be typed is the toolkit's). `FormState.SetValue` refuses a number
+  out of range and recalculates, once each in the order of `/CO` — a
+  field calculated from one that comes later sees its old value, as in
+  Acrobat, so a cycle ends. The value stays what was entered; the format
+  is how it is shown (`Field.Format`, generated and written appearances).
+  Formats follow Acrobat's, with English month and day names and numbers
+  rounded half away from zero. Any other script leaves the field with
+  `HasActions`.
 - **Saving**: writing a `FormState` back to a PDF (incremental update) or
   exporting FDF/XFDF needs a writer; separate ADR once go-pdfkit offers one.
   Until then `FormState` exposes the values for the application to export.
@@ -284,7 +297,7 @@ module `form/fyneform`. Where it refines the decision above:
   named after `/Ff` with their bit positions (`FfReadOnly`, `FfComb`,
   ...). Widgets are found through the pages' `/Annots`, not `/P`; a
   widget on no page is left out. `HasActions` is set by `/AA` on the
-  field, its ancestors or its widgets.
+  field, its ancestors or its widgets, unless the field is `Computed`.
 - **Values.** `TextValue`, `StateValue` and `ChoiceValue` build values. A
   text value given to a choice field selects the option of that export
   value or text; an editable combo box keeps other text. `SetValue`
