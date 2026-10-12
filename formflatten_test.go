@@ -96,7 +96,7 @@ func TestFlattenSigned(t *testing.T) {
 }
 
 // stackFile is a page whose annotations lie on one another, from the
-// bottom up: a highlight without an appearance, a translucent square with
+// bottom up: a translucent highlight without an appearance, a square with
 // one, an opaque black square over a part of the highlight, its popup, a
 // text field on the squares but not on the highlight, a line across the
 // field (with line), and apart from them a circle and a link. The field

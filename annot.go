@@ -467,8 +467,12 @@ func (in *interp) annotation(p *Page, a *Annotation, flags AnnotFlags, base Matr
 
 	in.initState(ctm)
 	in.base = ctm
+	// /CA is the opacity of an appearance cera makes. An appearance
+	// stream says how transparent it is itself: the entry is not used
+	// then (PDF 2.0, table 173), and writers that set both, as Acrobat
+	// does, would be applied twice.
 	alpha := 1.0
-	if v, ok := doc.num(a.dict.Get("CA")); ok {
+	if v, ok := doc.num(a.dict.Get("CA")); ok && gen {
 		alpha = clamp01(v)
 	}
 	g := Group{Isolated: true, Blend: BlendNormal, Alpha: unit8(alpha)}
