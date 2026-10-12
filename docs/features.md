@@ -124,6 +124,9 @@ Fonts a file does not embed:
   the files alone are encrypted, `/EFF`)
 - `Page.Rotated`: the page as a viewer shows it turned, with its own
   display list; text, links, annotations and editing follow the view
+- `Page.Boxes` and `Page.InBox`: MediaBox, CropBox, BleedBox, TrimBox and
+  ArtBox with their defaults, and the page showing another of them than
+  the CropBox, a view as `Rotated` makes one
 - `Document.PageLabel` and `PageByLabel`: page labels (roman, decimal,
   letters, prefixes), read leniently; the editor keeps them with their
   pages

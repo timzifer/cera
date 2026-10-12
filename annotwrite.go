@@ -59,6 +59,10 @@ type NewAnnotation struct {
 	// degrees: what [Page.Rotated] was called with for the page the user
 	// sees, 0 for the page as the file turns it. EditAnnotation sets it.
 	View int
+	// Box is the box of the view the geometry is given in, as
+	// [Page.InBox] shows it: BoxCrop for the page as the document shows
+	// it. EditAnnotation sets it.
+	Box PageBox
 	Markup
 }
 
@@ -74,7 +78,7 @@ func (p *Page) EditAnnotation(index int) (NewAnnotation, bool) {
 		if a.Index != index || !writable[a.Subtype] {
 			continue
 		}
-		out := NewAnnotation{Subtype: a.Subtype, Contents: a.Contents, Name: a.Name, Flags: a.Flags, View: p.turn}
+		out := NewAnnotation{Subtype: a.Subtype, Contents: a.Contents, Name: a.Name, Flags: a.Flags, View: p.turn, Box: p.box}
 		d := p.doc
 		m := p.DisplayMatrix()
 		shown := func(r Rect) Rect {
@@ -170,6 +174,9 @@ func (a NewAnnotation) checked(added bool) (NewAnnotation, error) {
 	}
 	if a.View%90 != 0 {
 		return a, fmt.Errorf("cera: the rotation %d of a view is not a multiple of 90", a.View)
+	}
+	if a.Box < 0 || a.Box >= numBoxes {
+		return a, fmt.Errorf("cera: no page box %d", a.Box)
 	}
 	if !(a.BorderWidth >= 0) || math.IsInf(a.BorderWidth, 0) {
 		return a, fmt.Errorf("cera: border width %g", a.BorderWidth)
@@ -526,9 +533,10 @@ type Highlight struct {
 	Author string
 	Name   string
 	Date   time.Time
-	// View is the rotation of the view the quads are given in, as for
-	// [NewAnnotation].
+	// View is the rotation and Box the box of the view the quads are
+	// given in, as for [NewAnnotation].
 	View int
+	Box  PageBox
 }
 
 // AddHighlight adds h to page i of the result, a page of the edited
@@ -543,7 +551,7 @@ func (e *Editor) AddHighlight(i int, h Highlight) error {
 		return fmt.Errorf("cera: unknown text markup %q", h.Kind)
 	}
 	_, err := e.AddAnnotation(i, NewAnnotation{
-		Subtype: h.Kind, Contents: h.Note, Name: h.Name, View: h.View,
+		Subtype: h.Kind, Contents: h.Note, Name: h.Name, View: h.View, Box: h.Box,
 		Markup: Markup{Quads: h.Quads, Color: h.Color, Opacity: h.Opacity, Author: h.Author, Created: h.Date, Modified: h.Date},
 	})
 	return err
@@ -777,7 +785,7 @@ func union(a, b Rect) Rect {
 // document that a changes, nil for a new one: then the entries are all it
 // has, else those to set and to remove.
 func (w *annotWriter) entries(a *NewAnnotation, old *Annotation) (set []pdf.Entry, del []pdf.Name, popup popupChange) {
-	view := w.page.Rotated(a.View)
+	view := w.page.InBox(a.Box).Rotated(a.View)
 	w.inv, _ = view.DisplayMatrix().Invert()
 	w.rotate = view.Rotate
 	name := func(s string) pdf.Object { return pdf.Name(s).Object() }

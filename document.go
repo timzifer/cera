@@ -196,8 +196,8 @@ type Page struct {
 	dict  pdf.Dict
 
 	// Box is the visible area in default user space: CropBox clipped to
-	// MediaBox. Its units are /UserUnit points; Size and DisplayMatrix
-	// apply it.
+	// MediaBox, or for a page made by InBox the box it shows. Its units
+	// are /UserUnit points; Size and DisplayMatrix apply it.
 	Box Rect
 	// Rotate is the clockwise display rotation: 0, 90, 180 or 270, the
 	// /Rotate of the page and what Rotated added to it. It is for
@@ -207,6 +207,8 @@ type Page struct {
 	Rotate int
 	// unit is /UserUnit (points per user-space unit), 1 by default.
 	unit float64
+	// boxes are the boxes of the page; see Boxes.
+	boxes PageBoxes
 
 	mu sync.Mutex
 	dl *displayList // cached by Render; see Release
@@ -220,12 +222,70 @@ type Page struct {
 	annots  []Annotation
 	annBad  int // unreadable entries of /Annots
 
-	// root is the page Rotated was called on, nil for that page itself,
-	// and turn what was added to its rotation. The root keeps its views,
-	// so that a view asked for again has its display list still.
+	// root is the page Rotated or InBox was called on, nil for that page
+	// itself, turn what was added to its rotation and box the box shown.
+	// The root keeps its views, so that a view asked for again has its
+	// display list still.
 	root  *Page
 	turn  int
-	views [3]*Page // turned by 90, 180 and 270; under mu
+	box   PageBox
+	views [numBoxes][4]*Page // by box and quarter turn, but for the page itself; under mu
+}
+
+// PageBox names one of the boxes of a page.
+type PageBox int
+
+const (
+	BoxCrop  PageBox = iota // what a viewer shows and a printer prints; the default
+	BoxMedia                // the medium the page is printed on, with all its marks
+	BoxBleed                // what is printed and then cut off around the trimmed page
+	BoxTrim                 // the finished page, after trimming
+	BoxArt                  // the content its author means, as for placing the page in another
+	numBoxes
+)
+
+// PageBoxes are the boxes of a page in default user space, as Box is,
+// each clipped to the MediaBox, with the defaults of the specification
+// for one the page does not have or has no area of within the MediaBox:
+// Crop is then Media, and Bleed, Trim and Art are Crop.
+type PageBoxes struct{ Media, Crop, Bleed, Trim, Art Rect }
+
+// Box returns the box b names, and Crop for none of them.
+func (b PageBoxes) Box(box PageBox) Rect {
+	switch box {
+	case BoxMedia:
+		return b.Media
+	case BoxBleed:
+		return b.Bleed
+	case BoxTrim:
+		return b.Trim
+	case BoxArt:
+		return b.Art
+	}
+	return b.Crop
+}
+
+// Boxes returns the boxes of the page. They are in default user space
+// whatever the page shows; [Page.DisplayMatrix] maps them to points of the
+// displayed page, where a viewer of print files outlines them.
+func (p *Page) Boxes() PageBoxes { return p.boxes }
+
+// InBox returns the page showing another of its boxes than the CropBox:
+// the MediaBox with the marks around a page for print, or the TrimBox for
+// a thumbnail of the finished page. It is a view of the page as
+// [Page.Rotated] makes one, with Box, Size, Bounds and DisplayMatrix of
+// that box; the two combine, in either order. Render draws what is inside
+// the box, and "points of the displayed page" have their origin at its
+// corner. InBox(BoxCrop) is the page as the document shows it.
+//
+// APIs that take a page number ask for the box as they do for the
+// rotation: [TextIndex.SetBox], [NewAnnotation.Box], [Highlight.Box].
+func (p *Page) InBox(box PageBox) *Page {
+	root, turn, _ := p.origin()
+	if box < 0 || box >= numBoxes {
+		box = BoxCrop
+	}
+	return root.view(box, turn)
 }
 
 // Rotated returns the page viewed turned by degrees more, clockwise: a
@@ -242,24 +302,38 @@ type Page struct {
 // matters: [Page.Destination], [TextIndex.SetRotation],
 // [NewAnnotation.View], [Highlight.View].
 func (p *Page) Rotated(degrees int) *Page {
-	root, turn := p, 0
-	if p.root != nil {
-		root, turn = p.root, p.turn
-	}
+	root, turn, box := p.origin()
 	q := int(math.Round(float64(degrees) / 90))
-	turn = ((turn+q*90)%360 + 360) % 360
-	if turn == 0 {
-		return root
+	return root.view(box, ((turn+q*90)%360+360)%360)
+}
+
+// origin returns the page p is a view of, p itself if it is none, and how
+// p views it.
+func (p *Page) origin() (root *Page, turn int, box PageBox) {
+	if p.root != nil {
+		return p.root, p.turn, p.box
 	}
-	root.mu.Lock()
-	defer root.mu.Unlock()
-	v := root.views[turn/90-1]
-	if v == nil {
-		v = &Page{doc: root.doc, index: root.index, dict: root.dict, Box: root.Box, unit: root.unit,
-			Rotate: (root.Rotate + turn) % 360, root: root, turn: turn}
-		root.views[turn/90-1] = v
+	return p, 0, BoxCrop
+}
+
+// view returns the view of p, a page that is no view, that shows box
+// turned by turn, one of 0, 90, 180 and 270.
+func (p *Page) view(box PageBox, turn int) *Page {
+	if box == BoxCrop && turn == 0 {
+		return p
 	}
-	return v
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	v := &p.views[box][turn/90]
+	if *v == nil {
+		shown := p.Box
+		if box != BoxCrop {
+			shown = p.boxes.Box(box)
+		}
+		*v = &Page{doc: p.doc, index: p.index, dict: p.dict, Box: shown, boxes: p.boxes, unit: p.unit,
+			Rotate: (p.Rotate + turn) % 360, root: p, turn: turn, box: box}
+	}
+	return *v
 }
 
 // Index returns the 0-based page number.
@@ -280,14 +354,20 @@ func (p *Page) geometry() {
 	if !ok {
 		media = letter
 	}
-	box := media
-	if crop, ok := d.rect(p.dict.Get("CropBox")); ok {
-		c := Rect{max(crop.X0, media.X0), max(crop.Y0, media.Y0), min(crop.X1, media.X1), min(crop.Y1, media.Y1)}
-		if c.Dx() > 0 && c.Dy() > 0 {
-			box = c
+	// box returns the box of the page under key within the MediaBox, and
+	// def for none with an area there.
+	box := func(key pdf.Name, def Rect) Rect {
+		if r, ok := d.rect(p.dict.Get(key)); ok {
+			c := Rect{max(r.X0, media.X0), max(r.Y0, media.Y0), min(r.X1, media.X1), min(r.Y1, media.Y1)}
+			if c.Dx() > 0 && c.Dy() > 0 {
+				return c
+			}
 		}
+		return def
 	}
-	p.Box = box
+	crop := box("CropBox", media)
+	p.boxes = PageBoxes{Media: media, Crop: crop, Bleed: box("BleedBox", crop), Trim: box("TrimBox", crop), Art: box("ArtBox", crop)}
+	p.Box = crop
 	if v, ok := d.num(p.dict.Get("Rotate")); ok {
 		r := int(math.Mod(math.Round(v/90), 4))
 		p.Rotate = (r + 4) % 4 * 90

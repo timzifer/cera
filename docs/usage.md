@@ -35,6 +35,18 @@ Where an API takes a page number, the view is said beside it:
 `NewAnnotation` or `Highlight` whose geometry was taken from the turned
 view. `Page.Rotate` is for reading.
 
+A page for print has more boxes than the one a viewer shows.
+`page.Boxes()` returns them — `Media`, `Crop`, `Bleed`, `Trim`, `Art` —
+in default user space, with the defaults of the specification for those
+a page does not have; `page.DisplayMatrix()` maps them to the points of
+the displayed page, where a viewer of print files outlines them.
+`page.InBox(cera.BoxMedia)` is the page showing its whole medium with
+the marks around it, and `page.InBox(cera.BoxTrim)` the finished page, as
+a thumbnail wants it: views like those of `Rotated`, which they combine
+with, and said beside a page number in the same way, by
+`index.SetBox(cera.BoxMedia)` and `Box: cera.BoxMedia` in a
+`NewAnnotation` or `Highlight`. The command draws one with `-box`.
+
 A file need not be in memory: `cera.OpenReaderAt(f, size, opts)` reads
 through an `io.ReaderAt` (an `*os.File`, a browser `File` in `js/wasm`)
 only what the pages drawn need.

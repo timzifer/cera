@@ -141,6 +141,13 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 			if !r.check(name, err) {
 				return
 			}
+			boxes := p.Boxes()
+			for b := cera.BoxCrop; b <= cera.BoxArt; b++ {
+				in, m := boxes.Box(b), boxes.Media
+				if !(in.Dx() > 0 && in.Dy() > 0) || in.X0 < m.X0 || in.Y0 < m.Y0 || in.X1 > m.X1 || in.Y1 > m.Y1 {
+					r.differ("%s: its box %d is %v on a medium of %v", name, b, in, m)
+				}
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 			defer cancel()
 			pt, err := p.Text(ctx)

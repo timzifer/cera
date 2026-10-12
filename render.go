@@ -676,7 +676,7 @@ func (p *Page) done(dl *displayList) {
 }
 
 // Release frees the display list cached by Render, and those of the views
-// Rotated made of the page. The page stays usable.
+// Rotated and InBox made of the page. The page stays usable.
 func (p *Page) Release() {
 	p.mu.Lock()
 	if dl := p.dl; dl != nil {
@@ -688,9 +688,11 @@ func (p *Page) Release() {
 	p.wl = nil
 	views := p.views
 	p.mu.Unlock()
-	for _, v := range views {
-		if v != nil {
-			v.Release()
+	for _, turned := range views {
+		for _, v := range turned {
+			if v != nil {
+				v.Release()
+			}
 		}
 	}
 }

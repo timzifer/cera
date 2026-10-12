@@ -28,8 +28,10 @@ type TextIndex struct {
 	doc *Document
 	opt TextOptions
 	max int
-	// turn is what SetRotation turns the pages by.
+	// turn is what SetRotation turns the pages by, and box the box SetBox
+	// has them show.
 	turn int
+	box  PageBox
 
 	mu    sync.Mutex
 	pages map[int]*indexPage
@@ -74,6 +76,18 @@ func (x *TextIndex) SetRotation(degrees int) {
 	x.mu.Unlock()
 }
 
+// SetBox has every page show the box b, as [Page.InBox] does: the text,
+// its quads and what Hit takes are then in points of that box. The pages
+// laid out so far are dropped. Call it as SetRotation is called: before
+// the index is used from several goroutines, or between such uses.
+func (x *TextIndex) SetBox(b PageBox) {
+	x.mu.Lock()
+	x.box = b
+	x.pages = map[int]*indexPage{}
+	x.lru.Init()
+	x.mu.Unlock()
+}
+
 // page returns page i as the index views it.
 func (x *TextIndex) page(i int) (*Page, error) {
 	p, err := x.doc.Page(i)
@@ -81,9 +95,9 @@ func (x *TextIndex) page(i int) (*Page, error) {
 		return nil, err
 	}
 	x.mu.Lock()
-	turn := x.turn
+	turn, box := x.turn, x.box
 	x.mu.Unlock()
-	return p.Rotated(turn), nil
+	return p.InBox(box).Rotated(turn), nil
 }
 
 // Page returns the text of page i (0-based). Several callers asking for
