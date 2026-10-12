@@ -20,7 +20,9 @@ import (
 // another document bring only what is on the page: their content and
 // resources, their annotations, and links to other pages imported from
 // the same document; their widgets stay as plain annotations, no longer
-// fields, unless the page is imported with them ([EditPage.Fields]).
+// fields, unless the page is imported with them ([EditPage.Fields]), and
+// the outline entries, named destinations and page labels of their
+// document come only when asked for ([Editor.ImportPagesWith]).
 // Importing a page of the edited document itself makes such a copy too.
 // Layers of imported pages are added to the document's, so layers hidden
 // in the source stay hidden.
@@ -71,12 +73,34 @@ type EditPage struct {
 	Fields bool
 }
 
+// ImportOptions say what imported pages bring from their document besides
+// what is on them, so that merging documents does not make them worse.
+type ImportOptions struct {
+	// Outline brings the entries of the source's outline that lead to an
+	// imported page, with the entries above them. They follow the entries
+	// the result has, under an entry titled OutlineTitle, or at the top
+	// level when that is empty.
+	Outline      bool
+	OutlineTitle string
+	// Destinations brings the source's named destinations on imported
+	// pages, so that links into the file by name still arrive; a name
+	// the result has is renamed name_2, name_3 and so on, as field names
+	// are. (Links between imported pages are kept either way.)
+	Destinations bool
+	// Labels keeps the page labels of the imported pages: the numbers
+	// printed on them.
+	Labels bool
+}
+
 // Editor records the pages of a document being edited or put together.
 // It is not safe for concurrent use, but the documents it uses may be
 // rendered while it is. Its methods change nothing when they fail.
 type Editor struct {
-	base    *Document // the edited document; nil for NewEditor
-	pages   []editPage
+	base  *Document // the edited document; nil for NewEditor
+	pages []editPage
+	// imports is what the pages imported from a document bring with
+	// them, by ImportPagesWith.
+	imports map[*Document]ImportOptions
 	fields  map[*Field]Value // values to write, by SetFields
 	flatten bool             // the form is flattened, by Flatten
 	// flattenAnnots: the annotations are flattened, by FlattenAnnotations.
@@ -103,6 +127,7 @@ type editPage struct {
 	rotate int
 	own    bool
 	fields bool
+	labels bool // an imported page keeps its label
 	// annots are the changes to the annotations of an own page.
 	annots *annotEdits
 }
@@ -123,8 +148,22 @@ func NewEditor() *Editor { return &Editor{} }
 func (e *Editor) NumPages() int { return len(e.pages) }
 
 // ImportPages inserts the given pages of src before page at (NumPages to
-// append), in that order; a page may repeat.
+// append), in that order; a page may repeat. They bring what is on them;
+// [Editor.ImportPagesWith] brings more.
 func (e *Editor) ImportPages(at int, src *Document, pages ...EditPage) error {
+	return e.ImportPagesWith(at, src, ImportOptions{}, pages...)
+}
+
+// ImportPagesWith is ImportPages with options: the pages bring the outline
+// entries and named destinations that lead to them, and their page labels.
+// What a document brings is one thing for all its pages: the options of
+// several imports from one document add up, and its outline entries are
+// put under the title given last. An entry or a name whose page is not in
+// the result when it is written is left out. Pages of the edited document
+// imported into itself bring nothing more: it has all that already.
+//
+// The structure tree is not brought: imported pages are untagged.
+func (e *Editor) ImportPagesWith(at int, src *Document, opt ImportOptions, pages ...EditPage) error {
 	if at < 0 || at > len(e.pages) {
 		return fmt.Errorf("cera: insert position %d is out of range [0, %d]", at, len(e.pages))
 	}
@@ -140,9 +179,20 @@ func (e *Editor) ImportPages(at int, src *Document, pages ...EditPage) error {
 		if p.Index < 0 || p.Index >= n {
 			return fmt.Errorf("cera: page %d of the selection: index %d is out of range [0, %d)", i, p.Index, n)
 		}
-		add[i] = editPage{src: src, index: p.Index, rotate: p.Rotate, fields: p.Fields}
+		add[i] = editPage{src: src, index: p.Index, rotate: p.Rotate, fields: p.Fields, labels: opt.Labels}
 	}
 	e.pages = append(e.pages[:at], append(add, e.pages[at:]...)...)
+	if src != e.base && (opt.Outline || opt.Destinations) {
+		if e.imports == nil {
+			e.imports = map[*Document]ImportOptions{}
+		}
+		had := e.imports[src]
+		had.Outline, had.Destinations = had.Outline || opt.Outline, had.Destinations || opt.Destinations
+		if opt.Outline {
+			had.OutlineTitle = opt.OutlineTitle
+		}
+		e.imports[src] = had
+	}
 	return nil
 }
 
@@ -264,9 +314,19 @@ func (e *Editor) plan() pdfedit.Doc {
 	doc.Patches = e.fieldPatches(&doc.Objects)
 	if e.base != nil {
 		doc.Patches = e.annotPatches(doc.Patches, &doc.Objects)
-		if p, ok := e.labelPatch(); ok {
-			doc.Patches = append(doc.Patches, p)
+	}
+	if labels, ok := e.pageLabels(); ok {
+		if e.base == nil {
+			doc.PageLabels = labels
+		} else if root, ok := e.base.r.Trailer().Get("Root").Ref(); ok {
+			doc.Patches = append(doc.Patches, pdfedit.Patch{Ref: root, Set: []pdf.Entry{{Key: "PageLabels", Val: labels.Object()}}})
 		}
+	}
+	for src, opt := range e.imports {
+		if doc.Imports == nil {
+			doc.Imports = map[*pdf.Document]pdfedit.Import{}
+		}
+		doc.Imports[src.r] = pdfedit.Import{Outline: opt.Outline, OutlineTitle: opt.OutlineTitle, Destinations: opt.Destinations}
 	}
 	if e.meta != nil {
 		e.metaPatches(&doc)

@@ -60,7 +60,13 @@ e.Update(w)               // d's bytes and the changes appended (#91)
   fields (`EditPage.Fields`): then the part of its field tree that leads
   to its widgets comes too, renamed at the root where the result has the
   name. Importing a page of the edited
-  document itself gives such a copy too.
+  document itself gives such a copy too. Merging is what an editor is
+  asked for most, and it should not make the documents worse: an import
+  may ask for more (`Editor.ImportPagesWith`, #135) — the outline entries
+  and named destinations of its document that lead to imported pages, and
+  their page labels. This is asked per import, not per page, and what a
+  document brings is one thing for all its pages. The structure tree does
+  not come yet.
 - **Deleting a page** removes what hangs on it alone: its annotations, and
   form fields whose widgets were all on deleted pages. Outline entries,
   links and named destinations that pointed at it lose their target.
