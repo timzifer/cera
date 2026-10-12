@@ -4,6 +4,10 @@
 //	go run ./cmd/corpus fetch  -dir testdata/corpus
 //	go run ./cmd/corpus scenes -dir testdata/corpus
 //	go run ./cmd/corpus run    -dir testdata/corpus -dpi 150 -out report
+//	go run ./cmd/corpus run    -dir testdata/corpus -api -pages 3 -out report-api
+//
+// run -api does not time renders: it runs the text, the links and the
+// editor over the files (api.go) and reports what does not hold.
 //
 // Large external corpora (robustness only, scheduled CI):
 //
@@ -19,7 +23,7 @@
 //
 // run exits with status 1 when any page panics, hangs or exceeds its
 // deadline, and (with -fail-open, the default) when a file does not open,
-// so CI blocks on robustness regressions.
+// so CI blocks on robustness regressions. So does run -api.
 package main
 
 import (
@@ -146,6 +150,7 @@ func run(args []string) error {
 	seed := fl.Uint64("seed", uint64(time.Now().YearDay()), "seed for -sample (default: day of year)")
 	top := fl.Int("top", 20, "slowest pages and pages with the most allocations listed")
 	pageWorkers := fl.Int("page-workers", 0, "also time each file's pages rendered by this many goroutines at once (0 = off, -1 = all cores)")
+	api := fl.Bool("api", false, "run the text, the links and the editor over the files instead of timing renders")
 	fl.Parse(args)
 
 	cats := corpus.Categories()
@@ -188,6 +193,45 @@ func run(args []string) error {
 	}
 
 	cfg := runConfig{scale: *dpi / 72, runs: *runs, pages: *pages, timeout: *timeout, images: *images, workers: *workers}
+	if *api {
+		var results []apiResult
+		failed := 0
+		for _, f := range files {
+			r, err := cfg.apiFile(f.path, f.rel)
+			if err != nil {
+				return err
+			}
+			status := "ok  "
+			switch {
+			case r.fatal(), r.err != nil && *failOpen:
+				status = "FAIL"
+				failed++
+			case r.err != nil:
+				status = "skip"
+			case len(r.differences) > 0:
+				status = "diff"
+			}
+			fmt.Fprintln(os.Stderr, status, r.file, errString(r.err), strings.Join(append(r.failed, r.differences...), "; "))
+			results = append(results, r)
+		}
+		w := io.Writer(os.Stdout)
+		if *out != "" {
+			if err := os.MkdirAll(*out, 0o755); err != nil {
+				return err
+			}
+			f, err := os.Create(filepath.Join(*out, "report.md"))
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			w = f
+		}
+		writeAPIReport(w, results, *pages)
+		if failed > 0 {
+			return fmt.Errorf("%d of %d files failed (panic, hang, deadline or unopened file)", failed, len(results))
+		}
+		return nil
+	}
 	var results []result
 	for _, f := range files {
 		rs, err := cfg.file(f.path, f.rel, f.cat)

@@ -67,6 +67,11 @@ jobs:
         run: |
           ./corpus run -dir "ext/${{ matrix.source }}" -runs 0 -dpi 72 -timeout 30s -top 20 \
             -pages "$PAGES" -sample "$SAMPLE" -seed "$SEED" -fail-open=false -out report 2> render.log
+      - name: Text, links and editor on the batch (robustness; differences are reported)
+        if: always()
+        run: |
+          ./corpus run -api -dir "ext/${{ matrix.source }}" -timeout 30s \
+            -pages "$PAGES" -sample "$SAMPLE" -seed "$SEED" -fail-open=false -out report-api 2> api.log
       - name: Compare a batch with PDFium (accuracy, report only)
         if: always() && env.ACCURACY != '0'
         working-directory: accuracy
@@ -85,6 +90,7 @@ jobs:
             grep '^FAIL' render.log | head -100 || true
             echo '```'
             test -f report/report.md && sed -n '/^## Summary/,/^## Pages/p' report/report.md | sed '$d'
+            test -f report-api/report.md && sed '1d' report-api/report.md | sed 's/^## /### /' | head -150
             test -f report-accuracy/report.md && sed '1d' report-accuracy/report.md | sed 's/^## /### /'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
@@ -93,8 +99,10 @@ jobs:
           name: report-${{ matrix.source }}
           path: |
             report
+            report-api
             report-accuracy
             render.log
+            api.log
             accuracy.log
 
   fuzz:
@@ -112,6 +120,7 @@ jobs:
           - { name: FuzzLayers, pkg: . }
           - { name: FuzzForm, pkg: . }
           - { name: FuzzRepair, pkg: . }
+          - { name: FuzzText, pkg: . }
           - { name: FuzzScan, pkg: ./internal/content }
           - { name: FuzzParse, pkg: ./internal/cmap }
     runs-on: ubuntu-latest

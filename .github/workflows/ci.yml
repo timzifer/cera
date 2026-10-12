@@ -147,6 +147,7 @@ jobs:
           - { name: FuzzReaderAt, pkg: ./internal/pdf }
           - { name: FuzzToUnicode, pkg: ./internal/pdffont }
           - { name: FuzzEdit, pkg: . }
+          - { name: FuzzText, pkg: . }
           - { name: FuzzExtract, pkg: ./pdfedit }
     runs-on: ubuntu-latest
     steps:
@@ -212,7 +213,9 @@ jobs:
           go run golang.org/x/perf/cmd/benchstat@latest -col /reader bench.txt >> "$GITHUB_STEP_SUMMARY" || true
 
   # Pinned corpus (pdf.js feature files, arXiv papers, synthetic technical
-  # drawings): every page must render without panic, hang or deadline.
+  # drawings): every page must render without panic, hang or deadline, and
+  # so must its text, its links and the editor run over it (run -api), whose
+  # differences are reported.
   corpus:
     runs-on: ubuntu-latest
     steps:
@@ -230,14 +233,21 @@ jobs:
         run: go run ./cmd/corpus scenes -dir testdata/corpus
       - name: Render at 150 dpi
         run: go run ./cmd/corpus run -dir testdata/corpus -dpi 150 -runs 3 -timeout 60s -out report
+      - name: Text, links and editor
+        if: always()
+        run: go run ./cmd/corpus run -api -dir testdata/corpus -pages 3 -timeout 60s -out report-api
       - name: Summary
         if: always()
-        run: test -f report/report.md && cat report/report.md >> "$GITHUB_STEP_SUMMARY" || true
+        run: |
+          test -f report-api/report.md && cat report-api/report.md >> "$GITHUB_STEP_SUMMARY" || true
+          test -f report/report.md && cat report/report.md >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: corpus-report
-          path: report
+          path: |
+            report
+            report-api
 
   # Accuracy against PDFium on the pinned corpus (ADR 0010): a file whose
   # worst page differs more than the threshold pinned in
