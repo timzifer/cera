@@ -334,6 +334,14 @@ func (d *Document) widgetContent(cw csw, w *Widget, v Value, W, H float64, fonts
 
 	case FieldText:
 		text := v.text
+		if f.scripts.format != nil {
+			// The field shows its value formatted, a negative number in
+			// red where the format says so.
+			var red bool
+			if text, red = f.scripts.format.text(text); red {
+				tc = []float64{1, 0, 0}
+			}
+		}
 		if f.Flags&FfPassword != 0 {
 			text = strings.Repeat("*", utf8.RuneCountInString(text))
 		}
