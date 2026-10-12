@@ -33,6 +33,7 @@ they depend on.
 | [0011](0011-gpu-backend.md) | GPU backend | M9 | proposed |
 | [0012](0012-own-pdf-reader.md) | Own PDF reader and font layer | M8½ | accepted |
 | [0013](0013-editing-documents.md) | Editing documents: `Document.Edit` | M9 | accepted |
+| [0014](0014-text-interaction.md) | Text interaction: selection, search, links and highlights | M9 | accepted |
 
 ## Template
 
