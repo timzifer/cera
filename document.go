@@ -159,6 +159,11 @@ var letter = Rect{0, 0, 612, 792}
 
 // Page is one page of a Document. It caches the display list of its last
 // render; Release frees it.
+//
+// A viewer that turns its view uses [Page.Rotated]: the page as it is
+// shown is then a Page of its own, and everything given in points of the
+// displayed page — Bounds, Render, the text, links, annotations — is in
+// its coordinates.
 type Page struct {
 	doc   *Document
 	index int
@@ -168,7 +173,11 @@ type Page struct {
 	// MediaBox. Its units are /UserUnit points; Size and DisplayMatrix
 	// apply it.
 	Box Rect
-	// Rotate is the clockwise display rotation: 0, 90, 180 or 270.
+	// Rotate is the clockwise display rotation: 0, 90, 180 or 270, the
+	// /Rotate of the page and what Rotated added to it. It is for
+	// reading: a page is rendered, measured and cached as it was made, so
+	// setting Rotate after its first use draws one rotation in the size
+	// of another. Use Rotated for another rotation.
 	Rotate int
 	// unit is /UserUnit (points per user-space unit), 1 by default.
 	unit float64
@@ -184,6 +193,47 @@ type Page struct {
 	annOnce sync.Once
 	annots  []Annotation
 	annBad  int // unreadable entries of /Annots
+
+	// root is the page Rotated was called on, nil for that page itself,
+	// and turn what was added to its rotation. The root keeps its views,
+	// so that a view asked for again has its display list still.
+	root  *Page
+	turn  int
+	views [3]*Page // turned by 90, 180 and 270; under mu
+}
+
+// Rotated returns the page viewed turned by degrees more, clockwise: a
+// multiple of 90, others are rounded to one. It is the page itself for a
+// multiple of 360, and else a view of it — a Page with Rotate turned, its
+// own bounds, display list and text, and the same content. Asked for
+// again, the same view is returned, so what it cached is still there;
+// Release on the page frees the views' lists too.
+//
+// "Points of the displayed page" are those of the view everywhere: of
+// what Render draws, of [PageText], of links, [Annotation.Markup] and
+// [Page.EditAnnotation], whose result [Editor.SetAnnotation] takes back
+// with its view. APIs that take a page number ask for the view where it
+// matters: [Page.Destination], [TextIndex.SetRotation],
+// [NewAnnotation.View], [Highlight.View].
+func (p *Page) Rotated(degrees int) *Page {
+	root, turn := p, 0
+	if p.root != nil {
+		root, turn = p.root, p.turn
+	}
+	q := int(math.Round(float64(degrees) / 90))
+	turn = ((turn+q*90)%360 + 360) % 360
+	if turn == 0 {
+		return root
+	}
+	root.mu.Lock()
+	defer root.mu.Unlock()
+	v := root.views[turn/90-1]
+	if v == nil {
+		v = &Page{doc: root.doc, index: root.index, dict: root.dict, Box: root.Box, unit: root.unit,
+			Rotate: (root.Rotate + turn) % 360, root: root, turn: turn}
+		root.views[turn/90-1] = v
+	}
+	return v
 }
 
 // Index returns the 0-based page number.

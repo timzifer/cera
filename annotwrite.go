@@ -55,6 +55,10 @@ type NewAnnotation struct {
 	// while Link is what it was read as, and whenever cera cannot write
 	// the action: JavaScript, /GoToE, ...
 	Link *LinkTarget
+	// View is the rotation of the view the geometry is given in, in
+	// degrees: what [Page.Rotated] was called with for the page the user
+	// sees, 0 for the page as the file turns it. EditAnnotation sets it.
+	View int
 	Markup
 }
 
@@ -70,7 +74,7 @@ func (p *Page) EditAnnotation(index int) (NewAnnotation, bool) {
 		if a.Index != index || !writable[a.Subtype] {
 			continue
 		}
-		out := NewAnnotation{Subtype: a.Subtype, Contents: a.Contents, Name: a.Name, Flags: a.Flags}
+		out := NewAnnotation{Subtype: a.Subtype, Contents: a.Contents, Name: a.Name, Flags: a.Flags, View: p.turn}
 		d := p.doc
 		m := p.DisplayMatrix()
 		shown := func(r Rect) Rect {
@@ -163,6 +167,9 @@ func (a NewAnnotation) checked(added bool) (NewAnnotation, error) {
 	}
 	if a.Opacity == 0 {
 		a.Opacity = 1
+	}
+	if a.View%90 != 0 {
+		return a, fmt.Errorf("cera: the rotation %d of a view is not a multiple of 90", a.View)
 	}
 	if !(a.BorderWidth >= 0) || math.IsInf(a.BorderWidth, 0) {
 		return a, fmt.Errorf("cera: border width %g", a.BorderWidth)
@@ -519,6 +526,9 @@ type Highlight struct {
 	Author string
 	Name   string
 	Date   time.Time
+	// View is the rotation of the view the quads are given in, as for
+	// [NewAnnotation].
+	View int
 }
 
 // AddHighlight adds h to page i of the result, a page of the edited
@@ -533,7 +543,7 @@ func (e *Editor) AddHighlight(i int, h Highlight) error {
 		return fmt.Errorf("cera: unknown text markup %q", h.Kind)
 	}
 	_, err := e.AddAnnotation(i, NewAnnotation{
-		Subtype: h.Kind, Contents: h.Note, Name: h.Name,
+		Subtype: h.Kind, Contents: h.Note, Name: h.Name, View: h.View,
 		Markup: Markup{Quads: h.Quads, Color: h.Color, Opacity: h.Opacity, Author: h.Author, Created: h.Date, Modified: h.Date},
 	})
 	return err
@@ -568,11 +578,7 @@ func (e *Editor) annotPatches(patches []pdfedit.Patch, objs *[]pdf.Object) []pdf
 		if err != nil {
 			continue
 		}
-		inv, ok := page.DisplayMatrix().Invert()
-		if !ok {
-			continue
-		}
-		w := annotWriter{e: e, page: page, pageRef: pageRef, inv: inv, objs: objs}
+		w := annotWriter{e: e, page: page, pageRef: pageRef, objs: objs}
 		base := page.Annotations()
 		byIndex := map[int]*Annotation{}
 		for k := range base {
@@ -713,8 +719,11 @@ type annotWriter struct {
 	e       *Editor
 	page    *Page
 	pageRef pdf.Ref
-	inv     Matrix // from the displayed page to its user space
 	objs    *[]pdf.Object
+	// Of the annotation being written: the matrix from the page as its
+	// view displays it to user space, and the rotation of that view.
+	inv    Matrix
+	rotate int
 	// ref returns the reference to the annotation with an Index.
 	ref func(index int) (pdf.Object, bool)
 }
@@ -768,6 +777,9 @@ func union(a, b Rect) Rect {
 // document that a changes, nil for a new one: then the entries are all it
 // has, else those to set and to remove.
 func (w *annotWriter) entries(a *NewAnnotation, old *Annotation) (set []pdf.Entry, del []pdf.Name, popup popupChange) {
+	view := w.page.Rotated(a.View)
+	w.inv, _ = view.DisplayMatrix().Invert()
+	w.rotate = view.Rotate
 	name := func(s string) pdf.Object { return pdf.Name(s).Object() }
 	text := func(key pdf.Name, s string) {
 		if s != "" {
@@ -849,9 +861,10 @@ func (w *annotWriter) entries(a *NewAnnotation, old *Annotation) (set []pdf.Entr
 			set = append(set, pdf.Entry{Key: "IC", Val: nums(a.Interior)})
 		}
 	}
+	// Upright as the user sees the page.
 	turn := func() {
-		if w.page.Rotate != 0 {
-			set = append(set, pdf.Entry{Key: "Rotate", Val: pdf.Integer(int64(w.page.Rotate))})
+		if w.rotate != 0 {
+			set = append(set, pdf.Entry{Key: "Rotate", Val: pdf.Integer(int64(w.rotate))})
 		}
 	}
 

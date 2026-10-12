@@ -24,6 +24,17 @@ A Document is safe for concurrent use: render its pages from as many
 goroutines as there are cores, each with `Workers: 1`, or one page with all
 of them; objects, fonts and images are loaded once and shared.
 
+A viewer that turns its view asks for the page turned:
+`page.Rotated(90)` is the page as it is shown then — a `Page` with its
+own bounds, display list and text, the same each time it is asked for.
+Everything in points of the displayed page is in its coordinates:
+`Bounds`, `Render`, `Text`, `Links`, `Annotations` and `EditAnnotation`.
+Where an API takes a page number, the view is said beside it:
+`page.Rotated(90).Destination(&target)` for a link's target,
+`index.SetRotation(90)` for a `TextIndex`, and `View: 90` in a
+`NewAnnotation` or `Highlight` whose geometry was taken from the turned
+view. `Page.Rotate` is for reading.
+
 A file need not be in memory: `cera.OpenReaderAt(f, size, opts)` reads
 through an `io.ReaderAt` (an `*os.File`, a browser `File` in `js/wasm`)
 only what the pages drawn need.

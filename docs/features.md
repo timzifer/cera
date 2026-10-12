@@ -115,6 +115,8 @@ Fonts a file does not embed:
 - Text extraction puts right-to-left text (Arabic, Hebrew) into logical
   order and gives the letters for presentation forms; lines, selection
   and columns follow the direction
+- `Page.Rotated`: the page as a viewer shows it turned, with its own
+  display list; text, links, annotations and editing follow the view
 - `Document.PageLabel` and `PageByLabel`: page labels (roman, decimal,
   letters, prefixes), read leniently; the editor keeps them with their
   pages

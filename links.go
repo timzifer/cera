@@ -147,13 +147,25 @@ type Destination struct {
 
 // Destination resolves t to a view of a page of d. It reports false for a
 // target that is not in d: a URI, an external link, a named destination
-// the document does not define or a page out of range.
+// the document does not define or a page out of range. The coordinates
+// are those of the page as the file turns it; a viewer that turns its view
+// asks the page it shows, [Page.Destination].
 func (d *Document) Destination(t *LinkTarget) (Destination, bool) {
-	if t == nil || t.External || t.Page < 0 || t.Page >= d.NumPages() {
+	if t == nil || t.Page < 0 || t.Page >= d.NumPages() {
 		return Destination{}, false
 	}
 	p, err := d.Page(t.Page)
 	if err != nil {
+		return Destination{}, false
+	}
+	return p.Destination(t)
+}
+
+// Destination resolves t, a target on this page, to a view of it in the
+// points of the page as it is displayed — turned, for a page made by
+// [Page.Rotated]. It reports false for a target that is not on the page.
+func (p *Page) Destination(t *LinkTarget) (Destination, bool) {
+	if t == nil || t.External || t.Page != p.index {
 		return Destination{}, false
 	}
 	nan := math.NaN()
@@ -300,7 +312,7 @@ func (x *TextIndex) links(i int) ([]Link, *Page) {
 		}
 	}
 	if e == nil {
-		p, err := x.doc.Page(i)
+		p, err := x.page(i)
 		if err != nil {
 			return nil, nil
 		}
