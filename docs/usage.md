@@ -187,6 +187,29 @@ byte offsets mean nothing: `QuoteOf` makes one from a range, and
 the place whose surroundings agree most. `TextIndex.TextOf` copies a
 selection across pages, from one `DocPos` to another.
 
+For the pointer, `TextIndex.Hit` says what lies at a point of the
+displayed page, and a click on a link resolves its target to a view:
+
+```go
+h, _ := x.Hit(ctx, page, px/zoom, py/zoom)
+switch h.Kind {
+case cera.HitLink: // hand; on click:
+	if t := h.Link.Target; t.URI != "" {
+		open(t.URI)
+	} else if d, ok := doc.Destination(&t); ok {
+		show(d.Page, d.Fit, d.X, d.Y, d.Zoom, d.Rect) // displayed points of page d.Page
+	} else if t.External {
+		ask(t.File) // /GoToR, /Launch: cera follows neither
+	}
+case cera.HitWidget: // the form layer's; h.Widget
+case cera.HitText:   // I-beam; h.Pos starts a selection
+}
+```
+
+`Page.Links` returns the link annotations with their quads (from
+`/QuadPoints`, else the rectangle), `PageText.URLs` the addresses written
+in the text.
+
 ## Metadata
 
 ```go

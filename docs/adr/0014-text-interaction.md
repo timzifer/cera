@@ -88,20 +88,24 @@ hyphens and hyphenated line breaks removed, case folded) with
 `SearchOptions{MatchCase, WholeWord, IgnoreDiacritics}`; the document
 search is an `iter.Seq2[DocMatch, error]` that starts at a position,
 wraps, can run backwards and stops when the context ends. Every match
-carries its context: the text before and after it. The same quote form
-(exact text, prefix, suffix) finds a passage again, also when the quote
+carries its context as a `Quote{Prefix, Exact, Suffix}`. The same quote
+form finds a passage again (`QuoteOf`, `FindQuote`), also when the quote
 was taken from a foreign text layer such as GROBID's, where byte offsets
-do not apply.
+do not apply: of the places of `Exact`, the one whose surroundings agree
+most with prefix and suffix wins.
 
-**Links and hit testing** (step 5). `Page.Links` returns the link
-annotations with their `/QuadPoints` (else the rectangle) as quads in
-displayed points; `PageText.URLs` finds `http(s)://`, `www.` and `mailto:`
-in the text. `Document.Destination(LinkTarget)` resolves a target to a
-page and a view in displayed points of that page (`XYZ`, `Fit*`).
-`/GoToR` and `/Launch` are reported as external and never followed.
-`Hit` at a point answers link, then widget, then text, then nothing, for
-the hover cursor; widgets are only reported, editing them stays with the
-form layer (ADR 0006).
+**Links and hit testing** (step 5, `links.go`). `Page.Links` returns the
+visible link annotations with their `/QuadPoints` as quads in displayed
+points, or the rectangle when there are none or they reach outside it;
+`PageText.URLs` finds `http(s)://`, `www.` and `mailto:` in the text.
+`Document.Destination` resolves a target to a page and a view in
+displayed points of that page: the point for the top-left corner, the
+zoom, or the rectangle to fit, with `FitH` and `FitV` swapped on a page
+turned by 90°. `/GoToR` and `/Launch` are read as `LinkTarget.External`
+with the `File` they name and never followed. `TextIndex.Hit` at a point
+answers link annotation, then address in the text, then widget, then
+line of text, then nothing, for the hover cursor; widgets are only
+reported, editing them stays with the form layer (ADR 0006).
 
 **Highlights** (step 6). `Editor.AddHighlight` (ADR 0013) adds a
 `/Highlight` annotation from quads in displayed points (`PageText.Quads`),
@@ -116,8 +120,8 @@ plus an optional note (`/Contents`, popup). Saved by `Save`, or by
 | 1 | Quads, marked content, `Page.DisplayMatrix` | #111 |
 | 2 | Lines, blocks, reading order, structure tree | #112 |
 | 3 | Selection, quads, offsets | #113 |
-| 4 | `TextIndex`, `Find` with context, quote anchors | open |
-| 5 | `Links`, `Destination`, `Hit` | open |
+| 4 | `TextIndex`, `Find` with context, quote anchors | #116 |
+| 5 | `Links`, `Destination`, `Hit` | #117 |
 | 6 | `Editor.AddHighlight` | open |
 
 Each step is one PR against `main`.
@@ -133,8 +137,8 @@ Each step is one PR against `main`.
 - Text extraction runs the content stream like rendering does. Layout
   must stay well below render time per page; the cache in `TextIndex` is
   the caller's lever for repeated access.
-- `IgnoreDiacritics` needs Unicode decomposition
-  (`golang.org/x/text/unicode/norm`), a new dependency, or is left out.
+- `IgnoreDiacritics` uses Unicode decomposition
+  (`golang.org/x/text/unicode/norm`), already a dependency for SASLprep.
 
 ## Alternatives considered
 
