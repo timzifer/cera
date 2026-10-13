@@ -35,6 +35,18 @@ Where an API takes a page number, the view is said beside it:
 `NewAnnotation` or `Highlight` whose geometry was taken from the turned
 view. `Page.Rotate` is for reading.
 
+A page for print has more boxes than the one a viewer shows.
+`page.Boxes()` returns them — `Media`, `Crop`, `Bleed`, `Trim`, `Art` —
+in default user space, with the defaults of the specification for those
+a page does not have; `page.DisplayMatrix()` maps them to the points of
+the displayed page, where a viewer of print files outlines them.
+`page.InBox(cera.BoxMedia)` is the page showing its whole medium with
+the marks around it, and `page.InBox(cera.BoxTrim)` the finished page, as
+a thumbnail wants it: views like those of `Rotated`, which they combine
+with, and said beside a page number in the same way, by
+`index.SetBox(cera.BoxMedia)` and `Box: cera.BoxMedia` in a
+`NewAnnotation` or `Highlight`. The command draws one with `-box`.
+
 A file need not be in memory: `cera.OpenReaderAt(f, size, opts)` reads
 through an `io.ReaderAt` (an `*os.File`, a browser `File` in `js/wasm`)
 only what the pages drawn need.
@@ -193,6 +205,50 @@ layer := cera.NewFormLayer(page, state, provider)
 layer.Update(cera.View{Scale: scale, Viewport: visible})
 err = page.Render(ctx, dst, cera.RenderOptions{Scale: scale, Form: state, SkipAnnotation: layer.Skip})
 ```
+
+A push button does what its widget's `Actions` say, in their order. The
+state carries out those of the form — `ResetForm` sets the fields named to
+their defaults, `Hide` shows or hides widgets, which renders with the
+state and a `FormLayer` then obey — and the rest is the viewer's:
+
+```go
+for _, a := range widget.Actions {
+	switch {
+	case state.Do(a): // ResetForm, Hide
+	case a.Target != nil:
+		follow(a.Target) // GoTo, URI, Named: as for a link
+	case a.Kind == "SubmitForm":
+		body, contentType, err := state.Submission(a) // FDF, XFDF or an HTML form
+		// ask the user, then send body to a.URL — or do not: cera sends nothing
+	case a.Kind == "JavaScript":
+		// a.Script: reported, not run
+	}
+}
+```
+
+`state.SetHidden` and `state.ResetFields` do the same by hand. What a
+state hides is how the document is shown, not part of it: `SetFields`
+does not write it.
+
+The values of a state travel as FDF or XFDF, the exchange formats of form
+data: `state.ExportFDF(w)` and `state.ExportXFDF(w)` write every field
+that has a value, by its name — but for passwords —, and
+`state.ImportFDF(r)` and `state.ImportXFDF(r)` set the fields the data
+names, as `SetValue` does, so that the form checks them and calculated
+fields follow:
+
+```go
+err = state.ImportXFDF(f)
+var fail *cera.FormDataError
+if errors.As(err, &fail) {
+	// the rest is set; fail.Unknown: names the form does not have,
+	// fail.Refused: values it does not take (ErrInvalidValue, ErrReadOnly)
+}
+err = e.SetFields(state) // and written into the document
+```
+
+Rich text values are dropped for the plain ones beside them, and what
+else the formats carry — annotations, pages, scripts — is not read.
 
 `dst` may be any sub-rectangle of the page (a tile or viewport): only that
 region is drawn. `RenderOptions.Region` narrows it further. Errors in the
@@ -374,6 +430,49 @@ printDialog(vs.Print.Ranges, vs.Print.Copies, vs.Print.Duplex, vs.Print.Scaling 
 `Open` is nil for an `/OpenAction` that does not lead to a place in the
 document — a script, an address, another file.
 
+## Structure
+
+A tagged document says what its content is: headings, paragraphs, lists,
+tables with their cells, figures with a description. `Document.Structure`
+returns that tree, nil for a document without one — what a bridge to a
+screen reader reads by, and what an export to HTML keeps headings and
+tables with:
+
+```go
+tree := doc.Structure()
+if tree == nil {
+	return // untagged: the text of the pages in the order of their layout
+}
+var walk func(e *cera.StructElem, depth int)
+walk = func(e *cera.StructElem, depth int) {
+	fmt.Printf("%s%s %q\n", strings.Repeat("  ", depth), e.Role, e.Alt)
+	for _, k := range e.Kids {
+		switch {
+		case k.Elem != nil:
+			walk(k.Elem, depth+1)
+		case k.MCID >= 0:
+			// the characters of page k.Page whose TextChar.MCID is k.MCID
+		case k.Annot >= 0:
+			// the annotation of page k.Page with that Index: the link of a Link
+		}
+	}
+}
+for _, e := range tree.Elems {
+	walk(e, 0)
+}
+```
+
+`Type` is the name the document gives an element and `Role` the standard
+type its role map makes of it (`"Heading 1"` is an `"H1"`). `Kids` are in
+reading order: elements, the marked content of a page by its identifier,
+and annotations. `Title`, `Alt`, `ActualText`, `Expansion` and `Lang` are
+those of the element, the language inherited from above; `Attr()` has the
+attributes of tables and lists (`RowSpan`, `ColSpan`, `Headers`, `Scope`,
+`Summary`, `ListNumbering`) and the `BBox` of a figure, and
+`tree.ByID(id)` finds the header cell a cell names. `tree.Suspects` says
+that the producer guessed the tree from a layout. Other attributes, and
+content marked inside form XObjects, are not read.
+
 ## Metadata
 
 ```go
@@ -415,6 +514,42 @@ and the signature of the certificate's key (signed data of
 `Changes` compares the document as signed with the document as it is.
 Trust is against the roots the caller gives: cera has no trust list, and
 does not check revocation.
+
+`Editor.Sign` signs: it writes the document with an update that holds
+the changes of the editor and a signature over all of it, so that the
+signatures the document has stay valid.
+
+```go
+e := doc.Edit()
+err := e.Sign(out, cera.SignOptions{
+	Key:         key,  // a crypto.Signer: a key in memory, on a token, with a service
+	Certificate: cert, // its certificate, and above it
+	Chain:       []*x509.Certificate{intermediate},
+	Reason:      "Approved",
+	Location:    "Berlin",
+
+	Field: "approval",                 // a signature field of the form, or a new one
+	Page:  0,                          // where a new field shows, in points of the
+	Rect:  cera.Rect{360, 700, 560, 760}, // displayed page; the zero Rect: invisible
+	Appearance: func(c *cera.Canvas) { // what it shows, as Editor.Draw draws
+		w, h := c.Size()
+		c.Stroke(rect(0, 0, w, h), cera.StrokeStyle{Width: 1}, color.Black)
+		c.DrawText("Signed by Ada Lovelace", 6, 20, font, 10, color.Black)
+	},
+})
+```
+
+The signature is a PAdES baseline signature (B-B, `ETSI.CAdES.detached`)
+with SHA-256, by an RSA or an ECDSA key, which is asked once. It has no
+timestamp and no validation data: its time is the signer's word.
+`Certify: 2` makes the author's certification instead, which says what
+may change afterwards — 1 nothing, 2 filling in forms and signing, 3 also
+annotating — and `Lock` names the fields that may not change once it is
+made. Form values, annotations and metadata of the same editor are
+written with the signature; changes of the pages are not: update the
+document first, open the result and sign that. Likewise, to go on after
+a signature, open what `Sign` wrote. The file is held in memory while it
+is signed.
 
 ## Attachments
 
@@ -566,6 +701,65 @@ its own before or after it. It belongs to its page — it moves and turns
 with it. In an encrypted document, drawing needs the permission to modify;
 a certification forbids it.
 
+`Redact` takes content out of a page for good. A box drawn over text
+leaves the text in the file; a redaction rewrites the page, so that what
+was in its areas is not there to be found by a viewer, a text extraction
+or a look at the bytes:
+
+```go
+text, _ := page.Text(ctx)
+for _, m := range text.Find("Jane Doe", cera.SearchOptions{}) {
+	err = e.Redact(page.Index(), text.Quads(m.Range), color.Black) // areas in points of the displayed page
+}
+n, err := e.ApplyRedactions() // the /Redact annotations a reviewer left
+err = e.Save(out)             // never Update: that would keep the bytes
+```
+
+In the areas, the glyphs leave their strings (the rest of each line
+stays where it was), paths that lie in them are left out and paths that
+reach into them are clipped, images are decoded, emptied there and
+encoded again, inline images are left out; form XObjects are rewritten
+as the page is, each use a copy, and hidden layers like shown ones.
+Annotations, links and fields that reach into an area go, as do
+`/ActualText`, `/Alt` and `/E` of the marked content and the structure
+elements the content belonged to, and the thumbnail of the page. It
+fails closed: what cannot be rewritten is left out whole, and `Save`
+returns `ErrRedaction` rather than write a page it could not rewrite.
+
+What it leaves for the caller to look at: the outline, whose titles may
+quote a heading; metadata and attachments; other pages, also where they
+show the same form or image. A path that reaches into an area is clipped,
+not cut — its numbers stay in the file —, and the cells of tiling
+patterns and soft masks are not rewritten, only clipped away with what
+they fill. An emptied image is written in RGB.
+
+`AddField` makes a form, or adds to one: a text field, a check box, the
+buttons of a radio group, a combo or list box, a push button, or a
+signature field for `Sign` to sign later. `RemoveField` takes one out,
+with its widgets.
+
+```go
+boxed := cera.Appearance{Border: &black, Background: &white}
+err = e.AddField(0, cera.Rect{60, 100, 260, 120}, cera.NewField{
+	Name: "address.street", // below a node "address", made if there is none
+	Type: cera.FieldText, Value: cera.TextValue("Main St 1"), Look: boxed,
+})
+// A radio group: a widget each, under one name.
+err = e.AddField(0, cera.Rect{60, 130, 74, 144}, cera.NewField{Name: "plan", Type: cera.FieldRadio, OnState: "basic", Value: cera.StateValue("basic"), Look: boxed})
+err = e.AddField(0, cera.Rect{90, 130, 104, 144}, cera.NewField{Name: "plan", OnState: "pro", Look: boxed})
+err = e.AddField(0, cera.Rect{60, 160, 260, 220}, cera.NewField{Name: "approval", Type: cera.FieldSignature})
+err = e.RemoveField("obsolete")
+```
+
+The rectangle is in points of the displayed page; a name the form has
+adds a widget to that field. A new field is written with a default
+appearance in Helvetica — the form's `/Helv`, added to its resources if
+it has none — and an appearance stream for its value, as cera draws
+fields that have none. Pages are those of the edited document; a
+certified document takes no fields and gives none up (`ErrCertified`), a
+field a signature locks stays (`ErrLocked`), and `Sign` wants the fields
+written first.
+
 `SetFields` records the values of a `FormState` of the edited document
 that differ from what the file holds: a text as a text string (its rich
 text value removed), a button state as a name with every widget's `/AS`,
@@ -649,6 +843,14 @@ of the pages with P 2 and 3 and no added annotations with P 2
 (`ErrCertified`). Writing values removes an
 XFA form, which would show the old ones. Calculated fields are not
 computed again: cera runs no JavaScript.
+
+`Save` writes a document that was packed — its objects in object
+streams, with a cross-reference stream, the compact form of PDF 1.5 — in
+that form again, and others with every object on its own and a
+cross-reference table. `SaveWith(w, cera.SaveOptions{ObjectStreams:
+cera.ObjectStreamsAlways})` packs any file, which makes a form of
+thousands of small objects a tenth smaller, and `ObjectStreamsNever`
+writes the classic form for a reader that knows no other.
 
 `Update` writes the edited file unchanged and appends only what changed
 (PDF 2.0, 7.5.6), so signatures over the original bytes stay valid: the

@@ -45,6 +45,10 @@ A test keeps this table in step with the code.
 | `maxLabelDepth` | 16 | – | levels of the number tree of page labels; deeper nodes are not read |
 | `maxLabelNodes` | 64 Ki | – | nodes of the number tree of page labels; further ones are not read |
 | `maxPrintRanges` | 1 Ki | – | page ranges of /PrintPageRange in ViewSettings; further ones are left out |
+| `maxStructNodes` | 2 Mi | – | elements, content items and attribute objects of the structure tree, read for Document.Structure and for the reading order of text; further ones are not read (StructTree.Truncated) |
+| `maxStructDepth` | 128 | – | levels of the structure tree in Document.Structure, and types a role map leads through; deeper elements are not read (StructTree.Truncated) |
+| `maxFormDataBytes` | 64 Mi | – | bytes of the FDF or XFDF data FormState.ImportFDF and ImportXFDF read; more is an error |
+| `maxFormDataFields` | 64 Ki | – | fields with a value read from FDF or XFDF data; further ones are left out |
 | `content.MaxNesting` | 32 | – | arrays and dictionaries nested in one operand (Stats.Errors) |
 | `content.MaxOperands` | 4 Ki | – | operands kept for one operator; the first are dropped |
 | `cmap.MaxSpans` | 128 Ki | – | code ranges of one CMap; further ones are ignored |

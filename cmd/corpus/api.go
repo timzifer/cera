@@ -3,14 +3,21 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"io"
 	"math"
+	"math/big"
 	"os"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -23,8 +30,9 @@ import (
 // drawing it, over the files: the text with round trips of search and
 // selection, the links and where they lead, and the editor — a file saved
 // anew, an update with a highlight, the form and the annotations
-// flattened — each opened again and its first page compared with what it
-// was.
+// flattened, a field added, a signature, a redaction — each opened again
+// and its first page compared with what it was, or for a redaction read
+// for what should be gone.
 //
 // The gate is that of rendering: no panic, no hang, no deadline.
 // Everything else it finds is a difference, reported with its file.
@@ -69,7 +77,8 @@ func (r *apiResult) check(name string, err error) bool {
 	case errors.As(err, &pe), errors.Is(err, cera.ErrDeadline), errors.Is(err, context.DeadlineExceeded):
 		r.failed = append(r.failed, fmt.Sprintf("%s: %v", name, err))
 	case errors.Is(err, cera.ErrSigned), errors.Is(err, cera.ErrCertified), errors.Is(err, cera.ErrNoAssembly),
-		errors.Is(err, cera.ErrNotPermitted), errors.Is(err, cera.ErrNoUpdate), errors.Is(err, cera.ErrPassword):
+		errors.Is(err, cera.ErrNotPermitted), errors.Is(err, cera.ErrNoUpdate), errors.Is(err, cera.ErrPassword),
+		errors.Is(err, cera.ErrLocked), errors.Is(err, cera.ErrRedaction):
 		r.refused = append(r.refused, fmt.Sprintf("%s: %v", name, err))
 	default:
 		r.differ("%s: %v", name, err)
@@ -130,6 +139,27 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		}
 	})
 
+	r.step("structure", func() {
+		tree := doc.Structure()
+		if tree == nil {
+			return
+		}
+		var walk func(e *cera.StructElem)
+		walk = func(e *cera.StructElem) {
+			for _, k := range e.Kids {
+				switch {
+				case k.Page >= doc.NumPages(), k.Elem == nil && k.Page < 0, k.Elem == nil && (k.MCID < 0) == (k.Annot < 0):
+					r.differ("the structure element %s has the kid %+v", e.Type, k)
+				case k.Elem != nil:
+					walk(k.Elem)
+				}
+			}
+		}
+		for _, e := range tree.Elems {
+			walk(e)
+		}
+	})
+
 	// The text and the links of the pages.
 	var first *cera.PageText
 	var firstWord cera.TextRange // a word of the first page, to highlight
@@ -140,6 +170,13 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 			p, err := doc.Page(i)
 			if !r.check(name, err) {
 				return
+			}
+			boxes := p.Boxes()
+			for b := cera.BoxCrop; b <= cera.BoxArt; b++ {
+				in, m := boxes.Box(b), boxes.Media
+				if !(in.Dx() > 0 && in.Dy() > 0) || in.X0 < m.X0 || in.Y0 < m.Y0 || in.X1 > m.X1 || in.Y1 > m.Y1 {
+					r.differ("%s: its box %d is %v on a medium of %v", name, b, in, m)
+				}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 			defer cancel()
@@ -192,6 +229,15 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		if r.check("save", doc.Edit().Save(&out)) {
 			reopen("save", out.Bytes(), true)
 		}
+		// And in the other form: packed into object streams, or not.
+		other := cera.SaveOptions{ObjectStreams: cera.ObjectStreamsAlways}
+		if bytes.Contains(out.Bytes(), []byte("/ObjStm")) {
+			other.ObjectStreams = cera.ObjectStreamsNever
+		}
+		out.Reset()
+		if r.check("save, the other form", doc.Edit().SaveWith(&out, other)) {
+			reopen("save, the other form", out.Bytes(), true)
+		}
 	})
 	r.step("update", func() {
 		// With a highlight on a word of the first page, so that there is
@@ -221,6 +267,150 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 			r.differ("update: %d annotations on page 1 after a highlight was added to %d", len(op.Annotations()), had)
 		}
 	})
+	r.step("redact", func() {
+		// The first word of the first page and a box across its middle
+		// are taken out: no character of the page that is written then
+		// has its middle in them.
+		p, err := doc.Page(0)
+		if err != nil {
+			return
+		}
+		w, h := p.Size()
+		areas := []cera.Quad{cera.QuadOf(cera.Rect{X0: 0.3 * w, Y0: 0.3 * h, X1: 0.7 * w, Y1: 0.5 * h})}
+		if first != nil && !firstWord.Empty() {
+			areas = append(areas, first.Quads(firstWord)...)
+		}
+		e := doc.Edit()
+		if !r.check("redact", e.Redact(0, areas, color.Black)) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("redact: save", e.Save(&out)) {
+			return
+		}
+		od := reopen("redact", out.Bytes(), false)
+		if od == nil {
+			return
+		}
+		op, err := od.Page(0)
+		if err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+		defer cancel()
+		pt, err := op.Text(ctx)
+		if !r.check("redact: text", err) {
+			return
+		}
+		left := 0
+		for k := range pt.Chars {
+			q := pt.Chars[k].Quad
+			x := (q.P[0][0] + q.P[1][0] + q.P[2][0] + q.P[3][0]) / 4
+			y := (q.P[0][1] + q.P[1][1] + q.P[2][1] + q.P[3][1]) / 4
+			for _, a := range areas {
+				if a.Contains(x, y) {
+					left++
+					break
+				}
+			}
+		}
+		if left > 0 {
+			r.differ("redact: %d characters are left in the areas", left)
+		}
+	})
+	r.step("actions", func() {
+		// What the buttons of the form do: carried out or put together,
+		// which changes nothing of the document.
+		form := doc.Form()
+		if form == nil {
+			return
+		}
+		state := form.NewState()
+		for _, f := range form.Fields {
+			for _, w := range f.Widgets {
+				for _, a := range w.Actions {
+					switch {
+					case state.Do(a):
+					case a.Kind == "SubmitForm":
+						if _, _, err := state.Submission(a); err != nil && !errors.Is(err, cera.ErrSubmitDocument) {
+							r.differ("actions: what %s submits: %v", f.Name, err)
+						}
+					case a.Kind == "":
+						r.differ("actions: %s has an action of no kind", f.Name)
+					}
+				}
+			}
+		}
+	})
+	r.step("field", func() {
+		const name = "cera.corpus.field"
+		e := doc.Edit()
+		if !r.check("field", e.AddField(0, cera.Rect{X0: 10, Y0: 10, X1: 110, Y1: 30}, cera.NewField{Name: name, Value: cera.TextValue("cera")})) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("field: update", e.Update(&out)) {
+			return
+		}
+		od := reopen("field", out.Bytes(), false)
+		if od == nil {
+			return
+		}
+		had := 0
+		if form := doc.Form(); form != nil {
+			had = len(form.Fields)
+		}
+		form := od.Form()
+		if f := form.Field(name); f == nil || len(f.Widgets) != 1 || f.Saved.Text() != "cera" || len(form.Fields) != had+1 {
+			r.differ("field: the form has %d fields after one was added to %d, the new one is %+v", len(form.Fields), had, f)
+			return
+		}
+		// And taken out again: the form as it was.
+		e = od.Edit()
+		if !r.check("field: remove", e.RemoveField(name)) {
+			return
+		}
+		out.Reset()
+		if !r.check("field: update", e.Update(&out)) {
+			return
+		}
+		if od := reopen("field removed", out.Bytes(), true); od != nil {
+			n := 0
+			if form := od.Form(); form != nil {
+				n = len(form.Fields)
+			}
+			if n != had {
+				r.differ("field: the form has %d fields after the added one was removed, it had %d", n, had)
+			}
+		}
+	})
+	r.step("sign", func() {
+		signer, err := apiSigner()
+		if err != nil {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("sign", doc.Edit().Sign(&out, cera.SignOptions{Key: signer.key, Certificate: signer.cert})) {
+			return
+		}
+		if !bytes.HasPrefix(out.Bytes(), data) {
+			r.differ("sign: the file does not start with the document's")
+		}
+		// An invisible signature: the page is as it was.
+		od := reopen("sign", out.Bytes(), true)
+		if od == nil {
+			return
+		}
+		sigs := od.Signatures()
+		if len(sigs) == 0 {
+			r.differ("sign: the signed file has no signature")
+			return
+		}
+		last := &sigs[len(sigs)-1]
+		if st, err := last.Verify(cera.VerifyOptions{}); err != nil || !st.Intact || !last.CoversWholeFile || st.Changes.Any() {
+			r.differ("sign: the signature does not hold: %+v, %v", st, err)
+		}
+	})
 	r.step("flatten", func() {
 		e := doc.Edit()
 		if doc.Form() != nil && !r.check("flatten", e.Flatten()) {
@@ -236,6 +426,34 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 	})
 	return r
 }
+
+// signer is a key with its certificate.
+type signer struct {
+	key  *ecdsa.PrivateKey
+	cert *x509.Certificate
+}
+
+// apiSigner returns a key and a certificate of its own making, to sign the
+// files with.
+var apiSigner = sync.OnceValues(func() (signer, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return signer{}, err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "cera corpus run"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
+	if err != nil {
+		return signer{}, err
+	}
+	cert, err := x509.ParseCertificate(der)
+	return signer{key, cert}, err
+})
 
 // apiText checks the text of a page against itself: offsets into String
 // ascend with the positions, a selection holds what it was asked for and

@@ -145,7 +145,7 @@ func (l *FormLayer) Update(v View) {
 			continue
 		}
 		dev := l.page.widgetBox(w, scale)
-		visible := w.Flags&(AnnotHidden|AnnotNoView) == 0 &&
+		visible := !l.state.Hidden(w) && w.Flags&AnnotNoView == 0 &&
 			(w.oc == nil || w.oc.eval(vis, scale)) &&
 			dev.Overlaps(vp)
 		old, wasShown := l.shown[w]
@@ -250,7 +250,7 @@ func (l *FormLayer) Next(w *Widget) *Widget {
 				found = x == w
 				continue
 			}
-			if x.Flags&(AnnotHidden|AnnotNoView) == 0 && x.Field.Flags&FfReadOnly == 0 {
+			if !l.state.Hidden(x) && x.Flags&AnnotNoView == 0 && x.Field.Flags&FfReadOnly == 0 {
 				return x
 			}
 		}

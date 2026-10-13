@@ -55,6 +55,21 @@ type Writer struct {
 	// (An update takes both from its Base.)
 	Crypt   *pdf.Encryptor
 	Encrypt Ref
+	// Packed writes a new file in the compact form of PDF 1.5: the objects
+	// that are not streams go into object streams, compressed, and a
+	// cross-reference stream tells where everything is. Readers older
+	// than that do not read it. (An update follows the file it extends.)
+	Packed bool
+
+	// Sig, when not zero, is the output object that is a signature
+	// dictionary being made (PDF 2.0, 12.8.1). Its /Contents is written as
+	// a hexadecimal string and never encrypted, and its /ByteRange as an
+	// array with SigRangeRoom bytes of room for numbers known only once
+	// the file is written. Write sets SigContents and SigByteRange to
+	// where in the file the two are, from their first byte to past their
+	// last, for the signer to fill them in.
+	Sig                       Ref
+	SigContents, SigByteRange [2]int64
 
 	objs  []slot // new objects, numbered from first
 	first int32
@@ -82,6 +97,10 @@ type Base struct {
 	Crypt   *pdf.Encryptor
 	Encrypt pdf.Object
 }
+
+// SigRangeRoom is the length in bytes of the /ByteRange array written for
+// [Writer.Sig], brackets included.
+const SigRangeRoom = 64
 
 // New returns an empty writer of a new file.
 func New() *Writer { return &Writer{first: 1} }

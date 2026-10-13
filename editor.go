@@ -120,6 +120,16 @@ type Editor struct {
 	// meta is the metadata of the result, by SetMetadata; nil to leave
 	// what the edited document has.
 	meta *Metadata
+	// sign is the signature being made, while Sign writes.
+	sign *signPlan
+	// addFields are the fields added and the widgets added to fields of
+	// the edited document, by AddField, and delFields the names of its
+	// fields that are removed, by RemoveField.
+	addFields []*addedField
+	delFields map[string]bool
+	// planErr is why plan could not describe the result: nothing is
+	// written then.
+	planErr error
 }
 
 // editPage is one page of the result: page index of src, turned by rotate
@@ -138,6 +148,8 @@ type editPage struct {
 	w, h  float64
 	// draws is what was drawn on the page, by Draw.
 	draws []*drawing
+	// redacts are the redactions of an own page, by Redact.
+	redacts []redaction
 }
 
 // Edit returns an editor of d with all its pages.
@@ -274,22 +286,8 @@ func (e *Editor) check(i int) error {
 // for an error of w itself.
 func (e *Editor) Update(w io.Writer) (err error) {
 	defer recoverPanic(&err)
-	if e.base == nil {
-		return fmt.Errorf("%w: %v", ErrNoUpdate, pdfedit.ErrNoBase)
-	}
-	if sg := e.base.signing(); !e.unguarded && (sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated() || e.meta != nil) ||
-		sg.mdp == 2 && (e.pagesChanged() || e.annotated()) || sg.mdp == 3 && e.pagesChanged() ||
-		sg.mdp != 0 && (e.flattens() || e.drawsOn())) {
-		return ErrCertified
-	}
-	if prot, ok := e.base.r.Protection(); ok && !prot.Owner {
-		perm := prot.Permissions
-		if e.pagesChanged() && perm&(pdf.PermModify|pdf.PermAssemble) == 0 ||
-			len(e.fields) > 0 && perm&(pdf.PermFillForms|pdf.PermAnnotate|pdf.PermModify) == 0 ||
-			e.annotated() && perm&(pdf.PermAnnotate|pdf.PermModify) == 0 ||
-			(e.flattens() || e.drawsOn() || e.meta != nil) && perm&pdf.PermModify == 0 {
-			return ErrNotPermitted
-		}
+	if err := e.updatable(); err != nil {
+		return err
 	}
 	err = pdfedit.Update(w, e.plan())
 	switch {
@@ -297,6 +295,32 @@ func (e *Editor) Update(w io.Writer) (err error) {
 		return fmt.Errorf("%w: %v", ErrNoUpdate, err)
 	case err != nil:
 		return fmt.Errorf("cera: %w", err)
+	}
+	return nil
+}
+
+// updatable reports why the changes of the editor cannot be written as an
+// update of the edited document, nil if they can.
+func (e *Editor) updatable() error {
+	if e.base == nil {
+		return fmt.Errorf("%w: %v", ErrNoUpdate, pdfedit.ErrNoBase)
+	}
+	if e.redacts() {
+		return fmt.Errorf("%w: an update keeps the bytes a redaction is to remove: save the document as a new file", ErrNoUpdate)
+	}
+	if sg := e.base.signing(); !e.unguarded && (sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated() || e.meta != nil) ||
+		sg.mdp == 2 && (e.pagesChanged() || e.annotated()) || sg.mdp == 3 && e.pagesChanged() ||
+		sg.mdp != 0 && (e.flattens() || e.drawsOn() || e.formed())) {
+		return ErrCertified
+	}
+	if prot, ok := e.base.r.Protection(); ok && !prot.Owner {
+		perm := prot.Permissions
+		if e.pagesChanged() && perm&(pdf.PermModify|pdf.PermAssemble) == 0 ||
+			len(e.fields) > 0 && perm&(pdf.PermFillForms|pdf.PermAnnotate|pdf.PermModify) == 0 ||
+			e.annotated() && perm&(pdf.PermAnnotate|pdf.PermModify) == 0 ||
+			(e.flattens() || e.drawsOn() || e.formed() || e.meta != nil) && perm&pdf.PermModify == 0 {
+			return ErrNotPermitted
+		}
 	}
 	return nil
 }
@@ -343,7 +367,18 @@ func (e *Editor) plan() pdfedit.Doc {
 	if e.meta != nil {
 		e.metaPatches(&doc)
 	}
-	e.drawPlan(&doc)
+	if e.base != nil && e.formed() {
+		e.fieldPlan(&doc)
+	}
+	e.planErr = nil
+	if e.base != nil && e.redacts() {
+		e.planErr = e.redactPlan(&doc)
+	}
+	cf := e.canvasForms(&doc)
+	e.drawPlan(&doc, cf)
+	if e.sign != nil {
+		e.signPlan(&doc, cf)
+	}
 	e.gen.finish()
 	return doc
 }
@@ -369,7 +404,30 @@ type SaveOptions struct {
 	// Decrypt writes the file of an encrypted document without its
 	// protection.
 	Decrypt bool
+	// ObjectStreams says whether the file is written in the compact form
+	// of PDF 1.5: the objects that are not streams packed into object
+	// streams, compressed, with a cross-reference stream. A form with
+	// thousands of small objects is a tenth smaller for it. The zero
+	// value, ObjectStreamsAsSource, writes the edited document as it was
+	// read, and a new document in the classic form.
+	ObjectStreams ObjectStreamMode
 }
+
+// ObjectStreamMode says whether a file is written with object streams;
+// see [SaveOptions.ObjectStreams].
+type ObjectStreamMode int
+
+const (
+	// ObjectStreamsAsSource packs the objects of a document that was
+	// packed, and of no other.
+	ObjectStreamsAsSource ObjectStreamMode = iota
+	// ObjectStreamsAlways packs them: the smallest file, which readers
+	// from before PDF 1.5 (2003) do not read.
+	ObjectStreamsAlways
+	// ObjectStreamsNever writes every object on its own, with a
+	// cross-reference table.
+	ObjectStreamsNever
+)
 
 // Save writes the result to w as a new file. An encrypted document stays
 // encrypted, with its passwords and permissions: use [Editor.SaveWith] to
@@ -388,8 +446,20 @@ func (e *Editor) Save(w io.Writer) error { return e.SaveWith(w, SaveOptions{}) }
 func (e *Editor) SaveWith(w io.Writer, opt SaveOptions) (err error) {
 	defer recoverPanic(&err)
 	doc := e.plan()
+	if e.planErr != nil {
+		return e.planErr
+	}
 	if doc.Base != nil && !pdfedit.MayAssemble(doc.Base) {
 		return ErrNoAssembly
+	}
+	switch opt.ObjectStreams {
+	case ObjectStreamsAsSource:
+		doc.Packed = e.base != nil && e.base.r.Packed()
+	case ObjectStreamsAlways:
+		doc.Packed = true
+	case ObjectStreamsNever:
+	default:
+		return fmt.Errorf("cera: object stream mode %d", opt.ObjectStreams)
 	}
 	if e.base != nil && e.base.signing().signed {
 		return ErrSigned

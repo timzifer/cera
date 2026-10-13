@@ -119,15 +119,26 @@ Fonts a file does not embed:
   data, RSA and ECDSA, timestamp tokens), what was appended after a
   signature and whether certification and field locks allow it, and the
   certificate chain against roots the caller gives
+- `Editor.Sign`: approval and certification signatures (PAdES B-B,
+  `ETSI.CAdES.detached`) by an RSA or ECDSA key behind `crypto.Signer`,
+  in a field of the form or a new one, invisible or with an appearance
+  drawn on a canvas, with field locks; no timestamps or validation data
 - `Document.Attachments` and `Annotation.File`: embedded files with
   their metadata and `/AFRelationship`, decoded and decrypted (also where
   the files alone are encrypted, `/EFF`)
 - `Page.Rotated`: the page as a viewer shows it turned, with its own
   display list; text, links, annotations and editing follow the view
+- `Page.Boxes` and `Page.InBox`: MediaBox, CropBox, BleedBox, TrimBox and
+  ArtBox with their defaults, and the page showing another of them than
+  the CropBox, a view as `Rotated` makes one
 - `Document.PageLabel` and `PageByLabel`: page labels (roman, decimal,
   letters, prefixes), read leniently; the editor keeps them with their
   pages
 - `Document.ViewSettings`: how a document asks to be opened and printed
+- `Document.Structure`: the structure tree of a tagged document — types
+  and their roles (`/RoleMap`, namespaces), titles, `/Alt`, `/ActualText`,
+  `/Lang`, marked content and annotations in reading order, the
+  attributes of tables and lists
   (`/OpenAction`, `/PageMode`, `/PageLayout`, `/ViewerPreferences`)
 - `Document.Outline`: the bookmarks as a tree, with titles, style, open
   state and targets (destinations, GoTo, URI, GoToR and Launch actions,
@@ -144,6 +155,25 @@ Fonts a file does not embed:
 - Native widgets through `FormWidgetProvider` and `FormLayer` (tab order,
   focus); fyne provider in [`form/fyneform`](../form/fyneform)
 - `cmd/cera -field name=value` fills a form
+- `Save` writes object streams and a cross-reference stream where the
+  document had them, or on request (`SaveOptions.ObjectStreams`); also
+  encrypted
+- `Editor.Redact` and `ApplyRedactions`: content taken out of pages for
+  good — glyphs out of their strings, paths left out or clipped, images
+  re-encoded without the samples, forms rewritten per use, annotations,
+  fields and the text that stood for the content in marked content and
+  the structure tree — failing closed, written as a new file
+- `Widget.Actions`: what a push button does — `ResetForm` and `Hide`
+  carried out by the `FormState` (`Do`, `ResetFields`, `SetHidden`),
+  `GoTo`, `URI` and `Named` as link targets, `SubmitForm` with its
+  address, format and the data to send (`Submission`; cera sends
+  nothing), JavaScript reported
+- `Editor.AddField` and `RemoveField`: fields of every type added to
+  pages with generated appearances, widgets added to fields, names that
+  make the nodes above them; fields removed with their widgets
+- `FormState.ExportFDF`, `ExportXFDF`, `ImportFDF`, `ImportXFDF`: the
+  values of a form in its exchange formats, with hierarchical names, the
+  states of buttons and several options of a list box
 - Format, validation and calculation without JavaScript where a field's
   scripts are calls of Acrobat's form functions (`AFNumber_Format`,
   `AFPercent_Format`, `AFDate_FormatEx`, `AFTime_Format`,

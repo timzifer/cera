@@ -40,6 +40,7 @@ func main() {
 	verbose := flag.Bool("v", false, "print timing and statistics per page")
 	workers := flag.Int("workers", 0, "goroutines drawing one page (0 = all cores)")
 	annots := flag.String("annots", "view", "annotations to draw: view, print or none")
+	pageBox := flag.String("box", "crop", "box of the page to draw: crop, media, bleed, trim or art")
 	imageFilter := flag.String("image-filter", "nearest", "how magnified images without /Interpolate are sampled: nearest or smooth (bilinearly below 2× magnification)")
 	cmykProfile := flag.String("cmyk-profile", "", "ICC profile `file` DeviceCMYK is converted through instead of the bundled SWOP profile")
 	naiveCMYK := flag.Bool("naive-cmyk", false, "convert CMYK naively, as device values, without a profile")
@@ -68,6 +69,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "cera: -annots %q: want view, print or none\n", *annots)
 		os.Exit(2)
 	}
+	boxes := map[string]cera.PageBox{"crop": cera.BoxCrop, "media": cera.BoxMedia, "bleed": cera.BoxBleed, "trim": cera.BoxTrim, "art": cera.BoxArt}
+	box, ok := boxes[*pageBox]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "cera: -box %q: want crop, media, bleed, trim or art\n", *pageBox)
+		os.Exit(2)
+	}
 	filters := map[string]cera.ImageFilter{"nearest": cera.ImageNearest, "smooth": cera.ImageSmooth}
 	filter, ok := filters[*imageFilter]
 	if !ok {
@@ -87,13 +94,13 @@ func main() {
 		}
 		opt.CMYKProfile = b
 	}
-	if err := run(flag.Arg(0), opt, *dpi, *page, *out, *transparent, *timeout, *verbose, *workers, mode, filter, fields, *pngMode); err != nil {
+	if err := run(flag.Arg(0), opt, *dpi, *page, *out, *transparent, *timeout, *verbose, *workers, mode, box, filter, fields, *pngMode); err != nil {
 		fmt.Fprintln(os.Stderr, "cera:", err)
 		os.Exit(1)
 	}
 }
 
-func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, filter cera.ImageFilter, fields []string, pngMode string) error {
+func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, box cera.PageBox, filter cera.ImageFilter, fields []string, pngMode string) error {
 	data, err := os.ReadFile(in)
 	if err != nil {
 		return err
@@ -126,6 +133,7 @@ func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, tra
 		if err != nil {
 			return err
 		}
+		p = p.InBox(box)
 		name := out
 		if strings.Contains(out, "%d") {
 			name = fmt.Sprintf(out, n)

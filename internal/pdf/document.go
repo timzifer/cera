@@ -147,6 +147,11 @@ func version(src source) string {
 // Version reports the PDF version the header declares, "1.7" and the like.
 func (d *Document) Version() string { return d.version }
 
+// Packed reports whether the file is in the compact form of PDF 1.5: its
+// newest cross-reference section is a stream, as a file with object
+// streams has it. It is false for a file that needed a repair.
+func (d *Document) Packed() bool { return d.tab.Load().xrefStream }
+
 // Trailer returns the file's trailer dictionary, the newest value of every
 // key across the chain of cross-reference sections.
 func (d *Document) Trailer() Dict { return d.tab.Load().trailer }

@@ -47,6 +47,7 @@ var (
 	oidMessageDigest  = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 4}
 	oidSigningTime    = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 5}
 	oidTimeStampToken = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 14}
+	oidSigningCertV2  = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 47}
 
 	oidSHA1   = asn1.ObjectIdentifier{1, 3, 14, 3, 2, 26}
 	oidSHA256 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}

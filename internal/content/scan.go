@@ -56,11 +56,14 @@ const MaxOperands = 1 << 12
 
 // Scanner walks a content stream.
 type Scanner struct {
-	buf  []byte
-	pos  int
-	vals []Operand // flattened operands of the current operation
-	top  []int32   // indexes of the top-level operands in vals
-	op   []byte
+	buf []byte
+	pos int
+	// start is where the current operation begins: its first operand, or
+	// the operator of one without operands.
+	start int
+	vals  []Operand // flattened operands of the current operation
+	top   []int32   // indexes of the top-level operands in vals
+	op    []byte
 
 	// Inline image of the current BI operation.
 	imgDict int32 // index of its dictionary in vals, or -1
@@ -86,8 +89,12 @@ func (s *Scanner) Errors() int { return s.errs }
 func (s *Scanner) Next() (op []byte, ok bool) {
 	s.vals, s.top = s.vals[:0], s.top[:0]
 	s.imgData, s.imgDict = nil, -1
+	s.start = -1
 	for {
 		s.skipSpace()
+		if s.start < 0 {
+			s.start = s.pos
+		}
 		if s.pos >= len(s.buf) {
 			s.op = nil
 			return nil, false
@@ -127,6 +134,11 @@ func (s *Scanner) Next() (op []byte, ok bool) {
 
 // Op returns the operator of the current operation.
 func (s *Scanner) Op() []byte { return s.op }
+
+// Span returns where in the stream the current operation is: from its
+// first operand to past its operator, or past the data of an inline image.
+// A rewriter of content copies or replaces these bytes.
+func (s *Scanner) Span() (start, end int) { return s.start, s.pos }
 
 // Len returns the number of operands of the current operation.
 func (s *Scanner) Len() int { return len(s.top) }

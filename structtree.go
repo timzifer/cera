@@ -2,9 +2,6 @@ package cera
 
 import "github.com/timzifer/cera/internal/pdf"
 
-// maxStructNodes bounds the structure tree walked for the reading order.
-const maxStructNodes = 1 << 21
-
 // structRanks returns the place of each marked-content identifier of page
 // i in the structure tree (PDF 2.0, 14.7): the order in which a depth-first
 // walk meets them. It is nil when the document has no structure tree, or

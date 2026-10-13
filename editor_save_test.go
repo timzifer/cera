@@ -2,7 +2,11 @@ package cera
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"image"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/timzifer/cera/internal/pdf"
@@ -158,5 +162,86 @@ func TestSaveKeepsEncryption(t *testing.T) {
 		if cd, err := OpenWithPassword(changed, "new"); err != nil || cd.Permissions() != PermPrint || cd.Metadata().Title != "Secret (title)" {
 			t.Errorf("%s: with the new password: %v", method, err)
 		}
+	}
+}
+
+// TestSaveObjectStreams writes files in the compact form of PDF 1.5 and
+// in the classic one: as the edited document was, or as asked.
+func TestSaveObjectStreams(t *testing.T) {
+	for _, packedSource := range []bool{false, true} {
+		src := fieldsFile(packedSource)
+		doc := editOpen(t, src)
+		if doc.r.Packed() != packedSource {
+			t.Fatalf("the source is packed: %v, want %v", doc.r.Packed(), packedSource)
+		}
+		want := formString(doc)
+		sizes := map[ObjectStreamMode]int{}
+		for mode, packed := range map[ObjectStreamMode]bool{ObjectStreamsAsSource: packedSource, ObjectStreamsAlways: true, ObjectStreamsNever: false} {
+			e := doc.Edit()
+			state := doc.Form().NewState()
+			if err := state.SetValue(doc.Form().Field("name"), TextValue("packed")); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.SetFields(state); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			if err := e.SaveWith(&out, SaveOptions{ObjectStreams: mode}); err != nil {
+				t.Fatal(err)
+			}
+			d := editStrict(t, out.Bytes())
+			if d.Packed() != packed || bytes.Contains(out.Bytes(), []byte("/ObjStm")) != packed || bytes.Contains(out.Bytes(), []byte("\nxref\n")) == packed {
+				t.Errorf("source packed %v, mode %d: the file is packed: %v, want %v", packedSource, mode, d.Packed(), packed)
+			}
+			od := editOpen(t, out.Bytes())
+			if got := formString(od); got != strings.Replace(want, "name text (old)", "name text (packed)", 1) {
+				t.Errorf("source packed %v, mode %d: the form reads\n%s", packedSource, mode, got)
+			}
+			// The same page, to the pixel.
+			p, _ := doc.Page(0)
+			op, _ := od.Page(0)
+			state = od.Form().NewState()
+			if err := state.SetValue(od.Form().Field("name"), TextValue("old")); err != nil {
+				t.Fatal(err)
+			}
+			a := renderView(t, p)
+			b := image.NewRGBA(op.Bounds(1))
+			if err := op.Render(context.Background(), b, RenderOptions{Scale: 1, Background: white, Workers: 1, Form: state}); err != nil {
+				t.Fatal(err)
+			}
+			if n, _ := pixDiff(a, b); n != 0 {
+				t.Errorf("source packed %v, mode %d: %d pixels differ", packedSource, mode, n)
+			}
+			sizes[mode] = out.Len()
+		}
+		if sizes[ObjectStreamsAlways] >= sizes[ObjectStreamsNever] {
+			t.Errorf("source packed %v: packed %d bytes, classic %d", packedSource, sizes[ObjectStreamsAlways], sizes[ObjectStreamsNever])
+		}
+	}
+	if err := editOpen(t, fieldsFile(false)).Edit().SaveWith(io.Discard, SaveOptions{ObjectStreams: 7}); err == nil {
+		t.Error("an unknown mode was written")
+	}
+
+	// An encrypted document stays encrypted, packed too.
+	enc := testpdf.Encrypted("user", -1)
+	ed, err := OpenWithPassword(enc, "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	ee := ed.Edit()
+	ee.unguarded = true
+	if err := ee.SaveWith(&out, SaveOptions{ObjectStreams: ObjectStreamsAlways}); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(out.Bytes(), []byte("old")) {
+		t.Error("the value of a field of an encrypted file is in the clear")
+	}
+	od, err := OpenWithPassword(out.Bytes(), "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !od.r.Packed() || !od.Encrypted() || od.Form().Field("secret").Saved.Text() != "old" {
+		t.Errorf("packed %v, encrypted %v, the field reads %q", od.r.Packed(), od.Encrypted(), od.Form().Field("secret").Saved.Text())
 	}
 }

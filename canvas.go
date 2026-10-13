@@ -63,11 +63,14 @@ func (e *Editor) Draw(i int, over bool, draw func(c *Canvas)) error {
 		return err
 	}
 	ep := &e.pages[i]
+	if len(ep.redacts) > 0 {
+		return errors.New("cera: the page is redacted in this editor: write that first, then draw on the result")
+	}
 	w, h, m, err := ep.view()
 	if err != nil {
 		return err
 	}
-	c := &Canvas{w: w, h: h, cur: canvasState{opacity: 1, set: canvasGS{alpha: 1}}, glyphs: map[*fallbackFont]map[opentype.GlyphIndex]rune{}}
+	c := pageCanvas(w, h)
 	draw(c)
 	for len(c.stack) > 0 {
 		c.Restore()
@@ -723,94 +726,118 @@ func NewCanvasJPEG(data []byte) (*CanvasImage, error) {
 	return &CanvasImage{w: cfg.Width, h: cfg.Height, stream: pdf.NewStream(pdf.NewDict(entries...), data)}, nil
 }
 
+// canvasForms writes canvases as form XObjects, and once for the file the
+// fonts, images and pages they show.
+type canvasForms struct {
+	e      *Editor
+	doc    *pdfedit.Doc
+	std    map[string]pdf.Object
+	images map[*CanvasImage]pdf.Object
+	pages  map[canvasPage]pdf.Object
+}
+
+func (e *Editor) canvasForms(doc *pdfedit.Doc) *canvasForms {
+	return &canvasForms{e: e, doc: doc, std: map[string]pdf.Object{"Helvetica": pdfedit.NewRef(0).Object()},
+		images: map[*CanvasImage]pdf.Object{}, pages: map[canvasPage]pdf.Object{}}
+}
+
+func (cf *canvasForms) add(o pdf.Object) pdf.Object {
+	cf.doc.Objects = append(cf.doc.Objects, o)
+	return pdfedit.NewRef(len(cf.doc.Objects) - 1).Object()
+}
+
+// pageCanvas returns a canvas of w by h points.
+func pageCanvas(w, h float64) *Canvas {
+	return &Canvas{w: w, h: h, cur: canvasState{opacity: 1, set: canvasGS{alpha: 1}}, glyphs: map[*fallbackFont]map[opentype.GlyphIndex]rune{}}
+}
+
 // drawPlan writes what was drawn on the pages: a form XObject for each
-// drawing, and once for the file the fonts, images and pages they show.
-func (e *Editor) drawPlan(doc *pdfedit.Doc) {
-	add := func(o pdf.Object) pdf.Object {
-		doc.Objects = append(doc.Objects, o)
-		return pdfedit.NewRef(len(doc.Objects) - 1).Object()
-	}
-	std := map[string]pdf.Object{"Helvetica": pdfedit.NewRef(0).Object()}
-	images := map[*CanvasImage]pdf.Object{}
-	pages := map[canvasPage]pdf.Object{}
+// drawing.
+func (e *Editor) drawPlan(doc *pdfedit.Doc, cf *canvasForms) {
 	for i := range e.pages {
 		for _, dr := range e.pages[i].draws {
-			c := dr.c
-			var res []pdf.Entry
-
-			var fonts []pdf.Entry
-			for _, f := range c.fonts {
-				o, ok := std[f.std]
-				if !ok {
-					o = add(f.dict().Object())
-					std[f.std] = o
-				}
-				fonts = append(fonts, pdf.Entry{Key: f.res, Val: o})
-			}
-			for _, fb := range c.fbs {
-				fonts = append(fonts, pdf.Entry{Key: fb.res, Val: e.gen.fallback(fb)})
-				for gid, r := range c.glyphs[fb] {
-					e.gen.used(fb, gid, r)
-				}
-			}
-			if len(fonts) > 0 {
-				res = append(res, pdf.Entry{Key: "Font", Val: pdf.NewDict(fonts...).Object()})
-			}
-
-			var xo []pdf.Entry
-			for k, im := range c.images {
-				o, ok := images[im]
-				if !ok {
-					s := im.stream
-					if im.mask != nil {
-						data, _ := s.Unencrypted()
-						s = pdf.NewStream(s.Dict.With("SMask", add(im.mask.Object())), data)
-					}
-					o = add(s.Object())
-					images[im] = o
-				}
-				xo = append(xo, pdf.Entry{Key: pdf.Name(fmt.Sprintf("Im%d", k)), Val: o})
-			}
-			for k, cp := range c.pages {
-				o, ok := pages[cp]
-				if !ok {
-					o = e.pageForm(doc, cp)
-					pages[cp] = o
-				}
-				xo = append(xo, pdf.Entry{Key: pdf.Name(fmt.Sprintf("P%d", k)), Val: o})
-			}
-			if len(xo) > 0 {
-				res = append(res, pdf.Entry{Key: "XObject", Val: pdf.NewDict(xo...).Object()})
-			}
-
-			var gs []pdf.Entry
-			for k, g := range c.gs {
-				gs = append(gs, pdf.Entry{Key: pdf.Name(fmt.Sprintf("GS%d", k)), Val: pdf.NewDict(
-					pdf.Entry{Key: "Type", Val: pdf.Name("ExtGState").Object()},
-					pdf.Entry{Key: "ca", Val: pdf.Real(g.alpha)},
-					pdf.Entry{Key: "CA", Val: pdf.Real(g.alpha)},
-					pdf.Entry{Key: "BM", Val: blendNames[g.blend].Object()},
-				).Object()})
-			}
-			if len(gs) > 0 {
-				res = append(res, pdf.Entry{Key: "ExtGState", Val: pdf.NewDict(gs...).Object()})
-			}
-
-			matrix := make(pdf.Array, 6)
-			for k, v := range dr.m {
-				matrix[k] = pdf.Real(v)
-			}
-			form := pdfwrite.Flate(pdf.NewDict(
-				pdf.Entry{Key: "Type", Val: pdf.Name("XObject").Object()},
-				pdf.Entry{Key: "Subtype", Val: pdf.Name("Form").Object()},
-				pdf.Entry{Key: "BBox", Val: pdf.Array{pdf.Integer(0), pdf.Integer(0), pdf.Real(c.w), pdf.Real(c.h)}.Object()},
-				pdf.Entry{Key: "Matrix", Val: matrix.Object()},
-				pdf.Entry{Key: "Resources", Val: pdf.NewDict(res...).Object()},
-			), c.cw)
-			ref, _ := add(form.Object()).Ref()
-			doc.Pages[i].Draws = append(doc.Pages[i].Draws, pdfedit.Draw{Form: ref, Under: dr.under})
+			doc.Pages[i].Draws = append(doc.Pages[i].Draws, pdfedit.Draw{Form: cf.form(dr.c, dr.m), Under: dr.under})
 		}
 	}
+}
+
+// form adds what was drawn on c as a form XObject, whose matrix m leads
+// from the canvas to the space the form is painted in.
+func (cf *canvasForms) form(c *Canvas, m Matrix) pdf.Ref {
+	e, add := cf.e, cf.add
+	var res []pdf.Entry
+
+	var fonts []pdf.Entry
+	for _, f := range c.fonts {
+		o, ok := cf.std[f.std]
+		if !ok {
+			o = add(f.dict().Object())
+			cf.std[f.std] = o
+		}
+		fonts = append(fonts, pdf.Entry{Key: f.res, Val: o})
+	}
+	for _, fb := range c.fbs {
+		fonts = append(fonts, pdf.Entry{Key: fb.res, Val: e.gen.fallback(fb)})
+		for gid, r := range c.glyphs[fb] {
+			e.gen.used(fb, gid, r)
+		}
+	}
+	if len(fonts) > 0 {
+		res = append(res, pdf.Entry{Key: "Font", Val: pdf.NewDict(fonts...).Object()})
+	}
+
+	var xo []pdf.Entry
+	for k, im := range c.images {
+		o, ok := cf.images[im]
+		if !ok {
+			s := im.stream
+			if im.mask != nil {
+				data, _ := s.Unencrypted()
+				s = pdf.NewStream(s.Dict.With("SMask", add(im.mask.Object())), data)
+			}
+			o = add(s.Object())
+			cf.images[im] = o
+		}
+		xo = append(xo, pdf.Entry{Key: pdf.Name(fmt.Sprintf("Im%d", k)), Val: o})
+	}
+	for k, cp := range c.pages {
+		o, ok := cf.pages[cp]
+		if !ok {
+			o = e.pageForm(cf.doc, cp)
+			cf.pages[cp] = o
+		}
+		xo = append(xo, pdf.Entry{Key: pdf.Name(fmt.Sprintf("P%d", k)), Val: o})
+	}
+	if len(xo) > 0 {
+		res = append(res, pdf.Entry{Key: "XObject", Val: pdf.NewDict(xo...).Object()})
+	}
+
+	var gs []pdf.Entry
+	for k, g := range c.gs {
+		gs = append(gs, pdf.Entry{Key: pdf.Name(fmt.Sprintf("GS%d", k)), Val: pdf.NewDict(
+			pdf.Entry{Key: "Type", Val: pdf.Name("ExtGState").Object()},
+			pdf.Entry{Key: "ca", Val: pdf.Real(g.alpha)},
+			pdf.Entry{Key: "CA", Val: pdf.Real(g.alpha)},
+			pdf.Entry{Key: "BM", Val: blendNames[g.blend].Object()},
+		).Object()})
+	}
+	if len(gs) > 0 {
+		res = append(res, pdf.Entry{Key: "ExtGState", Val: pdf.NewDict(gs...).Object()})
+	}
+
+	matrix := make(pdf.Array, 6)
+	for k, v := range m {
+		matrix[k] = pdf.Real(v)
+	}
+	form := pdfwrite.Flate(pdf.NewDict(
+		pdf.Entry{Key: "Type", Val: pdf.Name("XObject").Object()},
+		pdf.Entry{Key: "Subtype", Val: pdf.Name("Form").Object()},
+		pdf.Entry{Key: "BBox", Val: pdf.Array{pdf.Integer(0), pdf.Integer(0), pdf.Real(c.w), pdf.Real(c.h)}.Object()},
+		pdf.Entry{Key: "Matrix", Val: matrix.Object()},
+		pdf.Entry{Key: "Resources", Val: pdf.NewDict(res...).Object()},
+	), c.cw)
+	ref, _ := add(form.Object()).Ref()
+	return ref
 }
 
 // pageForm adds page cp as a form XObject: its content, decoded and

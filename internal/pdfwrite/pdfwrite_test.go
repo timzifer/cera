@@ -305,3 +305,76 @@ func TestCompact(t *testing.T) {
 		t.Errorf("/Other %v", other)
 	}
 }
+
+// TestPacked writes a file in the compact form: object streams of the
+// objects that are not streams, a cross-reference stream, and everything
+// read back as it was written; also encrypted.
+func TestPacked(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		w := New()
+		w.Packed = true
+		root := emptyCatalog(w)
+		want := map[Ref]string{}
+		// More than one object stream holds, with streams between.
+		for i := range 2*objStmSize + 50 {
+			var o pdf.Object
+			switch i % 4 {
+			case 0:
+				o = pdf.NewDict(pdf.Entry{Key: "N", Val: pdf.Integer(int64(i))}, pdf.Entry{Key: "S", Val: pdf.String(fmt.Appendf(nil, "(text %d) \\ \r\n", i))}).Object()
+			case 1:
+				o = pdf.Array{pdf.Integer(int64(i)), pdf.Real(0.5), pdf.Name("A B").Object(), root.Object(), pdf.Null, pdf.Boolean(true)}.Object()
+			case 2:
+				o = pdf.String(fmt.Appendf(nil, "string %d", i))
+			default:
+				o = pdf.NewStream(pdf.NewDict(pdf.Entry{Key: "K", Val: pdf.String([]byte("in a stream's dictionary"))}), fmt.Appendf(nil, "data %d", i)).Object()
+			}
+			want[w.Add(o)] = o.String()
+		}
+		var password string
+		if encrypted {
+			password = "user"
+			crypt, dict, err := pdf.NewEncryptor(password, "owner", pdf.AllPermissions, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.Crypt, w.Encrypt = crypt, w.Add(dict.Object())
+		}
+		var out bytes.Buffer
+		if err := w.Write(&out, Trailer{Root: root}); err != nil {
+			t.Fatal(err)
+		}
+		d, err := pdf.OpenWith(out.Bytes(), pdf.Options{Password: password})
+		if err != nil {
+			t.Fatalf("encrypted %v: the output does not open: %v", encrypted, err)
+		}
+		if d.Repaired() || !d.Packed() || d.Encrypted() != encrypted {
+			t.Fatalf("encrypted %v: repaired %v, packed %v, encrypted %v", encrypted, d.Repaired(), d.Packed(), d.Encrypted())
+		}
+		for r, s := range want {
+			o, err := d.Get(pdf.Ref{Num: int32(r)})
+			if err != nil {
+				t.Fatalf("encrypted %v: object %d: %v", encrypted, r, err)
+			}
+			got := o.String()
+			if st, ok := o.Stream(); ok {
+				// As it was added: without what writing it adds.
+				got = pdf.NewStream(pdf.NewDict(pdf.Entry{Key: "K", Val: st.Dict.Get("K")}), d.Decode(st).Data).Object().String()
+			}
+			if got != s {
+				t.Fatalf("encrypted %v: object %d reads %s, want %s", encrypted, r, got, s)
+			}
+		}
+		// Two object streams, none of them with a stream in it; no
+		// table; and of the text of the objects nothing in the clear
+		// where the file is encrypted.
+		if n := bytes.Count(out.Bytes(), []byte("/Type /ObjStm")); n != 2 {
+			t.Errorf("encrypted %v: %d object streams, want 2", encrypted, n)
+		}
+		if bytes.Contains(out.Bytes(), []byte("\nxref\n")) || bytes.Contains(out.Bytes(), []byte("trailer")) {
+			t.Errorf("encrypted %v: the file has a cross-reference table", encrypted)
+		}
+		if encrypted && (bytes.Contains(out.Bytes(), []byte("in a stream's dictionary")) || bytes.Contains(out.Bytes(), []byte("string 2"))) {
+			t.Error("text of an encrypted file is in the clear")
+		}
+	}
+}
