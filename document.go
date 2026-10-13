@@ -81,6 +81,7 @@ type Document struct {
 	// used, with the key it is counted under — and their tables, at most
 	// maxCMYKProfiles; under csMu.
 	iccSpaces  map[pdf.Ref]csEntry
+	iccTables  int // grey and RGB profiles tabulated
 	cmykTables map[*cmyk.Table]bool
 
 	// Transfer functions by ExtGState reference.

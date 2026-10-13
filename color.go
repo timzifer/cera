@@ -293,24 +293,34 @@ func (d *Document) makeColorSpace(o pdf.Object, res pdf.Dict, depth int) (cs *co
 			return nil, ""
 		}
 		n, _ := d.integer(s.Dict.Get("N"))
+		ref, _ := a[1].Ref()
 		if n == 4 {
-			ref, _ := a[1].Ref()
 			return d.iccCMYK(ref, s)
+		}
+		if e, ok := d.iccTabled(ref); ok {
+			return e.cs, e.approx
 		}
 		if prof, srgb := iccProfile(d.r.Decode(s).Data, n); prof != nil {
 			if srgb {
 				return d.deviceSpace(prof.n), ""
 			}
-			return &colorSpace{kind: csCIE, n: prof.n, cie: prof}, ""
+			cs := &colorSpace{kind: csCIE, n: prof.n, cie: prof}
+			if prof.table != nil {
+				return d.keepTabled(ref, cs)
+			}
+			return cs, ""
 		}
+		// A profile cera does not read: the device space of as many
+		// components, or the alternate the space names.
 		switch n {
 		case 1:
-			return spaceGray, ""
+			return spaceGray, "icc-profile"
 		case 3:
-			return spaceRGB, ""
+			return spaceRGB, "icc-profile"
 		}
 		if alt, ok := s.Dict.Lookup("Alternate"); ok {
-			return d.colorSpace(alt, res, depth+1)
+			cs, _ := d.colorSpace(alt, res, depth+1)
+			return cs, "icc-profile"
 		}
 		return nil, ""
 	case "Indexed", "I":
@@ -341,6 +351,41 @@ func (d *Document) makeColorSpace(o pdf.Object, res pdf.Dict, depth int) (cs *co
 		return cs, ""
 	}
 	return nil, ""
+}
+
+// iccTabled returns the space of the grey or RGB profile object ref that
+// was tabulated before.
+func (d *Document) iccTabled(ref pdf.Ref) (csEntry, bool) {
+	if ref == (pdf.Ref{}) {
+		return csEntry{}, false
+	}
+	d.csMu.Lock()
+	defer d.csMu.Unlock()
+	e, ok := d.iccSpaces[ref]
+	return e, ok
+}
+
+// keepTabled keeps cs, the space of a grey or RGB profile built from
+// lookup tables (object ref, if it is one), for whatever names the
+// profile again: tabulating it is work, and the table is memory. One
+// table too many for a document is not kept; its space is the device
+// space of as many components, counted as "icc-budget".
+func (d *Document) keepTabled(ref pdf.Ref, cs *colorSpace) (*colorSpace, string) {
+	d.csMu.Lock()
+	defer d.csMu.Unlock()
+	e := csEntry{cs, ""}
+	if d.iccTables >= maxICCTables {
+		e = csEntry{d.deviceSpace(cs.n), "icc-budget"}
+	} else {
+		d.iccTables++
+	}
+	if ref != (pdf.Ref{}) {
+		if d.iccSpaces == nil {
+			d.iccSpaces = map[pdf.Ref]csEntry{}
+		}
+		d.iccSpaces[ref] = e
+	}
+	return e.cs, e.approx
 }
 
 // iccCMYK is an ICCBased space of four components, its profile in s
