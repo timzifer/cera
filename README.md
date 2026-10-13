@@ -94,7 +94,8 @@ err = e.Save(w)                            // a new file, or e.Update(w): the fi
 | | |
 |---|---|
 | [Usage](docs/usage.md) | rendering options, font providers, layers, annotations, forms, devices |
-| [Features](docs/features.md) | what is drawn today, and what is counted as unsupported |
+| [Features](docs/features.md) | what is drawn, read and written today, and what is counted as unsupported |
+| [Security](SECURITY.md) | where to report a crash, a hang or a budget that does not hold, and what counts |
 | [Architecture](docs/architecture.md) | building blocks, display list, glyph and image caches, transparency, shadings, colour |
 | [Budgets](docs/budgets.md) | every bound on work and memory per input |
 | [Performance](docs/performance.md) | speed against MuPDF, PDFium, hayro, pdf.js, Poppler and Ghostscript, as ratios |
