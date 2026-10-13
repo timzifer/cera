@@ -187,8 +187,14 @@ func (d *Document) PageByLabel(label string) (int, bool) {
 // on other pages. The ranges are written anew for the pages of the result;
 // a page from another document has its label when it was imported with it
 // ([ImportOptions.Labels]), and else none. It reports false when no page
-// has a label to keep, or none moved.
+// has a label to keep, or none moved. Labels set by SetPageLabels are
+// the labels instead; the dictionary is then zero for a result without.
 func (e *Editor) pageLabels() (pdf.Dict, bool) {
+	if e.labelsSet {
+		// Set: these, or none where the document has some.
+		labels := e.setLabels()
+		return labels, !labels.IsZero() || e.base != nil && len(e.base.labelRanges()) > 0
+	}
 	keeps := func(p editPage) bool {
 		return (p.own || p.labels) && len(p.src.labelRanges()) > 0
 	}

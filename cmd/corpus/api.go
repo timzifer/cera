@@ -35,7 +35,8 @@ import (
 // and its first page compared with what it was, or for a redaction read
 // for what should be gone. A file saved smaller has every page looked at
 // compared; a linearised one says of itself how long it is; a page at
-// half its size is drawn twice as large and compared.
+// half its size is drawn twice as large and compared; the outline and
+// the page labels, set as they read, read the same.
 //
 // The gate is that of rendering: no panic, no hang, no deadline.
 // Everything else it finds is a difference, reported with its file.
@@ -96,6 +97,20 @@ func (r *apiResult) differ(format string, args ...any) {
 	if len(r.differences) < maxDifferences {
 		r.differences = append(r.differences, fmt.Sprintf(format, args...))
 	}
+}
+
+// outlineText writes an outline for comparing: an entry a line, with
+// where it leads.
+func outlineText(items []cera.OutlineItem, depth int) string {
+	var b strings.Builder
+	for _, it := range items {
+		fmt.Fprintf(&b, "%d %q %v %v %v", depth, it.Title, it.Open, it.Bold, it.Italic)
+		if t := it.Target; t != nil {
+			fmt.Fprintf(&b, " %q %d %s %q %q %q %v", t.URI, t.Page, t.Fit, t.Named, t.Action, t.NamedAction, t.External)
+		}
+		b.WriteString("\n" + outlineText(it.Children, depth+1))
+	}
+	return b.String()
 }
 
 // linearised matches the first object of a linearised file.
@@ -248,6 +263,70 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		out.Reset()
 		if r.check("save, the other form", doc.Edit().SaveWith(&out, other)) {
 			reopen("save, the other form", out.Bytes(), true)
+		}
+	})
+	r.step("outline", func() {
+		// The outline and the page labels set as they read: the result
+		// reads the same. Then without its last page, pruned.
+		want := outlineText(doc.Outline(), 0)
+		ranges := doc.PageLabels()
+		if want == "" && ranges == nil {
+			return
+		}
+		e := doc.Edit()
+		if !r.check("outline", e.SetOutline(e.Outline())) || ranges != nil && !r.check("page labels", e.SetPageLabels(ranges)) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("outline: save", e.Save(&out)) {
+			return
+		}
+		od := reopen("outline", out.Bytes(), true)
+		if od == nil {
+			return
+		}
+		if got := outlineText(od.Outline(), 0); got != want {
+			r.differ("outline: set as it reads, it reads differently: %d bytes for %d", len(got), len(want))
+		}
+		for i := range n {
+			if a, b := doc.PageLabel(i), od.PageLabel(i); a != b && ranges != nil {
+				r.differ("page labels: page %d is labelled %q, was %q", i+1, b, a)
+				break
+			}
+		}
+		if doc.NumPages() < 2 || want == "" {
+			return
+		}
+		e = doc.Edit()
+		e.PruneOutline()
+		if !r.check("outline: delete", e.DeletePages(doc.NumPages()-1)) {
+			return
+		}
+		out.Reset()
+		if !r.check("outline: pruned: save", e.Save(&out)) {
+			return
+		}
+		pd, err := cera.OpenWith(out.Bytes(), opt)
+		if err != nil {
+			r.differ("outline: pruned: the file does not open again: %v", err)
+			return
+		}
+		r.saved++
+		// No entry leads to the page that is gone, and none is new.
+		var count func(items []cera.OutlineItem) (entries, gone int)
+		count = func(items []cera.OutlineItem) (entries, gone int) {
+			for _, it := range items {
+				if t := it.Target; t != nil && t.URI == "" && !t.External && t.Page >= pd.NumPages() {
+					gone++
+				}
+				e, g := count(it.Children)
+				entries, gone = entries+1+e, gone+g
+			}
+			return entries, gone
+		}
+		had, _ := count(doc.Outline())
+		if entries, gone := count(pd.Outline()); entries > had || gone > 0 {
+			r.differ("outline: pruned, it has %d entries of %d, %d to the page that is gone", entries, had, gone)
 		}
 	})
 	r.step("resize", func() {

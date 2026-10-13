@@ -79,6 +79,12 @@ type Doc struct {
 	// Linear writes a new file linearised ([Write]); see
 	// pdfwrite.Writer.Linear.
 	Linear bool
+	// With OutlineSet, Outline is the outline of the result in place of
+	// the edited document's (outline.go): alone, or with what imported
+	// pages bring after it. OutlinePrune leaves out the entries that led
+	// to pages which are not in the result.
+	Outline                                []OutlineItem
+	OutlineSet, OutlineAlone, OutlinePrune bool
 }
 
 // Sig is a signature dictionary an update adds: Objects[Object], with a
@@ -140,7 +146,7 @@ func Update(w io.Writer, doc Doc) error {
 	if len(doc.Pages) == 0 {
 		return errors.New("the document has no pages")
 	}
-	if unchanged(doc) && len(doc.Patches) == 0 {
+	if unchanged(doc) && len(doc.Patches) == 0 && !doc.OutlineSet {
 		return base.WriteSource(w)
 	}
 	b := newBuilder(doc, &ub)
@@ -206,6 +212,9 @@ type builder struct {
 	// names of an old /Dests dictionary are in that tree.
 	outlines, names2 pdf.Object
 	dropDests        bool
+	// noOutline says that the output has no outline though the edited
+	// document has one.
+	noOutline bool
 
 	// pageRes holds, by output page, the resources of the pages that lose
 	// some to pruning, in their source's space; srcOwn says that
@@ -466,8 +475,17 @@ func (b *builder) build() error {
 	for _, x := range b.sources {
 		x.finishFields()
 	}
-	if len(b.doc.Imports) > 0 {
+	switch {
+	case b.doc.OutlineSet:
+		if root, ok := b.setOutline(); ok {
+			b.outlines = root.Object()
+		} else {
+			b.noOutline = true
+		}
+	case len(b.doc.Imports) > 0:
 		b.mergeOutlines()
+	}
+	if len(b.doc.Imports) > 0 {
 		b.mergeDests()
 	}
 	b.form = b.formDict()
@@ -666,7 +684,7 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 					continue // below
 				}
 			case "Outlines":
-				if !b.outlines.IsNull() {
+				if !b.outlines.IsNull() || b.noOutline {
 					continue
 				}
 			case "Names":
@@ -956,6 +974,18 @@ func (b *builder) buildPatches() error {
 		b.info = b.w.Add(b.doc.Info.Object())
 	} else if info, ok := x.d.Trailer().Get("Info").Ref(); ok {
 		b.info = x.ref(info)
+	}
+	if b.doc.OutlineSet {
+		// The catalogue names the new outline, or none.
+		cat, ok := x.obj(r).Dict()
+		if !ok || x.obj(r).Kind() != pdf.KindDict {
+			return ErrRepaired
+		}
+		p := Patch{Del: []pdf.Name{"Outlines"}}
+		if root, ok := b.setOutline(); ok {
+			p = Patch{Set: []pdf.Entry{{Key: "Outlines", Val: b.alias(root)}}}
+		}
+		b.patched[r.Num] = apply(cat, p).Object()
 	}
 	x.setPatched()
 	return nil

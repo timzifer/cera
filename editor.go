@@ -99,6 +99,15 @@ type ImportOptions struct {
 // It is not safe for concurrent use, but the documents it uses may be
 // rendered while it is. Its methods change nothing when they fail.
 type Editor struct {
+	// lastID is the identity given to a page last; outline is the outline
+	// SetOutline set, and outlinePrune what PruneOutline asked for; labels
+	// are the page labels SetPageLabels set.
+	lastID                   int
+	outline                  []outlineNode
+	outlineSet, outlinePrune bool
+	labels                   []LabelRange
+	labelsSet                bool
+
 	base  *Document // the edited document; nil for NewEditor
 	pages []editPage
 	// imports is what the pages imported from a document bring with
@@ -135,6 +144,9 @@ type Editor struct {
 // editPage is one page of the result: page index of src, turned by rotate
 // more degrees. An own page is a page of the edited document.
 type editPage struct {
+	// id tells the page from the others of the result, wherever it is
+	// moved: an outline entry leads to it by that.
+	id     int
 	src    *Document
 	index  int
 	rotate int
@@ -158,7 +170,7 @@ type editPage struct {
 func (d *Document) Edit() *Editor {
 	e := &Editor{base: d}
 	for i := range d.NumPages() {
-		e.pages = append(e.pages, editPage{src: d, index: i, own: true})
+		e.pages = append(e.pages, editPage{id: e.newID(), src: d, index: i, own: true})
 	}
 	return e
 }
@@ -202,6 +214,9 @@ func (e *Editor) ImportPagesWith(at int, src *Document, opt ImportOptions, pages
 			return fmt.Errorf("cera: page %d of the selection: index %d is out of range [0, %d)", i, p.Index, n)
 		}
 		add[i] = editPage{src: src, index: p.Index, rotate: p.Rotate, fields: p.Fields, labels: opt.Labels}
+	}
+	for i := range add {
+		add[i].id = e.newID()
 	}
 	e.pages = append(e.pages[:at], append(add, e.pages[at:]...)...)
 	if src != e.base && (opt.Outline || opt.Destinations) {
@@ -283,8 +298,9 @@ func (e *Editor) check(i int) error {
 // for a change an encrypted document's permissions do not allow, and
 // [ErrCertified] for changes a certification signature does not allow:
 // any with DocMDP permissions 1, changes of the pages, of their boxes and
-// size, drawings on them and flattened annotations with 2 and 3, added
-// annotations with 1 and 2. The editor may
+// size, of the outline and the page labels, drawings on the pages and
+// flattened annotations with 2 and 3, added annotations with 1 and 2. The
+// editor may
 // be updated again. Nothing is written when Update fails, but
 // for an error of w itself.
 func (e *Editor) Update(w io.Writer) (err error) {
@@ -312,6 +328,7 @@ func (e *Editor) updatable() error {
 		return fmt.Errorf("%w: an update keeps the bytes a redaction is to remove: save the document as a new file", ErrNoUpdate)
 	}
 	if sg := e.base.signing(); !e.unguarded && (sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated() || e.meta != nil) ||
+		sg.mdp != 0 && (e.outlined() || e.labelsSet) ||
 		sg.mdp == 2 && (e.pagesChanged() || e.annotated()) || sg.mdp == 3 && e.pagesChanged() ||
 		sg.mdp != 0 && (e.flattens() || e.drawsOn() || e.formed() || e.resized())) {
 		return ErrCertified
@@ -321,7 +338,7 @@ func (e *Editor) updatable() error {
 		if e.pagesChanged() && perm&(pdf.PermModify|pdf.PermAssemble) == 0 ||
 			len(e.fields) > 0 && perm&(pdf.PermFillForms|pdf.PermAnnotate|pdf.PermModify) == 0 ||
 			e.annotated() && perm&(pdf.PermAnnotate|pdf.PermModify) == 0 ||
-			(e.flattens() || e.drawsOn() || e.formed() || e.resized() || e.meta != nil) && perm&pdf.PermModify == 0 {
+			(e.flattens() || e.drawsOn() || e.formed() || e.resized() || e.outlined() || e.labelsSet || e.meta != nil) && perm&pdf.PermModify == 0 {
 			return ErrNotPermitted
 		}
 	}
@@ -361,9 +378,14 @@ func (e *Editor) plan() pdfedit.Doc {
 		if e.base == nil {
 			doc.PageLabels = labels
 		} else if root, ok := e.base.r.Trailer().Get("Root").Ref(); ok {
-			doc.Patches = append(doc.Patches, pdfedit.Patch{Ref: root, Set: []pdf.Entry{{Key: "PageLabels", Val: labels.Object()}}})
+			p := pdfedit.Patch{Ref: root, Del: []pdf.Name{"PageLabels"}}
+			if !labels.IsZero() {
+				p = pdfedit.Patch{Ref: root, Set: []pdf.Entry{{Key: "PageLabels", Val: labels.Object()}}}
+			}
+			doc.Patches = append(doc.Patches, p)
 		}
 	}
+	e.outlinePlan(&doc)
 	for src, opt := range e.imports {
 		if doc.Imports == nil {
 			doc.Imports = map[*pdf.Document]pdfedit.Import{}

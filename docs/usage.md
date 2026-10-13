@@ -852,6 +852,39 @@ cera.ObjectStreamsAlways})` packs any file, which makes a form of
 thousands of small objects a tenth smaller, and `ObjectStreamsNever`
 writes the classic form for a reader that knows no other.
 
+The outline and the page labels of a result are the edited document's,
+kept with their pages, unless they are set:
+
+```go
+// The outline as it stands, with the pages of the result as targets.
+items := e.Outline()
+items[0].Title = "Introduction"
+items = append(items, cera.OutlineItem{Title: "Appendix", Target: &cera.LinkTarget{Page: 12}})
+err := e.SetOutline(items)
+
+// After DeletePages: no entries that lead to pages which are gone.
+e.PruneOutline()
+
+// i, ii, then 1, 2, 3 from the third page on.
+err = e.SetPageLabels([]cera.LabelRange{
+	{Start: 0, Style: cera.LabelRomanLower},
+	{Start: 2, Style: cera.LabelDecimal},
+})
+```
+
+`SetOutline` takes the entries of reading. A target names a page of the
+result and stays with that page when pages are moved afterwards; besides
+pages an entry may lead to an address, a named destination or another
+file. Entries that come from `Editor.Outline` or from the document's
+outline and still lead where they led are written with what the
+document has for them — a JavaScript action, a structure element —, so
+renaming, reordering and removing entries loses nothing of the others.
+An outline that is set is the whole outline: what `ImportPagesWith`
+would bring is not added. `PruneOutline` works on the outline as it is
+written, set or not. `SetPageLabels` labels the pages by their place when
+the result is written; `Document.PageLabels` reads the ranges of a
+document.
+
 The size of pages changes in three ways, none of which rewrites their
 content:
 

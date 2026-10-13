@@ -158,6 +158,10 @@ Fonts a file does not embed:
 - `Save` writes object streams and a cross-reference stream where the
   document had them, or on request (`SaveOptions.ObjectStreams`); also
   encrypted
+- `Editor.SetOutline`, `Outline` and `PruneOutline` (bookmarks added,
+  renamed, reordered, built for a merged file; targets that stay with
+  their pages; entries of deleted pages dropped) and `SetPageLabels`;
+  `Document.PageLabels`
 - `Editor.SetPageBox`, `ResizePage` (a page on another format: content as
   a form through a matrix, annotations and boxes with it) and `AddSheets`
   (n-up, imposition)

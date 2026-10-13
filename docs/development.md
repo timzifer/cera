@@ -52,7 +52,8 @@ compared with what the document shows (a page is reported when more than
 everything that makes it smaller has every page looked at compared, and
 the report says what the files come to that way; a file saved linearised
 must say of itself how long it is, and a first page resized to half is
-drawn twice as large and compared. The gate is that of
+drawn twice as large and compared; the outline and the page labels are
+set as they read and read again. The gate is that of
 rendering: a panic, a hang or a deadline fails the run, and with
 `-fail-open` a file that does not open. Everything else is listed in the
 report as a difference, and what a document does not allow — it is signed,

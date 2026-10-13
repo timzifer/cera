@@ -1060,6 +1060,17 @@ func (w *annotWriter) endings(a *NewAnnotation) pdf.Object {
 // in the document, /A for an action.
 func (w *annotWriter) link(t *LinkTarget) pdf.Entry {
 	d := w.e.base
+	return linkEntry(t, func(i int) pdf.Object {
+		if ref, ok := d.r.PageRef(i + 1); ok {
+			return ref.Object()
+		}
+		return pdf.Null
+	})
+}
+
+// linkEntry returns the entry that says where t leads; page gives the
+// object of a page of the document.
+func linkEntry(t *LinkTarget, page func(i int) pdf.Object) pdf.Entry {
 	action := func(e ...pdf.Entry) pdf.Entry {
 		return pdf.Entry{Key: "A", Val: pdf.NewDict(append([]pdf.Entry{{Key: "Type", Val: pdf.Name("Action").Object()}}, e...)...).Object()}
 	}
@@ -1100,11 +1111,7 @@ func (w *annotWriter) link(t *LinkTarget) pdf.Entry {
 	case t.Named != "":
 		return pdf.Entry{Key: "Dest", Val: pdf.String(encodeText(t.Named))}
 	}
-	page := pdf.Null
-	if ref, ok := d.r.PageRef(t.Page + 1); ok {
-		page = ref.Object()
-	}
-	return pdf.Entry{Key: "Dest", Val: view(page)}
+	return pdf.Entry{Key: "Dest", Val: view(page(t.Page))}
 }
 
 // appearance makes the appearance stream of the annotation a as the
