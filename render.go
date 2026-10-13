@@ -74,8 +74,9 @@ type RenderOptions struct {
 	// value differs from the one the document saved are drawn with a
 	// generated appearance (or, for buttons, the appearance of their
 	// state). Each is recorded once per value and scale and drawn over
-	// the page; the page is not interpreted again. Without it the saved
-	// values are shown.
+	// the page; the page is not interpreted again. Annotations that lie
+	// on such a widget and follow it in /Annots stay above it. Without
+	// it the saved values are shown.
 	Form *FormState
 	// ImageFilter sets how magnified images that do not ask for
 	// /Interpolate are sampled: ImageNearest (the default) samples the
@@ -291,7 +292,7 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 	af := annotFilter{mode: opt.Annotations, skip: opt.SkipAnnotation, linkBorders: opt.LinkBorders}
 	// Widgets showing values of opt.Form are drawn from lists of their
 	// own, over the page; the page's list leaves them out.
-	var overlays []*displayList
+	var overlays []overlay
 	pageAF := af
 	if vals, hide := opt.Form.snapshot(), opt.Form.hidden(); len(vals)+len(hide) > 0 && opt.Form.form == p.doc.Form() {
 		var own map[int]bool
@@ -307,20 +308,76 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 	if report && len(overlays) == 0 {
 		band, report = opt.Band, false
 	}
-	if derr := dl.render(dst, region, opt.Background, true, band, opt.Workers, vis, &pageAF, lim, iso, opt.ImageFilter); derr != nil && err == nil {
+	// An annotation that lies on such a widget, after it in /Annots, is
+	// drawn after the widget: the page's list stops before it, and what
+	// follows of its annotations is drawn between the widgets. Nothing
+	// lying on a widget, the list is drawn in one piece.
+	cuts := dl.cuts(overlays, &pageAF, region)
+	first := pageAF
+	if len(cuts) > 0 {
+		at := cuts[0]
+		first.skip = func(i int) bool { return i > at || pageAF.skip(i) }
+	}
+	if derr := dl.render(dst, region, opt.Background, true, band, opt.Workers, vis, &first, lim, iso, opt.ImageFilter); derr != nil && err == nil {
 		err = derr
 	}
+	pageVis := vis
 	if len(overlays) > 0 {
 		if vis = opt.Layers; vis == nil {
 			vis = p.doc.defaultVisibility(opt.Usage)
 		}
 	}
 	for _, ol := range overlays {
-		if derr := ol.render(dst, region, color.RGBA{}, false, nil, opt.Workers, vis, &af, lim, false, opt.ImageFilter); derr != nil && err == nil {
+		if derr := ol.dl.render(dst, region, color.RGBA{}, false, nil, opt.Workers, vis, &af, lim, false, opt.ImageFilter); derr != nil && err == nil {
 			err = derr
+		}
+		if len(cuts) == 0 || cuts[0] != ol.at {
+			continue
+		}
+		// The annotations up to the next widget something lies on. Like
+		// the widgets they are drawn onto the background, not into the
+		// group of the page.
+		lo, hi := cuts[0], math.MaxInt
+		if cuts = cuts[1:]; len(cuts) > 0 {
+			hi = cuts[0]
+		}
+		part := pageAF
+		part.alone = true
+		part.skip = func(i int) bool { return i <= lo || i > hi || pageAF.skip(i) }
+		if r := dl.covered(lo, hi, &part, region); !r.Empty() {
+			if derr := dl.render(dst, r, color.RGBA{}, false, nil, opt.Workers, pageVis, &part, lim, false, opt.ImageFilter); derr != nil && err == nil {
+				err = derr
+			}
 		}
 	}
 	return err
+}
+
+// overlay is the list of a widget drawn over the page: annotation at of
+// its /Annots.
+type overlay struct {
+	at int
+	dl *displayList
+}
+
+// cuts returns the widgets among overlays that an annotation of the list
+// lies on inside region: one after the widget in /Annots that af shows
+// and that touches what the widget draws. They are the annotation
+// indices of the widgets, ascending; nil if l cannot be drawn in parts.
+func (l *displayList) cuts(overlays []overlay, af *annotFilter, region image.Rectangle) (at []int) {
+	if l.annots < 0 || af.mode == AnnotsNone {
+		return nil
+	}
+	for _, ol := range overlays {
+		if len(ol.dl.annotBoxes) == 0 {
+			continue
+		}
+		box := ol.dl.annotBoxes[0].box.Intersect(region)
+		if !box.Empty() && !l.covered(ol.at, math.MaxInt, af, box).Empty() {
+			at = append(at, ol.at)
+		}
+	}
+	return at
 }
 
 // widgetList is the display list of one widget showing a value other than
@@ -337,8 +394,8 @@ type widgetList struct {
 // gives values and of those hide shows though the document hides them,
 // recording those not cached, and the annotation indices they replace in
 // the page's list, with those hide hides.
-func (p *Page) widgetLists(vals map[*Field]Value, hide map[*Widget]bool, scale float64, overprint bool, lim *limit) ([]*displayList, map[int]bool) {
-	var lists []*displayList
+func (p *Page) widgetLists(vals map[*Field]Value, hide map[*Widget]bool, scale float64, overprint bool, lim *limit) ([]overlay, map[int]bool) {
+	var lists []overlay
 	var own map[int]bool
 	for _, w := range p.doc.Form().PageWidgets(p.index) {
 		v, ok := vals[w.Field]
@@ -380,7 +437,7 @@ func (p *Page) widgetLists(vals map[*Field]Value, hide map[*Widget]bool, scale f
 			own = map[int]bool{}
 		}
 		own[w.Annotation] = true
-		lists = append(lists, wl.dl)
+		lists = append(lists, overlay{w.Annotation, wl.dl})
 	}
 	return lists, own
 }
@@ -399,6 +456,7 @@ func (p *Page) recordWidget(w *Widget, vals map[*Field]Value, shown bool, scale 
 	dl.scale, dl.overprint = scale, overprint
 	base := p.deviceMatrix(scale)
 	dl.ClipRect(p.Box, base)
+	dl.frame = int32(len(dl.items))
 	in := recorders.Get().(*interp)
 	func() {
 		defer func() {
@@ -584,6 +642,9 @@ func (p *Page) recordList(key listKey, lim *limit, flight bool) (dl *displayList
 func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, overprint bool, vis *Visibility, af *annotFilter, vals map[*Field]Value, hide map[*Widget]bool, lim *limit) bool {
 	base := p.deviceMatrix(scale)
 	dev.ClipRect(p.Box, base)
+	if l, ok := dev.(*displayList); ok {
+		l.frame = int32(len(l.items))
+	}
 	in.reset(p.doc, dev, st, lim)
 	in.overprint = overprint
 	in.devBox = p.Bounds(scale)
@@ -760,6 +821,7 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.R
 	// another (a widget showing a form value) fills nothing.
 	stream := fill && whole && 4*region.Dx()*region.Dy() >= streamFill && l.workersFor(region) == 1
 	*j = job{l: l, dst: dst, region: region, bg: bg, fill: fill, stream: stream, band: band, lim: lim, b0: b0, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf, told: j.told}
+	j.alone = af.alone && l.annots >= 0
 	if whole {
 		j.idx, j.buf = l.regionItems(j.buf, b0, b1)
 		j.work(true)
@@ -877,6 +939,7 @@ type job struct {
 	idx    []int32 // the items a single pass draws
 	buf    []int32 // storage of idx when it is not the list's
 	iso    bool
+	alone  bool // the annotations without the page content
 	filter ImageFilter
 	next   atomic.Int32 // next band to draw
 	wg     sync.WaitGroup
@@ -969,9 +1032,16 @@ func (j *job) paint(pt *painter, b int, r image.Rectangle) {
 	pt.dev.Reset(dst, r)
 	pt.dev.ImageFilter = j.filter
 	var ok bool
-	if b < 0 {
+	switch {
+	case j.alone:
+		idx := j.idx
+		if b >= 0 {
+			idx = j.l.bandItems[j.l.bandStart[b]:j.l.bandStart[b+1]]
+		}
+		ok = j.l.drawAnnots(&pt.dev, &pt.ds, idx, r, j.vis, j.lim)
+	case b < 0:
 		ok = j.l.drawItems(&pt.dev, &pt.ds, j.idx, r, j.vis, j.lim)
-	} else {
+	default:
 		ok = j.l.drawBand(&pt.dev, &pt.ds, b, r, j.vis, j.lim)
 	}
 	if err := pt.dev.Err(); err != nil {
