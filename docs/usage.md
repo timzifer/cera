@@ -852,6 +852,35 @@ cera.ObjectStreamsAlways})` packs any file, which makes a form of
 thousands of small objects a tenth smaller, and `ObjectStreamsNever`
 writes the classic form for a reader that knows no other.
 
+The size of pages changes in three ways, none of which rewrites their
+content:
+
+```go
+// Show less of a page, or state the boxes of a page for print.
+err := e.SetPageBox(0, cera.BoxCrop, cera.Rect{X0: 36, Y0: 36, X1: 576, Y1: 756})
+// A Letter page as an A4 page: scaled to fit, in the middle.
+err = e.ResizePage(0, 595.28, 841.89, cera.FitInside)
+// Four pages on a sheet, after the others.
+err = e.AddSheets(e.NumPages(), doc, cera.Sheet{Width: 841.89, Height: 595.28, Columns: 2, Rows: 2, Margin: 20, Gap: 10})
+```
+
+`SetPageBox` takes the box in default user space, as `Page.Boxes` gives
+it. `ResizePage` puts what the page shows — its CropBox — on a page of
+the size given, as `FitInside` (the default), `FitFill`, `FitStretch` or
+`FitNone` says: the content becomes a form XObject drawn through one
+matrix, so that patterns move with what they fill; the annotations move
+to where the content went, with the points of markup, lines and ink; the
+BleedBox, TrimBox and ArtBox follow. Not moved are destinations that name
+a place on the page by coordinates, and the text of a form field keeps
+its size. Both change the page as it is written: `Draw`, the annotations
+and a redaction in the same editor go on speaking of the page as its
+document shows it, and move with it.
+
+`AddSheets` draws pages of a document on new sheets, row by row, each
+scaled into its place: n-up, and with an order of one's own and `-1` for
+a place left empty the imposition of a booklet. It is `Canvas.DrawPage`
+on pages made with `AddPage`; a page is drawn without its annotations.
+
 `SaveOptions{Linearize: true}` writes the file linearised ("fast web
 view"; PDF 2.0, Annex F): the catalogue and everything the first page
 needs come first, then the other pages one after another, then what

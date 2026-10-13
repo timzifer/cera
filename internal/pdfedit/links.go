@@ -21,8 +21,8 @@ func Rotation(o pdf.Object, extra int) int {
 
 // annots copies the annotations of a page that still make sense alone.
 // Each copy of a page gets copies of its annotations, since an annotation
-// belongs to one page.
-func (x *source) annots(o pdf.Object, fields bool) pdf.Array {
+// belongs to one page. They are moved with a page whose geometry moves.
+func (x *source) annots(o pdf.Object, fields bool, geo *Geometry) pdf.Array {
 	arr, _ := x.d.Resolve(o).Array()
 	type kept struct {
 		dict   pdf.Dict
@@ -41,7 +41,7 @@ func (x *source) annots(o pdf.Object, fields bool) pdf.Array {
 		if !ok {
 			continue
 		}
-		k := kept{dict: ad}
+		k := kept{dict: geo.annot(ad, x.d.Resolve)}
 		if r, ok := e.Ref(); ok {
 			if _, dup := local[r.Num]; dup {
 				continue

@@ -150,6 +150,8 @@ type editPage struct {
 	draws []*drawing
 	// redacts are the redactions of an own page, by Redact.
 	redacts []redaction
+	// geo is what SetPageBox and ResizePage change of the page.
+	geo *pageGeo
 }
 
 // Edit returns an editor of d with all its pages.
@@ -280,8 +282,9 @@ func (e *Editor) check(i int) error {
 // [NewEditor] and for a document that needed a repair, [ErrNotPermitted]
 // for a change an encrypted document's permissions do not allow, and
 // [ErrCertified] for changes a certification signature does not allow:
-// any with DocMDP permissions 1, changes of the pages, drawings on them
-// and flattened annotations with 2 and 3, added annotations with 1 and 2. The editor may
+// any with DocMDP permissions 1, changes of the pages, of their boxes and
+// size, drawings on them and flattened annotations with 2 and 3, added
+// annotations with 1 and 2. The editor may
 // be updated again. Nothing is written when Update fails, but
 // for an error of w itself.
 func (e *Editor) Update(w io.Writer) (err error) {
@@ -310,7 +313,7 @@ func (e *Editor) updatable() error {
 	}
 	if sg := e.base.signing(); !e.unguarded && (sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated() || e.meta != nil) ||
 		sg.mdp == 2 && (e.pagesChanged() || e.annotated()) || sg.mdp == 3 && e.pagesChanged() ||
-		sg.mdp != 0 && (e.flattens() || e.drawsOn() || e.formed())) {
+		sg.mdp != 0 && (e.flattens() || e.drawsOn() || e.formed() || e.resized())) {
 		return ErrCertified
 	}
 	if prot, ok := e.base.r.Protection(); ok && !prot.Owner {
@@ -318,7 +321,7 @@ func (e *Editor) updatable() error {
 		if e.pagesChanged() && perm&(pdf.PermModify|pdf.PermAssemble) == 0 ||
 			len(e.fields) > 0 && perm&(pdf.PermFillForms|pdf.PermAnnotate|pdf.PermModify) == 0 ||
 			e.annotated() && perm&(pdf.PermAnnotate|pdf.PermModify) == 0 ||
-			(e.flattens() || e.drawsOn() || e.formed() || e.meta != nil) && perm&pdf.PermModify == 0 {
+			(e.flattens() || e.drawsOn() || e.formed() || e.resized() || e.meta != nil) && perm&pdf.PermModify == 0 {
 			return ErrNotPermitted
 		}
 	}
@@ -334,9 +337,12 @@ func (e *Editor) plan() pdfedit.Doc {
 	for i, p := range e.pages {
 		if p.blank {
 			doc.Pages[i] = pdfedit.Page{Rotate: p.rotate, Width: p.w, Height: p.h}
-			continue
+		} else {
+			doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own, Fields: p.fields}
 		}
-		doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own, Fields: p.fields}
+		if p.geo != nil {
+			doc.Pages[i].Geo = p.geo.plan()
+		}
 	}
 	// Object 0 is Helvetica, written only when an appearance uses it.
 	doc.Objects = []pdf.Object{pdf.NewDict(

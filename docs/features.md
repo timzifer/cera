@@ -158,6 +158,9 @@ Fonts a file does not embed:
 - `Save` writes object streams and a cross-reference stream where the
   document had them, or on request (`SaveOptions.ObjectStreams`); also
   encrypted
+- `Editor.SetPageBox`, `ResizePage` (a page on another format: content as
+  a form through a matrix, annotations and boxes with it) and `AddSheets`
+  (n-up, imposition)
 - `SaveWith` writes linearised files (`SaveOptions.Linearize`, "fast web
   view"): first-page section, page offset, shared object and outline
   hint tables, with a cross-reference table or with object streams, also

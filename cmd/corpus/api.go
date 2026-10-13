@@ -34,7 +34,8 @@ import (
 // flattened, a field added, a signature, a redaction — each opened again
 // and its first page compared with what it was, or for a redaction read
 // for what should be gone. A file saved smaller has every page looked at
-// compared; a linearised one says of itself how long it is.
+// compared; a linearised one says of itself how long it is; a page at
+// half its size is drawn twice as large and compared.
 //
 // The gate is that of rendering: no panic, no hang, no deadline.
 // Everything else it finds is a difference, reported with its file.
@@ -248,6 +249,64 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		if r.check("save, the other form", doc.Edit().SaveWith(&out, other)) {
 			reopen("save, the other form", out.Bytes(), true)
 		}
+	})
+	r.step("resize", func() {
+		// The first page at half its size: drawn twice as large it is
+		// what it was. Annotations keep the width of their borders and
+		// the size of their text, so a page with any is only written.
+		p, err := doc.Page(0)
+		if err != nil {
+			return
+		}
+		w, h := p.Size()
+		bare := len(p.Annotations()) == 0
+		e := doc.Edit()
+		if w < 4 || h < 4 || !r.check("resize", e.ResizePage(0, w/2, h/2, cera.FitStretch)) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("resize: save", e.Save(&out)) {
+			return
+		}
+		od := reopen("resize", out.Bytes(), false)
+		if od == nil || !bare || before == nil {
+			return
+		}
+		img, err := c.apiRenderAt(od, 0, 2)
+		if !r.check("resize: render", err) || img == nil || img.Rect != before.Rect {
+			return
+		}
+		if share := pixelShare(before, img); share > apiPixelShare {
+			r.differ("resize: page 1 at half its size differs in %.2f %% of its pixels", 100*share)
+		}
+	})
+	r.step("sheets", func() {
+		// The pages looked at, two by two on sheets after the others.
+		e := doc.Edit()
+		var pages []int
+		for i := range n {
+			pages = append(pages, i)
+		}
+		sheet := cera.Sheet{Width: 842, Height: 595, Columns: 2, Rows: 2, Margin: 20, Gap: 10}
+		if !r.check("sheets", e.AddSheets(e.NumPages(), doc, sheet, pages...)) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("sheets: save", e.Save(&out)) {
+			return
+		}
+		od, err := cera.OpenWith(out.Bytes(), opt)
+		if err != nil {
+			r.differ("sheets: the file does not open again: %v", err)
+			return
+		}
+		r.saved++
+		if want := doc.NumPages() + (n+3)/4; od.NumPages() != want {
+			r.differ("sheets: %d pages, want %d", od.NumPages(), want)
+			return
+		}
+		_, err = c.apiRender(od, doc.NumPages())
+		r.check("sheets: render", err)
 	})
 	r.step("linearise", func() {
 		// Laid out for a reader that gets the file piece by piece: the
@@ -646,18 +705,23 @@ func (c runConfig) apiLinks(r *apiResult, name string, doc *cera.Document, p *ce
 
 // apiRender draws page i at 72 dpi on white, nil for a page too large.
 func (c runConfig) apiRender(doc *cera.Document, i int) (*image.RGBA, error) {
+	return c.apiRenderAt(doc, i, 1)
+}
+
+// apiRenderAt is apiRender at a scale.
+func (c runConfig) apiRenderAt(doc *cera.Document, i int, scale float64) (*image.RGBA, error) {
 	p, err := doc.Page(i)
 	if err != nil {
 		return nil, err
 	}
 	defer p.Release()
-	b := p.Bounds(1)
+	b := p.Bounds(scale)
 	if b.Dx()*b.Dy() > maxPixels/4 {
 		return nil, nil
 	}
 	dst := image.NewRGBA(b)
 	err = p.Render(context.Background(), dst, cera.RenderOptions{
-		Scale: 1, Background: color.RGBA{255, 255, 255, 255}, Deadline: time.Now().Add(c.timeout), Workers: c.workers,
+		Scale: scale, Background: color.RGBA{255, 255, 255, 255}, Deadline: time.Now().Add(c.timeout), Workers: c.workers,
 	})
 	return dst, err
 }

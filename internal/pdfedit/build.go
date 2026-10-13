@@ -29,6 +29,9 @@ type Page struct {
 
 	Width, Height float64
 	Draws         []Draw
+	// Geo, when set, changes the boxes of the page and moves what is on
+	// it (geometry.go).
+	Geo *Geometry
 }
 
 // Doc is what is written: the pages of the edited document Base (nil for
@@ -163,7 +166,7 @@ func unchanged(doc Doc) bool {
 		return false
 	}
 	for i, p := range doc.Pages {
-		if !p.Own || p.Index != i || p.Rotate%360 != 0 || len(p.Draws) > 0 {
+		if !p.Own || p.Index != i || p.Rotate%360 != 0 || len(p.Draws) > 0 || p.Geo != nil {
 			return false
 		}
 	}
@@ -211,6 +214,9 @@ type builder struct {
 	srcOwn  bool
 	// pageRefs are the pages of the output, in order.
 	pageRefs []pdfwrite.Ref
+	// pageAnnots holds, by output page, the annotations of the pages of
+	// the edited document whose geometry moves them.
+	pageAnnots []pdf.Object
 	// joined holds the output numbers of the objects written once for
 	// all that are the same, by their sums; docIDs numbers the documents.
 	joined map[sum]pdfwrite.Ref
@@ -428,6 +434,8 @@ func (b *builder) build() error {
 			x.pageOut[r.Num] = out[i]
 		}
 	}
+	// Before the changed objects of the edited document are written.
+	b.movePages()
 	if b.doc.Base != nil {
 		x := b.bySrc[srcKey{b.doc.Base, true}]
 		x.pruneDeleted()
@@ -805,8 +813,14 @@ func (x *source) page(p Page, i int, first bool) (pdf.Dict, error) {
 	if res := x.b.pageRes; res != nil && !res[i].IsNull() {
 		src = src.With("Resources", res[i])
 	}
+	if a := x.b.pageAnnots; a != nil && !a[i].IsNull() {
+		src = src.With("Annots", a[i])
+	}
 	if len(p.Draws) > 0 {
 		src = x.b.drawn(src, x.resolve, p.Draws)
+	}
+	if p.Geo != nil {
+		src = x.b.geometry(src, x, p.Geo)
 	}
 	entries := []pdf.Entry{
 		{Key: "Type", Val: pdf.Name("Page").Object()},
@@ -831,7 +845,7 @@ func (x *source) page(p Page, i int, first bool) (pdf.Dict, error) {
 		entries = append(entries, pdf.Entry{Key: "Rotate", Val: pdf.Integer(int64(rot))})
 	}
 	if !x.own {
-		if annots := x.annots(src.Get("Annots"), p.Fields && first); len(annots) > 0 {
+		if annots := x.annots(src.Get("Annots"), p.Fields && first, p.Geo); len(annots) > 0 {
 			entries = append(entries, pdf.Entry{Key: "Annots", Val: annots.Object()})
 		}
 	}

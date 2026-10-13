@@ -488,6 +488,7 @@ func FuzzEdit(f *testing.F) {
 	f.Add(testpdf.Encrypted("", -4), uint8(0), uint8(1))
 	f.Add(optFile(), uint8(2), uint8(0))
 	f.Add(linearFile(), uint8(3), uint8(1))
+	f.Add(sizeFile(), uint8(1), uint8(3))
 	f.Add(testpdf.File{Objs: dupObjs(), Trailer: "/Root 1 0 R"}.Bytes(), uint8(1), uint8(1))
 	f.Fuzz(func(t *testing.T, data []byte, a, b uint8) {
 		d, err := Open(data)
@@ -502,6 +503,11 @@ func FuzzEdit(f *testing.F) {
 		}
 		_ = e.ImportPages(0, d, EditPage{Index: int(b) % n, Rotate: int(a%4) * 90, Fields: b%2 == 0})
 		_ = e.MovePage(0, e.NumPages()-1)
+		_ = e.ResizePage(0, 200+float64(a), 300+float64(b), Fit(a%4))
+		_ = e.SetPageBox(e.NumPages()-1, PageBox(b%5), Rect{10, 10, 100 + float64(a), 200})
+		if b%3 == 0 {
+			_ = e.AddSheets(e.NumPages(), d, Sheet{Width: 600, Height: 800, Columns: 2, Rows: 1 + int(a%2), Gap: 5})
+		}
 		if form := d.Form(); form != nil {
 			state := form.NewState()
 			for _, f := range form.Fields {
