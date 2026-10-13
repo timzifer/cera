@@ -57,6 +57,19 @@ loses and how to reproduce:
 go get github.com/timzifer/cera
 ```
 
+cera's own modules build with a fork of
+[go-highway](https://github.com/ajroetker/go-highway), which comes in
+through the JPEG 2000 decoder; the fork silences a warning of upstream
+(#105, #162). A `replace` holds only in the module that is built, so a
+program that imports cera gets upstream's go-highway, warning and all. To
+build with the fork, repeat the line in your own `go.mod`:
+
+```
+replace github.com/ajroetker/go-highway => github.com/timzifer/go-highway v0.0.13-timzifer.1
+```
+
+It goes when upstream has the fix; cera draws the same with either.
+
 ## Use
 
 ```go
