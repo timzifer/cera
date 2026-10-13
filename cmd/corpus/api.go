@@ -36,7 +36,8 @@ import (
 // for what should be gone. A file saved smaller has every page looked at
 // compared; a linearised one says of itself how long it is; a page at
 // half its size is drawn twice as large and compared; the outline and
-// the page labels, set as they read, read the same.
+// the page labels, set as they read, read the same; the first page drawn
+// in grey is the grey of the page drawn in colour.
 //
 // The gate is that of rendering: no panic, no hang, no deadline.
 // Everything else it finds is a difference, reported with its file.
@@ -263,6 +264,39 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		out.Reset()
 		if r.check("save, the other form", doc.Edit().SaveWith(&out, other)) {
 			reopen("save, the other form", out.Bytes(), true)
+		}
+	})
+	r.step("grey", func() {
+		// The first page in grey is the page converted.
+		if before == nil {
+			return
+		}
+		p, err := doc.Page(0)
+		if err != nil {
+			return
+		}
+		defer p.Release()
+		grey := image.NewGray(before.Rect)
+		err = p.RenderGray(context.Background(), grey, cera.RenderOptions{
+			Scale: 1, Background: color.RGBA{255, 255, 255, 255}, Deadline: time.Now().Add(c.timeout), Workers: c.workers,
+		})
+		if !r.check("grey", err) {
+			return
+		}
+		// A large page is drawn in several bands, and a band of a page
+		// may differ from the page drawn whole by a level or two in a few
+		// pixels of an image.
+		differ := 0
+		for y := before.Rect.Min.Y; y < before.Rect.Max.Y; y++ {
+			for x := before.Rect.Min.X; x < before.Rect.Max.X; x++ {
+				d := int(color.GrayModel.Convert(before.RGBAAt(x, y)).(color.Gray).Y) - int(grey.GrayAt(x, y).Y)
+				if d > 2 || d < -2 {
+					differ++
+				}
+			}
+		}
+		if differ > 0 {
+			r.differ("grey: %d pixels of page 1 are not the grey of their colour", differ)
 		}
 	})
 	r.step("outline", func() {

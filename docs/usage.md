@@ -24,6 +24,14 @@ A Document is safe for concurrent use: render its pages from as many
 goroutines as there are cores, each with `Workers: 1`, or one page with all
 of them; objects, fonts and images are loaded once and shared.
 
+For a monochrome printer, a fax or text recognition,
+`page.RenderGray(ctx, gray, opt)` draws into an `*image.Gray` with the
+same options: the pixels of the page drawn in colour and converted as PDF
+converts DeviceRGB to DeviceGray, without holding the page in colour — it
+is drawn a band at a time. The output is sRGB or that grey; a page drawn
+in the CMYK of its document, or in another RGB than sRGB, is not there
+yet.
+
 A viewer that turns its view asks for the page turned:
 `page.Rotated(90)` is the page as it is shown then — a `Page` with its
 own bounds, display list and text, the same each time it is asked for.

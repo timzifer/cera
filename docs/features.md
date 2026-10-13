@@ -158,6 +158,8 @@ Fonts a file does not embed:
 - `Save` writes object streams and a cross-reference stream where the
   document had them, or on request (`SaveOptions.ObjectStreams`); also
   encrypted
+- `Page.RenderGray` draws into an `*image.Gray`, band by band, without
+  the page in colour: for monochrome printers, fax, text recognition
 - `Editor.SetOutline`, `Outline` and `PruneOutline` (bookmarks added,
   renamed, reordered, built for a merged file; targets that stay with
   their pages; entries of deleted pages dropped) and `SetPageLabels`;
