@@ -57,6 +57,19 @@ loses and how to reproduce:
 go get github.com/timzifer/cera
 ```
 
+cera's own modules build with a fork of
+[go-highway](https://github.com/ajroetker/go-highway), which comes in
+through the JPEG 2000 decoder; the fork silences a warning of upstream
+(#105, #162). A `replace` holds only in the module that is built, so a
+program that imports cera gets upstream's go-highway, warning and all. To
+build with the fork, repeat the line in your own `go.mod`:
+
+```
+replace github.com/ajroetker/go-highway => github.com/timzifer/go-highway v0.0.13-timzifer.1
+```
+
+It goes when upstream has the fix; cera draws the same with either.
+
 ## Use
 
 ```go
@@ -94,7 +107,8 @@ err = e.Save(w)                            // a new file, or e.Update(w): the fi
 | | |
 |---|---|
 | [Usage](docs/usage.md) | rendering options, font providers, layers, annotations, forms, devices |
-| [Features](docs/features.md) | what is drawn today, and what is counted as unsupported |
+| [Features](docs/features.md) | what is drawn, read and written today, and what is counted as unsupported |
+| [Security](SECURITY.md) | where to report a crash, a hang or a budget that does not hold, and what counts |
 | [Architecture](docs/architecture.md) | building blocks, display list, glyph and image caches, transparency, shadings, colour |
 | [Budgets](docs/budgets.md) | every bound on work and memory per input |
 | [Performance](docs/performance.md) | speed against MuPDF, PDFium, hayro, pdf.js, Poppler and Ghostscript, as ratios |

@@ -61,6 +61,9 @@ func (w *Writer) Write(out io.Writer, t Trailer) error {
 	if w.base != nil {
 		return w.writeUpdate(out, t)
 	}
+	if w.linearisable(t) {
+		return w.writeLinear(out, t)
+	}
 	if w.Packed {
 		return w.writePacked(out, t)
 	}
@@ -244,6 +247,9 @@ type encoder struct {
 	num, gen int32
 	// pos returns the offset in the file of what is written next.
 	pos func() int64
+	// renum, when set, holds the numbers the objects are written under, by
+	// the writer's; 0 for an object that is not written.
+	renum []int32
 }
 
 // object sets the object written next, whose strings and stream crypt
@@ -312,6 +318,14 @@ func (e *encoder) value(o pdf.Object, depth int) {
 		b.str("\nendstream")
 	case pdf.KindRef:
 		r, _ := o.Ref()
+		if e.renum != nil {
+			if r.Num <= 0 || int(r.Num) >= len(e.renum) || e.renum[r.Num] == 0 {
+				b.str("null")
+				return
+			}
+			b.printf("%d 0 R", e.renum[r.Num])
+			return
+		}
 		g, ok := e.w.gen(r.Num)
 		if !ok {
 			b.str("null")

@@ -96,6 +96,9 @@ func (b *builder) blank(p Page) pdf.Object {
 	if len(p.Draws) > 0 {
 		page = b.drawn(page, func(o pdf.Object) pdf.Object { return o }, p.Draws)
 	}
+	if p.Geo != nil {
+		page = b.geometry(page, nil, p.Geo)
+	}
 	mapped, _ := b.mapOwn(page.Object()).Dict()
 	entries := []pdf.Entry{
 		{Key: "Type", Val: pdf.Name("Page").Object()},

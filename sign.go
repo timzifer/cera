@@ -190,7 +190,7 @@ func (e *Editor) signCheck(opt SignOptions) (*signPlan, error) {
 	if l := opt.Lock; l != nil && l.Action != "All" && l.Action != "Include" && l.Action != "Exclude" {
 		return nil, fmt.Errorf("cera: field lock %q: want All, Include or Exclude", l.Action)
 	}
-	if e.pagesChanged() || e.drawsOn() || e.flatten {
+	if e.pagesChanged() || e.drawsOn() || e.resized() || e.outlined() || e.labelsSet || e.flatten {
 		return nil, errors.New("cera: a signature is not written with changes of the pages or a flattened form: update the document first, then sign the result")
 	}
 	if !e.unguarded {

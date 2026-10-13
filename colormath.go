@@ -4,16 +4,20 @@ import (
 	"encoding/binary"
 	"math"
 	"sync"
+
+	"github.com/timzifer/cera/internal/cmyk"
 )
 
 // Colour conversion of the CIE-based spaces (PDF 2.0, 8.6.5): CalGray,
-// CalRGB, Lab and ICC profiles of the matrix/TRC kind, the "simplified
-// ICC" of the spec. Each reaches CIE XYZ relative to the D50 white of the
-// ICC connection space (a CalRGB or Lab white point is adapted to it with
-// the Bradford transform), and XYZ goes to sRGB. Profiles built from
-// lookup tables (A2B tags, every CMYK press profile) are not read: their
-// spaces fall back on the device space of as many components, which is
-// what PDF says to do when a profile is not supported.
+// CalRGB, Lab and grey and RGB ICC profiles — of the matrix/TRC kind, the
+// "simplified ICC" of the spec, and those built from lookup tables (A2B
+// tags: scanner and camera profiles, some of ICC v4), which are read by
+// internal/cmyk as the press profiles are and tabulated. Each reaches CIE
+// XYZ relative to the D50 white of the ICC connection space (a CalRGB or
+// Lab white point is adapted to it with the Bradford transform), and XYZ
+// goes to sRGB. A profile that is not read falls back on the device space
+// of as many components, which is what PDF says to do when a profile is
+// not supported, and is counted ("icc-profile").
 
 // vec3 and mat3 are the arithmetic of XYZ.
 type (
@@ -216,12 +220,19 @@ type cieSpace struct {
 	toRGB mat3 // linear values (or Lab's XYZ) to linear sRGB
 	// rng is the Range of Lab's a* and b*.
 	rng [4]float64
+	// table, when set, is an ICC profile built from lookup tables: it
+	// converts in place of the curves and the matrix.
+	table *iccTable
 
 	once sync.Once
 	luts [3]*[256]float64
 }
 
 func (s *cieSpace) rgb(v []float64) (r, g, b float64) {
+	if s.table != nil {
+		l := s.table.linear(v)
+		return encode(l[0]), encode(l[1]), encode(l[2])
+	}
 	if s.lab {
 		return s.labRGB(v)
 	}
@@ -236,6 +247,10 @@ func (s *cieSpace) rgb(v []float64) (r, g, b float64) {
 
 // rgb8 converts three 8-bit components through lookup tables.
 func (s *cieSpace) rgb8(c0, c1, c2 uint8) (r, g, b uint8) {
+	if s.table != nil {
+		l := s.table.linear([]float64{float64(c0) / 255, float64(c1) / 255, float64(c2) / 255})
+		return unit8(encode(l[0])), unit8(encode(l[1])), unit8(encode(l[2]))
+	}
 	s.once.Do(func() {
 		for i := range 3 {
 			s.luts[i] = s.curve[i].lut()
@@ -314,13 +329,94 @@ func labSpace(white, rng []float64) *cieSpace {
 	return s
 }
 
-// iccProfile reads a grey or RGB profile of the matrix/TRC kind. It
-// returns nil for the profiles it does not read, and srgb true for a
-// profile close enough to sRGB (or a grey of the sRGB curve) to be drawn
-// as the device space.
+// iccTable is a grey or RGB ICC profile built from lookup tables,
+// tabulated: linear sRGB, not clipped, at the nodes of a grid over the
+// device values — 256 along a grey, 33 along each of R, G and B, the
+// first slowest —, interpolated linearly between them. What the profile
+// has between its own nodes, at most as many, is kept by that.
+type iccTable struct {
+	n, grid int
+	t       []float32
+}
+
+// newICCTable tabulates the device to PCS transform tr of a profile of n
+// components, whose connection space is encoded as pcs.
+func newICCTable(tr cmyk.Transform, pcs cmyk.PCS, n int) *iccTable {
+	t := &iccTable{n: n, grid: 33}
+	if n == 1 {
+		t.grid = 256
+	}
+	nodes := t.grid
+	if n == 3 {
+		nodes = t.grid * t.grid * t.grid
+	}
+	t.t = make([]float32, 0, 3*nodes)
+	s := 1 / float64(t.grid-1)
+	var in, out [3]float64
+	for i := range nodes {
+		if n == 1 {
+			in[0] = float64(i) * s
+		} else {
+			in[0], in[1], in[2] = float64(i/(t.grid*t.grid))*s, float64(i/t.grid%t.grid)*s, float64(i%t.grid)*s
+		}
+		tr.Eval(in[:n], out[:])
+		l := xyzToSRGB.apply(vec3(pcs.XYZOf(out[:])))
+		t.t = append(t.t, float32(l[0]), float32(l[1]), float32(l[2]))
+	}
+	return t
+}
+
+// linear returns linear sRGB for the device values v.
+func (t *iccTable) linear(v []float64) (l vec3) {
+	var i [3]int
+	var f [3]float64
+	for k := range t.n {
+		x := v[k]
+		if !(x > 0) { // and NaN
+			x = 0
+		}
+		x = min(x, 1) * float64(t.grid-1)
+		i[k] = min(int(x), t.grid-2)
+		f[k] = x - float64(i[k])
+	}
+	if t.n == 1 {
+		a, b := t.t[3*i[0]:][:3], t.t[3*i[0]+3:][:3]
+		for c := range 3 {
+			l[c] = float64(a[c]) + f[0]*float64(b[c]-a[c])
+		}
+		return l
+	}
+	// Along B, then G, then R, between the eight nodes of the cell.
+	g := t.grid
+	at := func(dr, dg, db int) []float32 { return t.t[3*(((i[0]+dr)*g+i[1]+dg)*g+i[2]+db):][:3] }
+	for c := range 3 {
+		var rr [2]float64
+		for dr := range 2 {
+			lo := float64(at(dr, 0, 0)[c]) + f[2]*float64(at(dr, 0, 1)[c]-at(dr, 0, 0)[c])
+			hi := float64(at(dr, 1, 0)[c]) + f[2]*float64(at(dr, 1, 1)[c]-at(dr, 1, 0)[c])
+			rr[dr] = lo + f[1]*(hi-lo)
+		}
+		l[c] = rr[0] + f[0]*(rr[1]-rr[0])
+	}
+	return l
+}
+
+// iccProfile reads a grey or RGB profile: of the matrix/TRC kind, or, when
+// it has no curves and matrix, one built from lookup tables, which is
+// tabulated. It returns nil for the profiles it does not read, and srgb
+// true for a profile close enough to sRGB (or a grey of the sRGB curve)
+// to be drawn as the device space.
 func iccProfile(data []byte, n int) (s *cieSpace, srgb bool) {
 	if len(data) < 132 {
 		return nil, false
+	}
+	// tables reads a profile without the curves and the matrix.
+	tables := func(n int) (*cieSpace, bool) {
+		tr, pcs, err := cmyk.ParseDevice(data, n)
+		if err != nil {
+			return nil, false
+		}
+		return &cieSpace{n: n, table: newICCTable(tr, pcs, n)}, false
 	}
 	space := string(data[16:20])
 	tags := map[string][]byte{}
@@ -336,7 +432,7 @@ func iccProfile(data []byte, n int) (s *cieSpace, srgb bool) {
 	case space == "GRAY" && (n == 0 || n == 1):
 		c, ok := readCurve(tags["kTRC"])
 		if !ok {
-			return nil, false
+			return tables(1)
 		}
 		s = &cieSpace{n: 1}
 		s.curve[0] = c
@@ -349,7 +445,7 @@ func iccProfile(data []byte, n int) (s *cieSpace, srgb bool) {
 			c, ok := readCurve(tags[ch+"TRC"])
 			xyz, ok2 := readXYZ(tags[ch+"XYZ"])
 			if !ok || !ok2 {
-				return nil, false
+				return tables(3)
 			}
 			s.curve[i] = c
 			m[i], m[3+i], m[6+i] = xyz[0], xyz[1], xyz[2]

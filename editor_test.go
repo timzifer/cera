@@ -486,6 +486,13 @@ func FuzzEdit(f *testing.F) {
 	f.Add(fieldsFile(true), uint8(2), uint8(1))
 	f.Add(testpdf.EncryptedWith("aes256", "", -4), uint8(1), uint8(0))
 	f.Add(testpdf.Encrypted("", -4), uint8(0), uint8(1))
+	f.Add(optFile(), uint8(2), uint8(0))
+	f.Add(linearFile(), uint8(3), uint8(1))
+	f.Add(sizeFile(), uint8(1), uint8(3))
+	f.Add(outlineFile(), uint8(2), uint8(0))
+	f.Add(outlineFile(), uint8(1), uint8(2))
+	f.Add(labelsFile(4, "<</Nums [0 <</S /r>> 2 <</S /D>>]>>", nil), uint8(0), uint8(1))
+	f.Add(testpdf.File{Objs: dupObjs(), Trailer: "/Root 1 0 R"}.Bytes(), uint8(1), uint8(1))
 	f.Fuzz(func(t *testing.T, data []byte, a, b uint8) {
 		d, err := Open(data)
 		if err != nil || d.NumPages() == 0 {
@@ -499,6 +506,23 @@ func FuzzEdit(f *testing.F) {
 		}
 		_ = e.ImportPages(0, d, EditPage{Index: int(b) % n, Rotate: int(a%4) * 90, Fields: b%2 == 0})
 		_ = e.MovePage(0, e.NumPages()-1)
+		_ = e.ResizePage(0, 200+float64(a), 300+float64(b), Fit(a%4))
+		switch b % 4 {
+		case 0:
+			_ = e.SetOutline(e.Outline())
+			e.PruneOutline()
+		case 1:
+			_ = e.SetOutline([]OutlineItem{{Title: "a", Open: a%2 == 0, Target: &LinkTarget{Page: int(a) % e.NumPages()},
+				Children: []OutlineItem{{Title: "b", Target: &LinkTarget{URI: "https://example.com/", Page: -1}}}}})
+			_ = e.SetPageLabels([]LabelRange{{Style: LabelRomanLower}, {Start: e.NumPages() - 1, Prefix: "x", First: int(b)}})
+		case 2:
+			e.PruneOutline()
+			_ = e.SetPageLabels(d.PageLabels())
+		}
+		_ = e.SetPageBox(e.NumPages()-1, PageBox(b%5), Rect{10, 10, 100 + float64(a), 200})
+		if b%3 == 0 {
+			_ = e.AddSheets(e.NumPages(), d, Sheet{Width: 600, Height: 800, Columns: 2, Rows: 1 + int(a%2), Gap: 5})
+		}
 		if form := d.Form(); form != nil {
 			state := form.NewState()
 			for _, f := range form.Fields {
@@ -520,6 +544,34 @@ func FuzzEdit(f *testing.F) {
 		}
 		if o.PageCount() != e.NumPages() || o.Repaired() {
 			t.Fatalf("%d pages, want %d; repaired %v", o.PageCount(), e.NumPages(), o.Repaired())
+		}
+		// And with everything that makes the file smaller.
+		out.Reset()
+		small := SaveOptions{
+			PruneResources: true, JoinDuplicates: true, Compress: true, ObjectStreams: ObjectStreamsAlways,
+			Drop: DropThumbnails | DropPieceInfo | DropObjectMetadata,
+		}
+		if err := e.SaveWith(&out, small); err != nil {
+			t.Fatalf("saved as it is, and not smaller: %v", err)
+		}
+		if o, err = pdf.Open(out.Bytes()); err != nil {
+			t.Fatalf("the smaller output does not open: %v", err)
+		}
+		if o.PageCount() != e.NumPages() || o.Repaired() {
+			t.Fatalf("smaller: %d pages, want %d; repaired %v", o.PageCount(), e.NumPages(), o.Repaired())
+		}
+		// And linearised, in both forms.
+		for _, mode := range []ObjectStreamMode{ObjectStreamsNever, ObjectStreamsAlways} {
+			out.Reset()
+			if err := e.SaveWith(&out, SaveOptions{Linearize: true, ObjectStreams: mode}); err != nil {
+				t.Fatalf("saved as it is, and not linearised: %v", err)
+			}
+			if o, err = pdf.Open(out.Bytes()); err != nil {
+				t.Fatalf("the linearised output does not open: %v", err)
+			}
+			if o.PageCount() != e.NumPages() || o.Repaired() || !bytes.Contains(out.Bytes()[:min(out.Len(), 200)], []byte("/Linearized 1")) {
+				t.Fatalf("linearised: %d pages, want %d; repaired %v", o.PageCount(), e.NumPages(), o.Repaired())
+			}
 		}
 		out.Reset()
 		if e.Update(&out) != nil {

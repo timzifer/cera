@@ -24,6 +24,14 @@ A Document is safe for concurrent use: render its pages from as many
 goroutines as there are cores, each with `Workers: 1`, or one page with all
 of them; objects, fonts and images are loaded once and shared.
 
+For a monochrome printer, a fax or text recognition,
+`page.RenderGray(ctx, gray, opt)` draws into an `*image.Gray` with the
+same options: the pixels of the page drawn in colour and converted as PDF
+converts DeviceRGB to DeviceGray, without holding the page in colour — it
+is drawn a band at a time. The output is sRGB or that grey; a page drawn
+in the CMYK of its document, or in another RGB than sRGB, is not there
+yet.
+
 A viewer that turns its view asks for the page turned:
 `page.Rotated(90)` is the page as it is shown then — a `Page` with its
 own bounds, display list and text, the same each time it is asked for.
@@ -118,6 +126,28 @@ doc, err := cera.OpenWith(data, cera.OpenOptions{
 	Fonts: cjk.Provider{japan1.Collection}, // or a cera.FontProvider of your own
 })
 ```
+
+The fonts installed on the machine are a provider too, in a module of
+its own, `fonts/system`: a document that asks for "Segoe UI" or "MS
+Mincho" where they are installed gets them. `cera.FontProviders` asks
+several in their order:
+
+```go
+import "github.com/timzifer/cera/fonts/system"
+
+doc, err := cera.OpenWith(data, cera.OpenOptions{
+	Fonts: cera.FontProviders{system.New(), cjk.Provider{japan1.Collection}},
+})
+```
+
+`system.New()` reads the font directories of the platform on first use —
+Windows' `Fonts` and the user's, macOS' three `Fonts` folders, what
+fontconfig reads elsewhere, nothing on js/wasm — and keeps the names. A
+font is found by the name the document spells (`Arial,Bold`, `ArialMT`,
+`Arial-BoldMT`), or by its family with the weight and slope asked for,
+and never by a font of another family: there the stand-ins below do
+better. A page drawn with the machine's fonts is not the same on every
+machine; that is why it is a module to ask for.
 
 Helvetica, Times and Courier that a document does not embed are drawn with
 TeX Gyre Heros, Termes and Cursor, the shapes PDFium and MuPDF draw too.
@@ -852,6 +882,125 @@ cera.ObjectStreamsAlways})` packs any file, which makes a form of
 thousands of small objects a tenth smaller, and `ObjectStreamsNever`
 writes the classic form for a reader that knows no other.
 
+The outline and the page labels of a result are the edited document's,
+kept with their pages, unless they are set:
+
+```go
+// The outline as it stands, with the pages of the result as targets.
+items := e.Outline()
+items[0].Title = "Introduction"
+items = append(items, cera.OutlineItem{Title: "Appendix", Target: &cera.LinkTarget{Page: 12}})
+err := e.SetOutline(items)
+
+// After DeletePages: no entries that lead to pages which are gone.
+e.PruneOutline()
+
+// i, ii, then 1, 2, 3 from the third page on.
+err = e.SetPageLabels([]cera.LabelRange{
+	{Start: 0, Style: cera.LabelRomanLower},
+	{Start: 2, Style: cera.LabelDecimal},
+})
+```
+
+`SetOutline` takes the entries of reading. A target names a page of the
+result and stays with that page when pages are moved afterwards; besides
+pages an entry may lead to an address, a named destination or another
+file. Entries that come from `Editor.Outline` or from the document's
+outline and still lead where they led are written with what the
+document has for them — a JavaScript action, a structure element —, so
+renaming, reordering and removing entries loses nothing of the others.
+An outline that is set is the whole outline: what `ImportPagesWith`
+would bring is not added. `PruneOutline` works on the outline as it is
+written, set or not. `SetPageLabels` labels the pages by their place when
+the result is written; `Document.PageLabels` reads the ranges of a
+document.
+
+The size of pages changes in three ways, none of which rewrites their
+content:
+
+```go
+// Show less of a page, or state the boxes of a page for print.
+err := e.SetPageBox(0, cera.BoxCrop, cera.Rect{X0: 36, Y0: 36, X1: 576, Y1: 756})
+// A Letter page as an A4 page: scaled to fit, in the middle.
+err = e.ResizePage(0, 595.28, 841.89, cera.FitInside)
+// Four pages on a sheet, after the others.
+err = e.AddSheets(e.NumPages(), doc, cera.Sheet{Width: 841.89, Height: 595.28, Columns: 2, Rows: 2, Margin: 20, Gap: 10})
+```
+
+`SetPageBox` takes the box in default user space, as `Page.Boxes` gives
+it. `ResizePage` puts what the page shows — its CropBox — on a page of
+the size given, as `FitInside` (the default), `FitFill`, `FitStretch` or
+`FitNone` says: the content becomes a form XObject drawn through one
+matrix, so that patterns move with what they fill; the annotations move
+to where the content went, with the points of markup, lines and ink; the
+BleedBox, TrimBox and ArtBox follow. Not moved are destinations that name
+a place on the page by coordinates, and the text of a form field keeps
+its size. Both change the page as it is written: `Draw`, the annotations
+and a redaction in the same editor go on speaking of the page as its
+document shows it, and move with it.
+
+`AddSheets` draws pages of a document on new sheets, row by row, each
+scaled into its place: n-up, and with an order of one's own and `-1` for
+a place left empty the imposition of a booklet. It is `Canvas.DrawPage`
+on pages made with `AddPage`; a page is drawn without its annotations.
+
+`SaveOptions{Linearize: true}` writes the file linearised ("fast web
+view"; PDF 2.0, Annex F): the catalogue and everything the first page
+needs come first, then the other pages one after another, then what
+several of them share, and a table of hints says where each page is and
+which shared objects it needs. A viewer that is sent the file from its
+start shows the first page before the rest has arrived, and fetches any
+other page with a few requests. It goes with object streams and with
+encryption. The file is laid out in memory before it is written, and is a
+little larger: half a percent with a cross-reference table, two with
+object streams, which are then made by part of the file. Viewers that
+read by ranges anyway (pdf.js, cera's own `OpenReaderAt`) gain little
+from it; servers that deliver to browser plug-ins and to Acrobat ask for
+it. `Update` on a linearised file gives an ordinary one, as in every
+writer.
+
+`Save` copies what the pages reach as it is. `SaveOptions` has more that
+makes the file smaller and changes nothing of what it shows, each on
+request:
+
+- `PruneResources` leaves out the resources no content names. A resource
+  dictionary that all pages share reaches every font and image of the
+  document from every page: after `DeletePages`, or in a file made of
+  some pages of another, what only the other pages drew is still written.
+  With the option the content of the pages, and of the form XObjects,
+  tiling patterns, Type 3 fonts and appearance streams they draw, is read
+  for the names it uses, and a dictionary is written without the entries
+  that none of those that have it names. A dictionary several pages
+  share stays one dictionary. Content that does not read to its end keeps
+  what it has, and so do the resources of the form (`/DR`), with which a
+  viewer writes what is typed into a field.
+- `JoinDuplicates` writes streams that are the same once — an image or a
+  font program embedded once for every page it is on — and the fonts of
+  one program. It joins what the pages of different documents have in
+  common too, which a merged file gains from. Layers, annotations and
+  fields that read the same stay as many as they are.
+- `Compress` stores streams that are plain, or under LZW, run length,
+  ASCII85 or ASCIIHex, with the Flate filter where that is shorter. An
+  image under ASCII85 and DCT stays the JPEG it is, without the ASCII85.
+  Metadata streams stay plain.
+- `Drop` leaves out the thumbnails of the pages (`DropThumbnails`), the
+  private data of the programs that made the document (`DropPieceInfo`:
+  what an illustration program keeps to edit its file again) and the
+  metadata of pages, images and fonts (`DropObjectMetadata`; the
+  document's own stays).
+
+```go
+err := e.SaveWith(w, cera.SaveOptions{
+	ObjectStreams:  cera.ObjectStreamsAlways,
+	PruneResources: true, JoinDuplicates: true, Compress: true,
+	Drop:           cera.DropThumbnails | cera.DropPieceInfo | cera.DropObjectMetadata,
+})
+```
+
+All of it together writes the test files of pdf.js at 84 % of what `Save`
+writes. No image is sampled anew and no font subset: what the pages show
+is what they showed, sample for sample.
+
 `Update` writes the edited file unchanged and appends only what changed
 (PDF 2.0, 7.5.6), so signatures over the original bytes stay valid: the
 document's pages keep their objects, deleted pages and what hung on them
@@ -876,3 +1025,26 @@ go build -C cmd/cera -o "$PWD/cera" .
 it does not draw with: it writes the PNGs with
 [calamus](https://github.com/timzifer/calamus), which encodes them in bands
 on all cores (encoding was most of the command's time with `image/png`).
+The ending of `-o` says what is written: `.png`, `.jpg` (`-quality`),
+`.tif` (LZW) or `.webp` (without loss); `-gray` draws in grey. A TIFF is
+one page: several pages are several files.
+
+Besides drawing, the command does what the library does, as subcommands
+(`cera <command> -h` lists the flags of each):
+
+```sh
+./cera text input.pdf                       # the text; -json: every line with its box
+./cera search input.pdf 'a phrase'          # page: context [match] context
+./cera info input.pdf                       # pages, metadata, layers, fields, signatures,
+                                            # and what of each page is not drawn exactly
+./cera merge -o all.pdf a.pdf b.pdf         # with outlines, labels and fields
+./cera split -o 'page-%d.pdf' input.pdf     # -every 4: four pages a file
+./cera rotate -by 90 -pages 2-3 -o out.pdf input.pdf
+./cera delete -pages 1,7- -o out.pdf input.pdf
+./cera fill -field name=Ada -o out.pdf form.pdf   # -flatten; -update keeps signatures
+```
+
+Pages are given as `1-3,5,8-`. The commands that write a PDF take `-small`
+(unused resources left out, duplicates joined, streams compressed, object
+streams) and `-linearize`. `cera info` is the first thing to send with a
+bug report: it says what cera makes of a file.

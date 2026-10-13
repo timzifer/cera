@@ -41,6 +41,26 @@ type FontProvider interface {
 	Font(req FontRequest) (program []byte, ok bool)
 }
 
+// FontProviders asks several providers in their order: the first that has
+// a font for a request supplies it. The fonts of the machine before the
+// fonts a program brings along:
+//
+//	cera.FontProviders{system.New(), cjk.Provider{japan1.Collection}}
+type FontProviders []FontProvider
+
+// Font implements FontProvider.
+func (p FontProviders) Font(req FontRequest) ([]byte, bool) {
+	for _, one := range p {
+		if one == nil {
+			continue
+		}
+		if program, ok := one.Font(req); ok {
+			return program, true
+		}
+	}
+	return nil, false
+}
+
 // FontRequest describes a font a document does not embed.
 type FontRequest struct {
 	// Name is the font's BaseFont without a subset prefix, as the document

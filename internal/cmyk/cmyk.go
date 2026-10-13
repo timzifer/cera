@@ -69,11 +69,20 @@ func curve(c []float64, x float64) float64 {
 
 // interp interpolates the grid at x as Little CMS does: tetrahedrally in
 // the cube of the last three inputs, and linearly between two such cubes
-// along a fourth.
+// along a fourth; linearly along a single input.
 func (t *Lut) interp(x, out []float64) {
 	cube := t.Out * t.Grid * t.Grid * t.Grid
-	if t.In == 3 {
+	switch t.In {
+	case 3:
 		t.tetra(0, x, out)
+		return
+	case 1:
+		// A curve of Out values.
+		i, d := cell(x[0], t.Grid)
+		g := t.Table[i*t.Out:]
+		for k := range t.Out {
+			out[k] = g[k] + d*(g[t.Out+k]-g[k])
+		}
 		return
 	}
 	i, d := cell(x[0], t.Grid)

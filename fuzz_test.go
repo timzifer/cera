@@ -74,6 +74,10 @@ func FuzzICC(f *testing.F) {
 	f.Add(iccBytes(2.2), 3)
 	f.Add(iccBytes(1), 1)
 	f.Add(iccBytes(0.01)[:140], 4)
+	f.Add(tableProfile("mft2", 3, false), 3)
+	f.Add(tableProfile("mAB ", 3, false), 3)
+	f.Add(tableProfile("mft2", 1, true), 1)
+	f.Add(tableProfile("mAB ", 1, false), 3)
 	for _, name := range []string{"toy-lut16.icc", "swop-mab.icc"} {
 		if b, err := os.ReadFile(filepath.Join("internal", "cmyk", "testdata", name)); err == nil {
 			f.Add(b, 4)

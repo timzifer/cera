@@ -16,6 +16,7 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -32,7 +33,11 @@ import (
 // anew, an update with a highlight, the form and the annotations
 // flattened, a field added, a signature, a redaction — each opened again
 // and its first page compared with what it was, or for a redaction read
-// for what should be gone.
+// for what should be gone. A file saved smaller has every page looked at
+// compared; a linearised one says of itself how long it is; a page at
+// half its size is drawn twice as large and compared; the outline and
+// the page labels, set as they read, read the same; the first page drawn
+// in grey is the grey of the page drawn in colour.
 //
 // The gate is that of rendering: no panic, no hang, no deadline.
 // Everything else it finds is a difference, reported with its file.
@@ -52,6 +57,9 @@ type apiResult struct {
 	// refused is what the document does not allow, differences what is
 	// not as it should be.
 	refused, differences []string
+	// plain and small are the bytes of the file saved as it is and with
+	// everything that makes it smaller, where both were written.
+	plain, small int64
 }
 
 func (r *apiResult) fatal() bool { return r.hang || len(r.failed) > 0 }
@@ -91,6 +99,23 @@ func (r *apiResult) differ(format string, args ...any) {
 		r.differences = append(r.differences, fmt.Sprintf(format, args...))
 	}
 }
+
+// outlineText writes an outline for comparing: an entry a line, with
+// where it leads.
+func outlineText(items []cera.OutlineItem, depth int) string {
+	var b strings.Builder
+	for _, it := range items {
+		fmt.Fprintf(&b, "%d %q %v %v %v", depth, it.Title, it.Open, it.Bold, it.Italic)
+		if t := it.Target; t != nil {
+			fmt.Fprintf(&b, " %q %d %s %q %q %q %v", t.URI, t.Page, t.Fit, t.Named, t.Action, t.NamedAction, t.External)
+		}
+		b.WriteString("\n" + outlineText(it.Children, depth+1))
+	}
+	return b.String()
+}
+
+// linearised matches the first object of a linearised file.
+var linearised = regexp.MustCompile(`^%PDF-[^\n]*\n%[^\n]*\n\d+ 0 obj\n<</Linearized 1 /L (\d+) `)
 
 // Limits of the API run: differences listed per file, places of a page
 // whose word is searched for, links of a page resolved.
@@ -224,10 +249,12 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		}
 		return od
 	}
+	plain := 0
 	r.step("save", func() {
 		var out bytes.Buffer
 		if r.check("save", doc.Edit().Save(&out)) {
 			reopen("save", out.Bytes(), true)
+			plain = out.Len()
 		}
 		// And in the other form: packed into object streams, or not.
 		other := cera.SaveOptions{ObjectStreams: cera.ObjectStreamsAlways}
@@ -237,6 +264,214 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		out.Reset()
 		if r.check("save, the other form", doc.Edit().SaveWith(&out, other)) {
 			reopen("save, the other form", out.Bytes(), true)
+		}
+	})
+	r.step("grey", func() {
+		// The first page in grey is the page converted.
+		if before == nil {
+			return
+		}
+		p, err := doc.Page(0)
+		if err != nil {
+			return
+		}
+		defer p.Release()
+		grey := image.NewGray(before.Rect)
+		err = p.RenderGray(context.Background(), grey, cera.RenderOptions{
+			Scale: 1, Background: color.RGBA{255, 255, 255, 255}, Deadline: time.Now().Add(c.timeout), Workers: c.workers,
+		})
+		if !r.check("grey", err) {
+			return
+		}
+		// A large page is drawn in several bands, and a band of a page
+		// may differ from the page drawn whole by a level or two in a few
+		// pixels of an image.
+		differ := 0
+		for y := before.Rect.Min.Y; y < before.Rect.Max.Y; y++ {
+			for x := before.Rect.Min.X; x < before.Rect.Max.X; x++ {
+				d := int(color.GrayModel.Convert(before.RGBAAt(x, y)).(color.Gray).Y) - int(grey.GrayAt(x, y).Y)
+				if d > 2 || d < -2 {
+					differ++
+				}
+			}
+		}
+		if differ > 0 {
+			r.differ("grey: %d pixels of page 1 are not the grey of their colour", differ)
+		}
+	})
+	r.step("outline", func() {
+		// The outline and the page labels set as they read: the result
+		// reads the same. Then without its last page, pruned.
+		want := outlineText(doc.Outline(), 0)
+		ranges := doc.PageLabels()
+		if want == "" && ranges == nil {
+			return
+		}
+		e := doc.Edit()
+		if !r.check("outline", e.SetOutline(e.Outline())) || ranges != nil && !r.check("page labels", e.SetPageLabels(ranges)) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("outline: save", e.Save(&out)) {
+			return
+		}
+		od := reopen("outline", out.Bytes(), true)
+		if od == nil {
+			return
+		}
+		if got := outlineText(od.Outline(), 0); got != want {
+			r.differ("outline: set as it reads, it reads differently: %d bytes for %d", len(got), len(want))
+		}
+		for i := range n {
+			if a, b := doc.PageLabel(i), od.PageLabel(i); a != b && ranges != nil {
+				r.differ("page labels: page %d is labelled %q, was %q", i+1, b, a)
+				break
+			}
+		}
+		if doc.NumPages() < 2 || want == "" {
+			return
+		}
+		e = doc.Edit()
+		e.PruneOutline()
+		if !r.check("outline: delete", e.DeletePages(doc.NumPages()-1)) {
+			return
+		}
+		out.Reset()
+		if !r.check("outline: pruned: save", e.Save(&out)) {
+			return
+		}
+		pd, err := cera.OpenWith(out.Bytes(), opt)
+		if err != nil {
+			r.differ("outline: pruned: the file does not open again: %v", err)
+			return
+		}
+		r.saved++
+		// No entry leads to the page that is gone, and none is new.
+		var count func(items []cera.OutlineItem) (entries, gone int)
+		count = func(items []cera.OutlineItem) (entries, gone int) {
+			for _, it := range items {
+				if t := it.Target; t != nil && t.URI == "" && !t.External && t.Page >= pd.NumPages() {
+					gone++
+				}
+				e, g := count(it.Children)
+				entries, gone = entries+1+e, gone+g
+			}
+			return entries, gone
+		}
+		had, _ := count(doc.Outline())
+		if entries, gone := count(pd.Outline()); entries > had || gone > 0 {
+			r.differ("outline: pruned, it has %d entries of %d, %d to the page that is gone", entries, had, gone)
+		}
+	})
+	r.step("resize", func() {
+		// The first page at half its size: drawn twice as large it is
+		// what it was. Annotations keep the width of their borders and
+		// the size of their text, so a page with any is only written.
+		p, err := doc.Page(0)
+		if err != nil {
+			return
+		}
+		w, h := p.Size()
+		bare := len(p.Annotations()) == 0
+		e := doc.Edit()
+		if w < 4 || h < 4 || !r.check("resize", e.ResizePage(0, w/2, h/2, cera.FitStretch)) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("resize: save", e.Save(&out)) {
+			return
+		}
+		od := reopen("resize", out.Bytes(), false)
+		if od == nil || !bare || before == nil {
+			return
+		}
+		img, err := c.apiRenderAt(od, 0, 2)
+		if !r.check("resize: render", err) || img == nil || img.Rect != before.Rect {
+			return
+		}
+		if share := pixelShare(before, img); share > apiPixelShare {
+			r.differ("resize: page 1 at half its size differs in %.2f %% of its pixels", 100*share)
+		}
+	})
+	r.step("sheets", func() {
+		// The pages looked at, two by two on sheets after the others.
+		e := doc.Edit()
+		var pages []int
+		for i := range n {
+			pages = append(pages, i)
+		}
+		sheet := cera.Sheet{Width: 842, Height: 595, Columns: 2, Rows: 2, Margin: 20, Gap: 10}
+		if !r.check("sheets", e.AddSheets(e.NumPages(), doc, sheet, pages...)) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("sheets: save", e.Save(&out)) {
+			return
+		}
+		od, err := cera.OpenWith(out.Bytes(), opt)
+		if err != nil {
+			r.differ("sheets: the file does not open again: %v", err)
+			return
+		}
+		r.saved++
+		if want := doc.NumPages() + (n+3)/4; od.NumPages() != want {
+			r.differ("sheets: %d pages, want %d", od.NumPages(), want)
+			return
+		}
+		_, err = c.apiRender(od, doc.NumPages())
+		r.check("sheets: render", err)
+	})
+	r.step("linearise", func() {
+		// Laid out for a reader that gets the file piece by piece: the
+		// first object says so and how long the file is, and the document
+		// is what it was.
+		for _, mode := range []cera.ObjectStreamMode{cera.ObjectStreamsNever, cera.ObjectStreamsAlways} {
+			var out bytes.Buffer
+			name := "linearise"
+			if mode == cera.ObjectStreamsAlways {
+				name = "linearise, packed"
+			}
+			if !r.check(name, doc.Edit().SaveWith(&out, cera.SaveOptions{Linearize: true, ObjectStreams: mode})) {
+				return
+			}
+			if m := linearised.FindSubmatch(out.Bytes()[:min(out.Len(), 1024)]); m == nil {
+				r.differ("%s: the file does not start with a linearisation dictionary", name)
+			} else if string(m[1]) != fmt.Sprint(out.Len()) {
+				r.differ("%s: the file says it has %s bytes and has %d", name, m[1], out.Len())
+			}
+			reopen(name, out.Bytes(), true)
+		}
+	})
+	r.step("optimise", func() {
+		// Everything that makes the file smaller and loses nothing: the
+		// pages are what they were.
+		var out bytes.Buffer
+		small := cera.SaveOptions{
+			ObjectStreams: cera.ObjectStreamsAlways, PruneResources: true, JoinDuplicates: true, Compress: true,
+			Drop: cera.DropThumbnails | cera.DropPieceInfo | cera.DropObjectMetadata,
+		}
+		if !r.check("optimise", doc.Edit().SaveWith(&out, small)) {
+			return
+		}
+		od := reopen("optimise", out.Bytes(), true)
+		if od == nil || od.NumPages() != doc.NumPages() {
+			return
+		}
+		if plain > 0 {
+			r.plain, r.small = int64(plain), int64(out.Len())
+		}
+		for i := 1; i < n; i++ {
+			a, err := c.apiRender(doc, i)
+			if err != nil || a == nil {
+				continue
+			}
+			b, err := c.apiRender(od, i)
+			if !r.check(fmt.Sprintf("optimise: render page %d", i+1), err) || b == nil {
+				continue
+			}
+			if share := pixelShare(a, b); share > apiPixelShare {
+				r.differ("optimise: page %d differs in %.2f %% of its pixels", i+1, 100*share)
+			}
 		}
 	})
 	r.step("update", func() {
@@ -583,18 +818,23 @@ func (c runConfig) apiLinks(r *apiResult, name string, doc *cera.Document, p *ce
 
 // apiRender draws page i at 72 dpi on white, nil for a page too large.
 func (c runConfig) apiRender(doc *cera.Document, i int) (*image.RGBA, error) {
+	return c.apiRenderAt(doc, i, 1)
+}
+
+// apiRenderAt is apiRender at a scale.
+func (c runConfig) apiRenderAt(doc *cera.Document, i int, scale float64) (*image.RGBA, error) {
 	p, err := doc.Page(i)
 	if err != nil {
 		return nil, err
 	}
 	defer p.Release()
-	b := p.Bounds(1)
+	b := p.Bounds(scale)
 	if b.Dx()*b.Dy() > maxPixels/4 {
 		return nil, nil
 	}
 	dst := image.NewRGBA(b)
 	err = p.Render(context.Background(), dst, cera.RenderOptions{
-		Scale: 1, Background: color.RGBA{255, 255, 255, 255}, Deadline: time.Now().Add(c.timeout), Workers: c.workers,
+		Scale: scale, Background: color.RGBA{255, 255, 255, 255}, Deadline: time.Now().Add(c.timeout), Workers: c.workers,
 	})
 	return dst, err
 }
@@ -652,6 +892,8 @@ func writeAPIReport(w io.Writer, rs []apiResult, pages int) {
 		sum.links += r.links
 		sum.leads += r.leads
 		sum.saved += r.saved
+		sum.plain += r.plain
+		sum.small += r.small
 	}
 	of := "all pages"
 	if pages > 0 {
@@ -662,6 +904,10 @@ func writeAPIReport(w io.Writer, rs []apiResult, pages int) {
 	fmt.Fprintln(w, "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 	fmt.Fprintf(w, "| %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
 		len(rs), opened, sum.pages, sum.chars, sum.words, sum.links, sum.leads, sum.saved, refused, differing, failed)
+	if sum.plain > 0 {
+		fmt.Fprintf(w, "\nSaved with everything that makes a file smaller and loses nothing, the files are %d bytes; saved as they are, %d (%.1f %%).\n",
+			sum.small, sum.plain, 100*float64(sum.small)/float64(sum.plain))
+	}
 
 	list := func(title, intro string, of func(*apiResult) []string) {
 		first := true

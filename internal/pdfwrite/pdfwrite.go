@@ -60,6 +60,10 @@ type Writer struct {
 	// cross-reference stream tells where everything is. Readers older
 	// than that do not read it. (An update follows the file it extends.)
 	Packed bool
+	// Linear, when set, lays a new file out linearised (linear.go): the
+	// first page in front, with hints for the others. It goes with Packed
+	// and with Crypt.
+	Linear *Linear
 
 	// Sig, when not zero, is the output object that is a signature
 	// dictionary being made (PDF 2.0, 12.8.1). Its /Contents is written as
@@ -180,6 +184,12 @@ type Importer struct {
 	// Patch holds source objects to copy in place of what the source
 	// has, by object number: objects the caller changed.
 	Patch map[int32]pdf.Object
+	// Compress stores the streams the source has plain, or under a filter
+	// that packs worse than Flate does — LZW, run length, the two that
+	// write bytes as text — with the Flate filter, where that is shorter.
+	// Metadata streams stay plain, for the readers that look for them in
+	// the bytes of the file.
+	Compress bool
 
 	copied map[int32]Ref
 }
@@ -196,6 +206,10 @@ func (im *Importer) Copied(r pdf.Ref) (Ref, bool) {
 	n, ok := im.copied[r.Num]
 	return n, ok
 }
+
+// Alias writes output object n wherever source object r is referred to:
+// an object that is the same as one written already.
+func (im *Importer) Alias(r pdf.Ref, n Ref) { im.copied[r.Num] = n }
 
 // Copy returns the output number of source object r, numbering it for
 // copying when it is first met, or 0 when r is missing or null.
@@ -290,6 +304,11 @@ func (im *Importer) mapStream(s *pdf.Stream, depth int) pdf.Object {
 		filter, parms = f, p
 	}
 	dict := im.mapDict(s.Dict, depth, streamKeys)
+	if im.Compress {
+		if f, p, packed, ok := im.compress(s, filter, parms, data); ok {
+			filter, parms, data = f, p, packed
+		}
+	}
 	if !filter.IsNull() {
 		dict = dict.With("Filter", im.mapValue(filter, depth+1))
 	}
@@ -297,6 +316,53 @@ func (im *Importer) mapStream(s *pdf.Stream, depth int) pdf.Object {
 		dict = dict.With("DecodeParms", im.mapValue(parms, depth+1))
 	}
 	return pdf.NewStream(dict, data).Object()
+}
+
+// flateEntry is what a stream dictionary grows by with the Flate filter.
+const flateEntry = len("/Filter /FlateDecode")
+
+// compress returns the data of source stream s packed better than under
+// the filters it has, with the filters and parameters it is then under, in
+// the source's space; false when nothing is gained.
+func (im *Importer) compress(s *pdf.Stream, filter, parms pdf.Object, data []byte) (pdf.Object, pdf.Object, []byte, bool) {
+	if t, _ := im.src.Resolve(s.Dict.Get("Type")).Name(); t == "Metadata" {
+		return pdf.Null, pdf.Null, nil, false
+	}
+	plain, rest, restParms := data, []pdf.Name(nil), []pdf.Dict(nil)
+	if !filter.IsNull() {
+		var ok bool
+		chain := pdf.NewDict(pdf.Entry{Key: "Filter", Val: filter}, pdf.Entry{Key: "DecodeParms", Val: parms})
+		if plain, rest, restParms, ok = im.src.Peel(chain, data); !ok {
+			return pdf.Null, pdf.Null, nil, false
+		}
+	}
+	if len(rest) == 0 {
+		// Nothing packs the bytes now.
+		z, _ := Flate(pdf.NewDict(), plain).Unencrypted()
+		if len(z)+flateEntry >= len(data) {
+			return pdf.Null, pdf.Null, nil, false
+		}
+		return pdf.Name("FlateDecode").Object(), pdf.Null, z, true
+	}
+	// What is left of the chain packs them: an image under ASCII85.
+	if len(plain) >= len(data) {
+		return pdf.Null, pdf.Null, nil, false
+	}
+	names, dicts, any := make(pdf.Array, len(rest)), make(pdf.Array, len(rest)), false
+	for i, n := range rest {
+		names[i], dicts[i] = n.Object(), pdf.Null
+		if !restParms[i].IsZero() {
+			dicts[i], any = restParms[i].Object(), true
+		}
+	}
+	filter, parms = names.Object(), dicts.Object()
+	if len(rest) == 1 {
+		filter, parms = names[0], dicts[0]
+	}
+	if !any {
+		parms = pdf.Null
+	}
+	return filter, parms, plain, true
 }
 
 // dropCrypt removes a leading /Crypt filter and its parameters.

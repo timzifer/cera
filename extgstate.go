@@ -1,7 +1,10 @@
 package cera
 
 import (
+	"image/color"
+
 	"github.com/timzifer/cera/internal/pdf"
+	"github.com/timzifer/stilus"
 )
 
 // The parts of the graphics state ADR 0007 adds: the font set through gs,
@@ -96,8 +99,24 @@ func (in *interp) objectBlend(cs *colorSpace, op bool) (BlendMode, bool) {
 	return bm, bm != BlendNormal || in.gs.smask != nil
 }
 
+// pixel maps a premultiplied pixel of a texture.
+func (t *transfer) pixel(v uint32) uint32 {
+	c := stilus.UnpackRGBA(v)
+	switch c.A {
+	case 0:
+		return v
+	case 255:
+		return stilus.PackRGBA(color.RGBA{t[0][c.R], t[1][c.G], t[2][c.B], 255})
+	}
+	// Through the function goes the colour, not what the alpha left of it.
+	a := uint32(c.A)
+	un := func(v uint8) uint8 { return uint8(min((uint32(v)*255+a/2)/a, 255)) }
+	pre := func(v uint8) uint8 { return uint8((uint32(v)*a + 127) / 255) }
+	return stilus.PackRGBA(color.RGBA{pre(t[0][un(c.R)]), pre(t[1][un(c.G)]), pre(t[2][un(c.B)]), c.A})
+}
+
 // untransferred counts an object whose colours do not pass through the
-// transfer function of the state: images, shadings and patterns.
+// transfer function of the state: shadings and patterns.
 func (in *interp) untransferred() {
 	if in.gs.transfer != nil {
 		in.st.unsupported("transfer")

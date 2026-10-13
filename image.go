@@ -3,6 +3,7 @@ package cera
 import (
 	"encoding/binary"
 	"image"
+	"sync"
 
 	"github.com/timzifer/stilus"
 )
@@ -63,6 +64,50 @@ type Image struct {
 	// opaque reports that every sample of the image is opaque: it has
 	// colours, no mask and no alpha of its own.
 	opaque bool
+
+	// through holds the image with its colours passed through transfer
+	// functions, one for each that painted it.
+	throughMu sync.Mutex
+	through   map[*transfer]*Image
+}
+
+// transferred returns the image as the transfer function t makes it: its
+// colours through the function, its shape as it is. An image of one
+// component or one bit keeps its samples and gets another palette; a
+// colour image is copied. The result is kept with the image.
+func (img *Image) transferred(t *transfer) *Image {
+	if t == nil || img.color == nil {
+		return img
+	}
+	img.throughMu.Lock()
+	defer img.throughMu.Unlock()
+	if out := img.through[t]; out != nil {
+		return out
+	}
+	p := *img.color.Base()
+	switch p.Kind {
+	case stilus.PlaneRGBA:
+		pix := make([]uint32, len(p.Pix32))
+		for i, v := range p.Pix32 {
+			pix[i] = t.pixel(v)
+		}
+		p.Pix32 = pix
+	default:
+		pal := *p.Pal
+		for i, v := range pal {
+			pal[i] = t.pixel(v)
+		}
+		p.Pal = &pal
+	}
+	out := &Image{
+		W: img.W, H: img.H, Stencil: img.Stencil, Interpolate: img.Interpolate,
+		color: stilus.NewTexture(p), mask: img.mask, softMask: img.softMask, size: img.size, opaque: img.opaque,
+	}
+	if img.through == nil {
+		img.through = map[*transfer]*Image{}
+	}
+	img.through[t] = out
+	return out
 }
 
 // opaquePlane reports whether every pixel of p is opaque.

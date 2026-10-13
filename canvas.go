@@ -43,7 +43,7 @@ func (e *Editor) AddPage(at int, width, height float64) error {
 	if !(width >= 1 && height >= 1) || width > maxPageSide || height > maxPageSide {
 		return fmt.Errorf("cera: a page of %g by %g points: sides are from 1 to %d", width, height, maxPageSide)
 	}
-	p := editPage{blank: true, w: width, h: height}
+	p := editPage{id: e.newID(), blank: true, w: width, h: height}
 	e.pages = append(e.pages[:at], append([]editPage{p}, e.pages[at:]...)...)
 	return nil
 }

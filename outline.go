@@ -31,6 +31,10 @@ type OutlineItem struct {
 	Bold, Italic bool
 	Color        color.RGBA
 	Children     []OutlineItem
+
+	// from is where the entry was read from, for an editor that writes it
+	// again (outlinewrite.go).
+	from *outlineFrom
 }
 
 // Outline returns the entries at the top of the document outline, nil for
@@ -120,6 +124,9 @@ func (w *outlineWalk) items(first pdf.Object, depth int) []OutlineItem {
 		}
 		if c, _ := d.annotColor(it.Get("C")); len(c) == 3 {
 			item.Color = color.RGBA{unit8(c[0]), unit8(c[1]), unit8(c[2]), 255}
+		}
+		if ref, ok := o.Ref(); ok {
+			item.from = &outlineFrom{doc: d, ref: ref, target: copyTarget(item.Target)}
 		}
 		if depth < maxOutlineDepth {
 			item.Children = w.items(it.Get("First"), depth+1)

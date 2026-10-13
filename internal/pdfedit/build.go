@@ -29,6 +29,9 @@ type Page struct {
 
 	Width, Height float64
 	Draws         []Draw
+	// Geo, when set, changes the boxes of the page and moves what is on
+	// it (geometry.go).
+	Geo *Geometry
 }
 
 // Doc is what is written: the pages of the edited document Base (nil for
@@ -65,6 +68,23 @@ type Doc struct {
 	// Packed writes a new file with object streams and a cross-reference
 	// stream ([Write]); see pdfwrite.Writer.Packed.
 	Packed bool
+	// What makes a new file smaller ([Write]; optimise.go). Prune writes
+	// with every page, and with the form XObjects, tiling patterns and
+	// Type 3 fonts its content draws, the resources that content names and
+	// no others. Join writes streams and fonts that are the same once.
+	// Compress stores streams with the Flate filter that the sources have
+	// plain; see pdfwrite.Importer.Compress. Drop names what is left out.
+	Prune, Join, Compress bool
+	Drop                  Drop
+	// Linear writes a new file linearised ([Write]); see
+	// pdfwrite.Writer.Linear.
+	Linear bool
+	// With OutlineSet, Outline is the outline of the result in place of
+	// the edited document's (outline.go): alone, or with what imported
+	// pages bring after it. OutlinePrune leaves out the entries that led
+	// to pages which are not in the result.
+	Outline                                []OutlineItem
+	OutlineSet, OutlineAlone, OutlinePrune bool
 }
 
 // Sig is a signature dictionary an update adds: Objects[Object], with a
@@ -96,6 +116,9 @@ func Write(w io.Writer, doc Doc) error {
 		return err
 	}
 	b.w.Packed = doc.Packed
+	if doc.Linear {
+		b.w.Linear = &pdfwrite.Linear{Pages: b.pageRefs}
+	}
 	return b.write(w)
 }
 
@@ -123,7 +146,7 @@ func Update(w io.Writer, doc Doc) error {
 	if len(doc.Pages) == 0 {
 		return errors.New("the document has no pages")
 	}
-	if unchanged(doc) && len(doc.Patches) == 0 {
+	if unchanged(doc) && len(doc.Patches) == 0 && !doc.OutlineSet {
 		return base.WriteSource(w)
 	}
 	b := newBuilder(doc, &ub)
@@ -149,7 +172,7 @@ func unchanged(doc Doc) bool {
 		return false
 	}
 	for i, p := range doc.Pages {
-		if !p.Own || p.Index != i || p.Rotate%360 != 0 || len(p.Draws) > 0 {
+		if !p.Own || p.Index != i || p.Rotate%360 != 0 || len(p.Draws) > 0 || p.Geo != nil {
 			return false
 		}
 	}
@@ -189,6 +212,24 @@ type builder struct {
 	// names of an old /Dests dictionary are in that tree.
 	outlines, names2 pdf.Object
 	dropDests        bool
+	// noOutline says that the output has no outline though the edited
+	// document has one.
+	noOutline bool
+
+	// pageRes holds, by output page, the resources of the pages that lose
+	// some to pruning, in their source's space; srcOwn says that
+	// doc.ObjectSrc is the builder's own map.
+	pageRes []pdf.Object
+	srcOwn  bool
+	// pageRefs are the pages of the output, in order.
+	pageRefs []pdfwrite.Ref
+	// pageAnnots holds, by output page, the annotations of the pages of
+	// the edited document whose geometry moves them.
+	pageAnnots []pdf.Object
+	// joined holds the output numbers of the objects written once for
+	// all that are the same, by their sums; docIDs numbers the documents.
+	joined map[sum]pdfwrite.Ref
+	docIDs map[*pdf.Document]uint64
 }
 
 type srcKey struct {
@@ -219,6 +260,12 @@ type source struct {
 	dead map[int32]bool
 	// fields is what pages imported with their fields bring.
 	fields *fieldCopy
+
+	// pr finds the unused resources of what the source's importer
+	// copies; sums holds the sums of objects, summing those being summed.
+	pr      *pruner
+	sums    map[int32]sum
+	summing map[int32]bool
 }
 
 func newBuilder(doc Doc, upd *pdf.UpdateBase) *builder {
@@ -290,6 +337,8 @@ func (b *builder) source(d *pdf.Document, own bool) *source {
 		x.im.Drop = map[pdf.Name]bool{"Parent": true}
 		x.shared = b.bySrc[srcKey{d, true}]
 	}
+	b.dropKeys(x.im)
+	x.im.Compress = b.doc.Compress && b.upd == nil
 	for i := range d.PageCount() {
 		if r, ok := d.PageRef(i + 1); ok {
 			x.isPage[r.Num] = true
@@ -352,6 +401,9 @@ func (x *source) ref(r pdf.Ref) pdfwrite.Ref {
 			return 0
 		}
 	}
+	if x.b.doc.Join && x.b.upd == nil && joins(o) {
+		return x.join(r)
+	}
 	return x.im.Copy(r)
 }
 
@@ -371,6 +423,7 @@ func (b *builder) build() error {
 	}
 	b.pages = b.w.Alloc()
 	out := make([]pdfwrite.Ref, len(b.doc.Pages))
+	b.pageRefs = out
 	kids := make(pdf.Array, len(out))
 	for i, p := range b.doc.Pages {
 		if p.Src == nil {
@@ -390,6 +443,8 @@ func (b *builder) build() error {
 			x.pageOut[r.Num] = out[i]
 		}
 	}
+	// Before the changed objects of the edited document are written.
+	b.movePages()
 	if b.doc.Base != nil {
 		x := b.bySrc[srcKey{b.doc.Base, true}]
 		x.pruneDeleted()
@@ -397,6 +452,10 @@ func (b *builder) build() error {
 			x.setPatched()
 			x.freeDeleted()
 		}
+	}
+	// Before anything of a source is copied: pruning changes objects.
+	if b.doc.Prune && b.upd == nil {
+		b.prunePages()
 	}
 	// Pages are made once every page has its number, so links between
 	// them can point at the copies.
@@ -407,7 +466,7 @@ func (b *builder) build() error {
 		}
 		x := b.bySrc[srcKey{p.Src, p.Own}]
 		r, _ := x.d.PageRef(p.Index + 1)
-		dict, err := x.page(p, x.pageOut[r.Num] == out[i])
+		dict, err := x.page(p, i, x.pageOut[r.Num] == out[i])
 		if err != nil {
 			return err
 		}
@@ -416,8 +475,17 @@ func (b *builder) build() error {
 	for _, x := range b.sources {
 		x.finishFields()
 	}
-	if len(b.doc.Imports) > 0 {
+	switch {
+	case b.doc.OutlineSet:
+		if root, ok := b.setOutline(); ok {
+			b.outlines = root.Object()
+		} else {
+			b.noOutline = true
+		}
+	case len(b.doc.Imports) > 0:
 		b.mergeOutlines()
+	}
+	if len(b.doc.Imports) > 0 {
 		b.mergeDests()
 	}
 	b.form = b.formDict()
@@ -605,6 +673,9 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 			}
 		}
 		for k, v := range cat.All() {
+			if b.dropped(k, false) {
+				continue
+			}
 			switch k {
 			case "Type", "Pages", "OCProperties":
 				continue
@@ -613,7 +684,7 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 					continue // below
 				}
 			case "Outlines":
-				if !b.outlines.IsNull() {
+				if !b.outlines.IsNull() || b.noOutline {
 					continue
 				}
 			case "Names":
@@ -728,8 +799,10 @@ var (
 	}
 )
 
-// page makes the dictionary of one output page.
-func (x *source) page(p Page, first bool) (pdf.Dict, error) {
+// pageDict returns the dictionary of a source page as it is written, in
+// the source's space: with the attributes it inherits, and changed where
+// it is patched.
+func (x *source) pageDict(p Page) (pdf.Dict, error) {
 	src, err := x.d.Page(p.Index + 1) // with the inherited attributes
 	if err != nil {
 		return pdf.Dict{}, fmt.Errorf("page %d: %w", p.Index, err)
@@ -744,8 +817,28 @@ func (x *source) page(p Page, first bool) (pdf.Dict, error) {
 			}
 		}
 	}
+	return src, nil
+}
+
+// page makes the dictionary of output page i.
+func (x *source) page(p Page, i int, first bool) (pdf.Dict, error) {
+	src, err := x.pageDict(p)
+	if err != nil {
+		return pdf.Dict{}, err
+	}
+	// The resources without those nothing names, before a drawing adds
+	// to them.
+	if res := x.b.pageRes; res != nil && !res[i].IsNull() {
+		src = src.With("Resources", res[i])
+	}
+	if a := x.b.pageAnnots; a != nil && !a[i].IsNull() {
+		src = src.With("Annots", a[i])
+	}
 	if len(p.Draws) > 0 {
-		src = x.b.drawn(src, x.d.Resolve, p.Draws)
+		src = x.b.drawn(src, x.resolve, p.Draws)
+	}
+	if p.Geo != nil {
+		src = x.b.geometry(src, x, p.Geo)
 	}
 	entries := []pdf.Entry{
 		{Key: "Type", Val: pdf.Name("Page").Object()},
@@ -756,7 +849,7 @@ func (x *source) page(p Page, first bool) (pdf.Dict, error) {
 		dropped = ownDropped
 	}
 	for k, v := range src.All() {
-		if dropped[k] {
+		if dropped[k] || x.b.dropped(k, true) {
 			continue
 		}
 		if k == "Annots" {
@@ -770,7 +863,7 @@ func (x *source) page(p Page, first bool) (pdf.Dict, error) {
 		entries = append(entries, pdf.Entry{Key: "Rotate", Val: pdf.Integer(int64(rot))})
 	}
 	if !x.own {
-		if annots := x.annots(src.Get("Annots"), p.Fields && first); len(annots) > 0 {
+		if annots := x.annots(src.Get("Annots"), p.Fields && first, p.Geo); len(annots) > 0 {
 			entries = append(entries, pdf.Entry{Key: "Annots", Val: annots.Object()})
 		}
 	}
@@ -881,6 +974,18 @@ func (b *builder) buildPatches() error {
 		b.info = b.w.Add(b.doc.Info.Object())
 	} else if info, ok := x.d.Trailer().Get("Info").Ref(); ok {
 		b.info = x.ref(info)
+	}
+	if b.doc.OutlineSet {
+		// The catalogue names the new outline, or none.
+		cat, ok := x.obj(r).Dict()
+		if !ok || x.obj(r).Kind() != pdf.KindDict {
+			return ErrRepaired
+		}
+		p := Patch{Del: []pdf.Name{"Outlines"}}
+		if root, ok := b.setOutline(); ok {
+			p = Patch{Set: []pdf.Entry{{Key: "Outlines", Val: b.alias(root)}}}
+		}
+		b.patched[r.Num] = apply(cat, p).Object()
 	}
 	x.setPatched()
 	return nil

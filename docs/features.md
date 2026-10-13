@@ -1,6 +1,6 @@
 # Features
 
-What cera draws today, and what it counts as unsupported.
+What cera draws and does today, and what it counts as unsupported.
 
 ## Supported
 
@@ -32,7 +32,7 @@ Fonts a file does not embed:
 | sans serif monospaces (Consolas, Menlo, Lucida Console …) | Cousine |
 | Symbol, ZapfDingbats | DejaVu Sans subsets at AFM widths |
 | Adobe CJK collections | Noto Sans through `fonts/cjk` (opt-in, see [usage](usage.md)); reads back as Unicode without ToUnicode |
-| anything else | a `FontProvider` of your own (`cera.OpenWith`) |
+| anything else | the fonts of the machine through `fonts/system` (opt-in), or a `FontProvider` of your own (`cera.OpenWith`); `cera.FontProviders` asks several in turn |
 
 ### Images
 
@@ -58,7 +58,7 @@ Fonts a file does not embed:
 | DeviceGray, DeviceRGB | |
 | DeviceCMYK | through the CMYK profile of the document's output intent (PDF/X, PDF/A, PDF/E; `OpenOptions.IgnoreOutputIntent` to skip it), else a SWOP press profile; or the caller's (`OpenOptions.CMYKProfile`); `OpenOptions.NaiveCMYK` for raw device values |
 | CalGray, CalRGB, Lab | through CIE XYZ, D50 (Bradford) |
-| ICCBased | grey and RGB matrix/TRC profiles; CMYK profiles of lut8, lut16 or lutAtoB tables (Lab or XYZ); others by channel count |
+| ICCBased | grey and RGB profiles of curves and a matrix, or where they have none of lut8, lut16 or lutAtoB tables (scanner and camera profiles); CMYK profiles of such tables; Lab or XYZ; others by channel count |
 | Separation, DeviceN | tint transforms; `/None` paints nothing |
 | Indexed | on any of the above |
 | DefaultGray, DefaultRGB, DefaultCMYK | remap device colours, images and shadings of their resources; not the device spaces inside other spaces |
@@ -70,7 +70,7 @@ Fonts a file does not embed:
 - Soft masks: luminosity (with backdrop colour) and alpha, transfer
   functions of all four types
 - Constant alpha (`CA`, `ca`), `/Font` in `gs`, transfer functions
-  (`TR`, `TR2`) on solid colours
+  (`TR`, `TR2`) on solid colours and images
 - Overprint (`OP`, `op`, `OPM`) simulated as Multiply with
   `RenderOptions.SimulateOverprint` (off by default)
 - Ignored on purpose: `BG`, `UCR`, `HT`, `FL`, `SM`, `SA`, `ri`
@@ -112,37 +112,6 @@ Fonts a file does not embed:
   `RemoveAnnotation`): notes, free text, ink, shapes, lines, text markup,
   carets, standard stamps and links, with generated appearance streams,
   popups and reply threads
-- Text extraction puts right-to-left text (Arabic, Hebrew) into logical
-  order and gives the letters for presentation forms; lines, selection
-  and columns follow the direction
-- `Document.Signatures` and `Signature.Verify`: integrity (CMS signed
-  data, RSA and ECDSA, timestamp tokens), what was appended after a
-  signature and whether certification and field locks allow it, and the
-  certificate chain against roots the caller gives
-- `Editor.Sign`: approval and certification signatures (PAdES B-B,
-  `ETSI.CAdES.detached`) by an RSA or ECDSA key behind `crypto.Signer`,
-  in a field of the form or a new one, invisible or with an appearance
-  drawn on a canvas, with field locks; no timestamps or validation data
-- `Document.Attachments` and `Annotation.File`: embedded files with
-  their metadata and `/AFRelationship`, decoded and decrypted (also where
-  the files alone are encrypted, `/EFF`)
-- `Page.Rotated`: the page as a viewer shows it turned, with its own
-  display list; text, links, annotations and editing follow the view
-- `Page.Boxes` and `Page.InBox`: MediaBox, CropBox, BleedBox, TrimBox and
-  ArtBox with their defaults, and the page showing another of them than
-  the CropBox, a view as `Rotated` makes one
-- `Document.PageLabel` and `PageByLabel`: page labels (roman, decimal,
-  letters, prefixes), read leniently; the editor keeps them with their
-  pages
-- `Document.ViewSettings`: how a document asks to be opened and printed
-- `Document.Structure`: the structure tree of a tagged document — types
-  and their roles (`/RoleMap`, namespaces), titles, `/Alt`, `/ActualText`,
-  `/Lang`, marked content and annotations in reading order, the
-  attributes of tables and lists
-  (`/OpenAction`, `/PageMode`, `/PageLayout`, `/ViewerPreferences`)
-- `Document.Outline`: the bookmarks as a tree, with titles, style, open
-  state and targets (destinations, GoTo, URI, GoToR and Launch actions,
-  structure elements)
 
 ### Forms
 
@@ -154,23 +123,11 @@ Fonts a file does not embed:
   the form is saved
 - Native widgets through `FormWidgetProvider` and `FormLayer` (tab order,
   focus); fyne provider in [`form/fyneform`](../form/fyneform)
-- `cmd/cera -field name=value` fills a form
-- `Save` writes object streams and a cross-reference stream where the
-  document had them, or on request (`SaveOptions.ObjectStreams`); also
-  encrypted
-- `Editor.Redact` and `ApplyRedactions`: content taken out of pages for
-  good — glyphs out of their strings, paths left out or clipped, images
-  re-encoded without the samples, forms rewritten per use, annotations,
-  fields and the text that stood for the content in marked content and
-  the structure tree — failing closed, written as a new file
 - `Widget.Actions`: what a push button does — `ResetForm` and `Hide`
   carried out by the `FormState` (`Do`, `ResetFields`, `SetHidden`),
   `GoTo`, `URI` and `Named` as link targets, `SubmitForm` with its
   address, format and the data to send (`Submission`; cera sends
   nothing), JavaScript reported
-- `Editor.AddField` and `RemoveField`: fields of every type added to
-  pages with generated appearances, widgets added to fields, names that
-  make the nodes above them; fields removed with their widgets
 - `FormState.ExportFDF`, `ExportXFDF`, `ImportFDF`, `ImportXFDF`: the
   values of a form in its exchange formats, with hierarchical names, the
   states of buttons and several options of a list box
@@ -181,6 +138,65 @@ Fonts a file does not embed:
   `Field.Computed`, `Field.Format`, recalculation in `FormState.SetValue`
 - Not run: JavaScript. XFA: drawn from the AcroForm fallback, counted as `xfa`
 
+### Text extraction and interaction
+
+What a viewer needs of the text of a page (ADR 0014), in points of the
+displayed page:
+
+- `Page.Text`: the characters with what they stand for and their boxes,
+  in reading order, in lines and blocks; a ligature as its characters,
+  `/ActualText` as the text of its glyphs, words broken across lines
+  marked
+- Text extraction puts right-to-left text (Arabic, Hebrew) into logical
+  order and gives the letters for presentation forms; lines, selection
+  and columns follow the direction
+- Selection by characters, words, lines and blocks (`Select`, `WordAt`,
+  `LineAt`, `InRect`), the quads to draw it (`Quads`), its text with
+  hyphenated words joined on request (`TextOf`)
+- Search (`Find`): case, whole words, diacritics; a passage with the text
+  around it as an anchor that finds it again after the text was laid out
+  anew (`Quote`, `QuoteOf`, `FindQuote`, a W3C TextQuoteSelector)
+- `TextIndex`: the text of the pages of a document, kept for the pages
+  used last; search across pages in both directions, the text between
+  two places on different pages
+- `Page.Links` and the addresses written out in the text
+  (`PageText.URLs`); `Document.Destination` resolves a target to a page
+  and a view; `TextIndex.Hit` says what lies under a point: a link, a
+  form widget, text
+- `Document.Structure`: the structure tree of a tagged document — types
+  and their roles (`/RoleMap`, namespaces), titles, `/Alt`, `/ActualText`,
+  `/Lang`, marked content and annotations in reading order, the
+  attributes of tables and lists
+  (`/OpenAction`, `/PageMode`, `/PageLayout`, `/ViewerPreferences`)
+
+### The document
+
+- `Open`, `OpenWith`, and `OpenReaderAt` for a file read through an
+  `io.ReaderAt` as it is needed: a large file, or one in a browser read
+  through the File API
+- Files with object streams and cross-reference streams, linearised
+  files, files with incremental updates; damaged cross-reference tables
+  are rebuilt
+- What a document keeps decoded is bounded and can be shared and trimmed
+  (`NewCache`, `Document.Trim`, `SetPoolLimits`; see [budgets](budgets.md))
+- `Document.Outline`: the bookmarks as a tree, with titles, style, open
+  state and targets (destinations, GoTo, URI, GoToR and Launch actions,
+  structure elements)
+- `Document.PageLabel` and `PageByLabel`: page labels (roman, decimal,
+  letters, prefixes), read leniently; the editor keeps them with their
+  pages
+- `Document.ViewSettings`: how a document asks to be opened and printed
+- `Document.Attachments` and `Annotation.File`: embedded files with
+  their metadata and `/AFRelationship`, decoded and decrypted (also where
+  the files alone are encrypted, `/EFF`)
+- `Page.Rotated`: the page as a viewer shows it turned, with its own
+  display list; text, links, annotations and editing follow the view
+- `Page.Boxes` and `Page.InBox`: MediaBox, CropBox, BleedBox, TrimBox and
+  ArtBox with their defaults, and the page showing another of them than
+  the CropBox, a view as `Rotated` makes one
+- `Page.RenderGray` draws into an `*image.Gray`, band by band, without
+  the page in colour: for monochrome printers, fax, text recognition
+
 ### Metadata
 
 - `Document.Metadata`: the document information dictionary decoded (title,
@@ -189,6 +205,42 @@ Fonts a file does not embed:
 - Text strings in UTF-16BE, UTF-8 and PDFDocEncoding (all of it, accents at
   0x18–0x1F included), language escapes dropped; lenient dates
 - With `/EncryptMetadata false` the XMP stream is read as stored
+
+### Encryption
+
+- Read: the standard security handler with RC4 (40 to 128 bits), AES-128
+  and AES-256, opened with the user or the owner password
+  (`OpenOptions.Password`); crypt filters, metadata left plain
+  (`/EncryptMetadata false`), documents whose embedded files alone are
+  encrypted
+- `Document.Encrypted` and `Permissions`: what the author allows a reader
+  with the user password. Drawing and text extraction do not ask; the
+  editor refuses what they forbid (`ErrNotPermitted`, `ErrNoAssembly`)
+- Written: `Editor.Save` keeps the encryption of a document,
+  `Editor.SaveWith` encrypts anew (AES-256, user and owner password,
+  permissions) or decrypts, and `Editor.Update` appends in the encryption
+  the file has
+
+### Signatures
+
+- `Document.Signatures` and `Signature.Verify`: integrity (CMS signed
+  data, RSA and ECDSA, timestamp tokens), what was appended after a
+  signature and whether certification and field locks allow it, and the
+  certificate chain against roots the caller gives
+- `Editor.Sign`: approval and certification signatures (PAdES B-B,
+  `ETSI.CAdES.detached`) by an RSA or ECDSA key behind `crypto.Signer`,
+  in a field of the form or a new one, invisible or with an appearance
+  drawn on a canvas, with field locks; no timestamps or validation data
+
+### Editing
+
+An `Editor` (ADR 0013) puts a result together of the pages of documents
+and writes it: as a new file (`Save`), or as an incremental update that
+leaves the file as it is and appends what changed, so that signatures
+over it stay valid (`Update`).
+
+- Pages: imported from any document (`ImportPages`, with their fields on
+  request), deleted, moved, turned
 - `Editor.ImportPagesWith`: imported pages bring their outline entries,
   named destinations and page labels
 - `Editor.AddPage` and `Editor.Draw`: blank pages, and drawings over or
@@ -196,10 +248,52 @@ Fonts a file does not embed:
   Flate with a soft mask), text in the standard 14 fonts and in embedded
   subsets of TrueType and OpenType fonts, other pages as forms; opacity
   and blend modes
-- `Editor.Save` keeps the encryption of a document; `Editor.SaveWith`
-  encrypts (AES-256, user and owner password, permissions) or decrypts
+- `Editor.SetPageBox`, `ResizePage` (a page on another format: content as
+  a form through a matrix, annotations and boxes with it) and `AddSheets`
+  (n-up, imposition)
+- Form values written with their appearances (`SetFields`), the form or
+  all annotations made part of the pages (`Flatten`,
+  `FlattenAnnotations`), highlights (`AddHighlight`) and the other
+  annotations (above)
+- `Editor.AddField` and `RemoveField`: fields of every type added to
+  pages with generated appearances, widgets added to fields, names that
+  make the nodes above them; fields removed with their widgets
+- `Editor.SetOutline`, `Outline` and `PruneOutline` (bookmarks added,
+  renamed, reordered, built for a merged file; targets that stay with
+  their pages; entries of deleted pages dropped) and `SetPageLabels`;
+  `Document.PageLabels`
 - `Editor.SetMetadata` writes `/Info` and the XMP packet in agreement,
   keeping what else the packet holds
+- `Editor.Redact` and `ApplyRedactions`: content taken out of pages for
+  good — glyphs out of their strings, paths left out or clipped, images
+  re-encoded without the samples, forms rewritten per use, annotations,
+  fields and the text that stood for the content in marked content and
+  the structure tree — failing closed, written as a new file
+- `Save` writes object streams and a cross-reference stream where the
+  document had them, or on request (`SaveOptions.ObjectStreams`); also
+  encrypted
+- `SaveWith` writes linearised files (`SaveOptions.Linearize`, "fast web
+  view"): first-page section, page offset, shared object and outline
+  hint tables, with a cross-reference table or with object streams, also
+  encrypted; laid out by the rules qpdf checks linearised files by
+- `SaveWith` makes a file smaller on request, losing nothing of what it
+  shows: resources no content names left out (`PruneResources`), streams
+  and fonts that are the same written once, across merged documents too
+  (`JoinDuplicates`), plain, LZW, run length and ASCII streams under Flate
+  (`Compress`), thumbnails, `/PieceInfo` and the metadata of objects
+  dropped (`Drop`). Images are not resampled and fonts not subset
+
+Not done, each with its issue: the structure tree of imported pages
+(#183), what a redaction leaves (#198), destinations on resized pages
+(#205), images and fonts when a file is made smaller (#201, #202),
+timestamps and validation data in signatures (#193).
+
+### Command line
+
+- `cmd/cera -field name=value` fills a form for drawing; `cera fill`
+  writes it
+- `cmd/cera`: `text`, `search`, `info`, `merge`, `split`, `rotate`,
+  `delete`, `fill`; pages as PNG, JPEG, TIFF and WebP, in colour or grey
 
 ## Unsupported
 
@@ -232,7 +326,7 @@ column says.
 | `tint-transform` | tint transform that does not read | as grey |
 | `shading-function` | shading function that does not read | – |
 | `icc-lut` | CMYK ICC profile cera cannot read, of an ICCBased space or of the output intent | through DeviceCMYK's profile, the bundled one for the intent |
-| – | grey and RGB ICC profiles built from lookup tables | as device space of as many components |
+| `icc-profile` | grey or RGB ICC profile cera cannot read (neither curves and matrix nor a lut8, lut16 or lutAtoB table), a Lab profile, an ICCBased space of another number of components | as device space of as many components, or the alternate the space names |
 
 ### Transparency and graphics state
 
@@ -243,7 +337,7 @@ column says.
 | `alpha-is-shape` | `/AIS true` inside a knockout group (elsewhere shape and opacity read the same) | alpha as opacity |
 | `smask-transfer` | soft-mask transfer function that does not read | – |
 | `overprint` | overprint not simulated | painted over |
-| `transfer` | transfer functions on images, shadings, patterns, or that do not read | without |
+| `transfer` | transfer functions on shadings and patterns, or that do not read (fills, strokes, text and images go through them) | without |
 
 ### Content and annotations
 
@@ -259,3 +353,17 @@ column says.
 Inputs past a [budget](budgets.md) are drawn with less and counted:
 `nesting-budget`, `pattern-budget`, `smask-budget`, `mesh-budget`,
 `annot-budget`, `image-too-large`, `icc-budget`.
+
+### Beyond drawing
+
+Not counted, because no page is drawn differently for it:
+
+| area | not done | instead |
+|---|---|---|
+| scripts | JavaScript is never run: of form fields (but for Acrobat's form functions, see Forms), of links, bookmarks and buttons | the action is reported by its type (`LinkTarget.Action`, `WidgetAction`) |
+| forms | XFA | the AcroForm the file has beside it (`xfa`) |
+| text | text whose font says neither what its codes stand for nor has a known encoding | the characters with their boxes and codes, `Text` empty |
+| signatures | revocation and long-term validation (`/DSS`, OCSP, CRLs); timestamps when signing (#193) | integrity, what was appended, and the chain against the caller's roots |
+| encryption | public-key security handlers, AES-GCM (#161) | the file does not open |
+| output | pages in the CMYK of the document (#209), in another RGB than sRGB (#210); overprint per colorant (#155) | sRGB or grey; overprint simulated on request |
+| tagged PDF | writing structure: imported pages come untagged (#183) | the structure tree of a document is read and kept |

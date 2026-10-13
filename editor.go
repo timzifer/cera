@@ -99,6 +99,15 @@ type ImportOptions struct {
 // It is not safe for concurrent use, but the documents it uses may be
 // rendered while it is. Its methods change nothing when they fail.
 type Editor struct {
+	// lastID is the identity given to a page last; outline is the outline
+	// SetOutline set, and outlinePrune what PruneOutline asked for; labels
+	// are the page labels SetPageLabels set.
+	lastID                   int
+	outline                  []outlineNode
+	outlineSet, outlinePrune bool
+	labels                   []LabelRange
+	labelsSet                bool
+
 	base  *Document // the edited document; nil for NewEditor
 	pages []editPage
 	// imports is what the pages imported from a document bring with
@@ -135,6 +144,9 @@ type Editor struct {
 // editPage is one page of the result: page index of src, turned by rotate
 // more degrees. An own page is a page of the edited document.
 type editPage struct {
+	// id tells the page from the others of the result, wherever it is
+	// moved: an outline entry leads to it by that.
+	id     int
 	src    *Document
 	index  int
 	rotate int
@@ -150,13 +162,15 @@ type editPage struct {
 	draws []*drawing
 	// redacts are the redactions of an own page, by Redact.
 	redacts []redaction
+	// geo is what SetPageBox and ResizePage change of the page.
+	geo *pageGeo
 }
 
 // Edit returns an editor of d with all its pages.
 func (d *Document) Edit() *Editor {
 	e := &Editor{base: d}
 	for i := range d.NumPages() {
-		e.pages = append(e.pages, editPage{src: d, index: i, own: true})
+		e.pages = append(e.pages, editPage{id: e.newID(), src: d, index: i, own: true})
 	}
 	return e
 }
@@ -200,6 +214,9 @@ func (e *Editor) ImportPagesWith(at int, src *Document, opt ImportOptions, pages
 			return fmt.Errorf("cera: page %d of the selection: index %d is out of range [0, %d)", i, p.Index, n)
 		}
 		add[i] = editPage{src: src, index: p.Index, rotate: p.Rotate, fields: p.Fields, labels: opt.Labels}
+	}
+	for i := range add {
+		add[i].id = e.newID()
 	}
 	e.pages = append(e.pages[:at], append(add, e.pages[at:]...)...)
 	if src != e.base && (opt.Outline || opt.Destinations) {
@@ -280,8 +297,10 @@ func (e *Editor) check(i int) error {
 // [NewEditor] and for a document that needed a repair, [ErrNotPermitted]
 // for a change an encrypted document's permissions do not allow, and
 // [ErrCertified] for changes a certification signature does not allow:
-// any with DocMDP permissions 1, changes of the pages, drawings on them
-// and flattened annotations with 2 and 3, added annotations with 1 and 2. The editor may
+// any with DocMDP permissions 1, changes of the pages, of their boxes and
+// size, of the outline and the page labels, drawings on the pages and
+// flattened annotations with 2 and 3, added annotations with 1 and 2. The
+// editor may
 // be updated again. Nothing is written when Update fails, but
 // for an error of w itself.
 func (e *Editor) Update(w io.Writer) (err error) {
@@ -309,8 +328,9 @@ func (e *Editor) updatable() error {
 		return fmt.Errorf("%w: an update keeps the bytes a redaction is to remove: save the document as a new file", ErrNoUpdate)
 	}
 	if sg := e.base.signing(); !e.unguarded && (sg.mdp == 1 && (len(e.fields) > 0 || e.pagesChanged() || e.annotated() || e.meta != nil) ||
+		sg.mdp != 0 && (e.outlined() || e.labelsSet) ||
 		sg.mdp == 2 && (e.pagesChanged() || e.annotated()) || sg.mdp == 3 && e.pagesChanged() ||
-		sg.mdp != 0 && (e.flattens() || e.drawsOn() || e.formed())) {
+		sg.mdp != 0 && (e.flattens() || e.drawsOn() || e.formed() || e.resized())) {
 		return ErrCertified
 	}
 	if prot, ok := e.base.r.Protection(); ok && !prot.Owner {
@@ -318,7 +338,7 @@ func (e *Editor) updatable() error {
 		if e.pagesChanged() && perm&(pdf.PermModify|pdf.PermAssemble) == 0 ||
 			len(e.fields) > 0 && perm&(pdf.PermFillForms|pdf.PermAnnotate|pdf.PermModify) == 0 ||
 			e.annotated() && perm&(pdf.PermAnnotate|pdf.PermModify) == 0 ||
-			(e.flattens() || e.drawsOn() || e.formed() || e.meta != nil) && perm&pdf.PermModify == 0 {
+			(e.flattens() || e.drawsOn() || e.formed() || e.resized() || e.outlined() || e.labelsSet || e.meta != nil) && perm&pdf.PermModify == 0 {
 			return ErrNotPermitted
 		}
 	}
@@ -334,9 +354,12 @@ func (e *Editor) plan() pdfedit.Doc {
 	for i, p := range e.pages {
 		if p.blank {
 			doc.Pages[i] = pdfedit.Page{Rotate: p.rotate, Width: p.w, Height: p.h}
-			continue
+		} else {
+			doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own, Fields: p.fields}
 		}
-		doc.Pages[i] = pdfedit.Page{Src: p.src.r, Index: p.index, Rotate: p.rotate, Own: p.own, Fields: p.fields}
+		if p.geo != nil {
+			doc.Pages[i].Geo = p.geo.plan()
+		}
 	}
 	// Object 0 is Helvetica, written only when an appearance uses it.
 	doc.Objects = []pdf.Object{pdf.NewDict(
@@ -355,9 +378,14 @@ func (e *Editor) plan() pdfedit.Doc {
 		if e.base == nil {
 			doc.PageLabels = labels
 		} else if root, ok := e.base.r.Trailer().Get("Root").Ref(); ok {
-			doc.Patches = append(doc.Patches, pdfedit.Patch{Ref: root, Set: []pdf.Entry{{Key: "PageLabels", Val: labels.Object()}}})
+			p := pdfedit.Patch{Ref: root, Del: []pdf.Name{"PageLabels"}}
+			if !labels.IsZero() {
+				p = pdfedit.Patch{Ref: root, Set: []pdf.Entry{{Key: "PageLabels", Val: labels.Object()}}}
+			}
+			doc.Patches = append(doc.Patches, p)
 		}
 	}
+	e.outlinePlan(&doc)
 	for src, opt := range e.imports {
 		if doc.Imports == nil {
 			doc.Imports = map[*pdf.Document]pdfedit.Import{}
@@ -411,7 +439,57 @@ type SaveOptions struct {
 	// value, ObjectStreamsAsSource, writes the edited document as it was
 	// read, and a new document in the classic form.
 	ObjectStreams ObjectStreamMode
+	// Linearize lays the file out for a reader that gets it piece by
+	// piece ("fast web view"; PDF 2.0, Annex F): what the first page needs
+	// comes first, and a table of hints says where the other pages are, so
+	// that a viewer shows a page before the rest of the file has arrived.
+	// The whole file is laid out in memory before any of it is written. An
+	// update appended later (Editor.Update) makes it an ordinary file
+	// again.
+	Linearize bool
+
+	// The rest makes the file smaller without changing what it shows.
+	// Save copies what the pages reach as it is; each of these looks at it
+	// first, which takes the time of reading the document through.
+
+	// PruneResources writes with every page the resources its content
+	// names and no others, and likewise with the form XObjects, tiling
+	// patterns and Type 3 fonts that content draws. A resource dictionary
+	// that all pages share keeps every font and image of the document
+	// with every page: after DeletePages, or in a file made of some pages
+	// of another, what only the other pages drew is then left out. A page
+	// whose content cannot be read to the end keeps what it has.
+	PruneResources bool
+	// JoinDuplicates writes streams that are the same — an image or a
+	// font program embedded once for every page it is on — and the fonts
+	// of the same program once, also those of different documents.
+	JoinDuplicates bool
+	// Compress stores the streams that the document has plain, or under a
+	// filter that packs worse (LZW, run length, ASCII85, ASCIIHex), with
+	// the Flate filter where that is shorter. Metadata streams stay plain.
+	Compress bool
+	// Drop names parts of the document that are left out.
+	Drop Drop
 }
+
+// Drop names parts of a document a viewer does not need to show it, for
+// [SaveOptions.Drop] to leave out.
+type Drop uint
+
+const (
+	// DropThumbnails leaves out the thumbnail images of the pages:
+	// viewers make their own.
+	DropThumbnails Drop = 1 << iota
+	// DropPieceInfo leaves out the private data that the programs which
+	// made the document keep in it, with the document, its pages and its
+	// form XObjects (/PieceInfo): what an illustration program needs to
+	// edit its file again, often larger than the page it belongs to.
+	DropPieceInfo
+	// DropObjectMetadata leaves out the metadata streams of the pages,
+	// images, fonts and other objects. The metadata of the document
+	// itself stays.
+	DropObjectMetadata
+)
 
 // ObjectStreamMode says whether a file is written with object streams;
 // see [SaveOptions.ObjectStreams].
@@ -460,6 +538,20 @@ func (e *Editor) SaveWith(w io.Writer, opt SaveOptions) (err error) {
 	case ObjectStreamsNever:
 	default:
 		return fmt.Errorf("cera: object stream mode %d", opt.ObjectStreams)
+	}
+	if opt.Drop&^(DropThumbnails|DropPieceInfo|DropObjectMetadata) != 0 {
+		return fmt.Errorf("cera: parts to drop %#x", uint(opt.Drop))
+	}
+	doc.Prune, doc.Join, doc.Compress = opt.PruneResources, opt.JoinDuplicates, opt.Compress
+	doc.Linear = opt.Linearize
+	if opt.Drop&DropThumbnails != 0 {
+		doc.Drop |= pdfedit.DropThumbnails
+	}
+	if opt.Drop&DropPieceInfo != 0 {
+		doc.Drop |= pdfedit.DropPieceInfo
+	}
+	if opt.Drop&DropObjectMetadata != 0 {
+		doc.Drop |= pdfedit.DropMetadata
 	}
 	if e.base != nil && e.base.signing().signed {
 		return ErrSigned

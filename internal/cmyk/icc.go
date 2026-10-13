@@ -58,41 +58,15 @@ func (e PCS) encodeLab(L, a, b float64) [3]float64 {
 // has none) and the black point Little CMS finds for that intent, to
 // convert with black point compensation as transicc -t 1 -b does.
 func Parse(b []byte) (*Profile, error) {
-	if len(b) < 132 {
-		return nil, errors.New("cmyk: not an ICC profile")
-	}
-	if string(b[36:40]) != "acsp" {
-		return nil, errors.New("cmyk: not an ICC profile")
-	}
-	if string(b[16:20]) != "CMYK" {
-		return nil, fmt.Errorf("cmyk: a profile of %q, not CMYK", b[16:20])
-	}
-	var pcs PCS
-	switch string(b[20:24]) {
-	case "Lab ":
-	case "XYZ ":
-		pcs = XYZ
-	default:
-		return nil, fmt.Errorf("cmyk: connection space %q", b[20:24])
-	}
-	tags := map[string][]byte{}
-	n := int(binary.BigEndian.Uint32(b[128:]))
-	if n > (len(b)-132)/12 {
-		return nil, errors.New("cmyk: truncated tag table")
-	}
-	for i := range n {
-		e := b[132+12*i:]
-		off, size := int(binary.BigEndian.Uint32(e[4:])), int(binary.BigEndian.Uint32(e[8:]))
-		if off < 0 || size < 0 || off > len(b) || size > len(b)-off {
-			return nil, fmt.Errorf("cmyk: tag %q out of range", e[:4])
-		}
-		tags[string(e[:4])] = b[off : off+size]
+	tags, pcs, err := header(b, "CMYK")
+	if err != nil {
+		return nil, err
 	}
 	tag := "A2B1"
 	if _, ok := tags[tag]; !ok {
 		tag = "A2B0"
 	}
-	a2b, enc, err := readTable(tags[tag], pcs, false)
+	a2b, enc, err := readTable(tags[tag], pcs, 4, false)
 	if err != nil {
 		return nil, fmt.Errorf("cmyk: %s: %w", tag, err)
 	}
@@ -101,7 +75,7 @@ func Parse(b []byte) (*Profile, error) {
 	// B2A0 and back colorimetrically; of any other, the darkest colorant
 	// (all inks full). Either at L* 50 at most, made neutral.
 	var lab [3]float64
-	b2a, benc, err := readTable(tags["B2A0"], pcs, true)
+	b2a, benc, err := readTable(tags["B2A0"], pcs, 4, true)
 	if string(b[12:16]) == "prtr" && err == nil {
 		black := benc.encodeLab(0, 0, 0)
 		if b[8] >= 4 {
@@ -119,6 +93,65 @@ func Parse(b []byte) (*Profile, error) {
 	L, _, _ := XYZToLab(enc.XYZOf(lab[:]))
 	p.Black = LabToXYZ(min(max(L, 0), 50), 0, 0)
 	return p, nil
+}
+
+// header checks that b is an ICC profile of the device space named and
+// returns its tags and its connection space.
+func header(b []byte, space string) (map[string][]byte, PCS, error) {
+	if len(b) < 132 || string(b[36:40]) != "acsp" {
+		return nil, 0, errors.New("cmyk: not an ICC profile")
+	}
+	if string(b[16:20]) != space {
+		return nil, 0, fmt.Errorf("cmyk: a profile of %q, not %s", b[16:20], space)
+	}
+	var pcs PCS
+	switch string(b[20:24]) {
+	case "Lab ":
+	case "XYZ ":
+		pcs = XYZ
+	default:
+		return nil, 0, fmt.Errorf("cmyk: connection space %q", b[20:24])
+	}
+	tags := map[string][]byte{}
+	n := int(binary.BigEndian.Uint32(b[128:]))
+	if n > (len(b)-132)/12 {
+		return nil, 0, errors.New("cmyk: truncated tag table")
+	}
+	for i := range n {
+		e := b[132+12*i:]
+		off, size := int(binary.BigEndian.Uint32(e[4:])), int(binary.BigEndian.Uint32(e[8:]))
+		if off < 0 || size < 0 || off > len(b) || size > len(b)-off {
+			return nil, 0, fmt.Errorf("cmyk: tag %q out of range", e[:4])
+		}
+		tags[string(e[:4])] = b[off : off+size]
+	}
+	return tags, pcs, nil
+}
+
+// ParseDevice reads the device to PCS table of a grey (n = 1) or RGB
+// (n = 3) profile that is built from lookup tables — a scanner or camera
+// profile, some display profiles of ICC v4 — for the relative
+// colorimetric intent: A2B1, or A2B0 where it has none. The tables are
+// those Parse reads for CMYK. It returns the table and how it encodes the
+// connection space; PCS.XYZOf takes what it gives to XYZ (D50).
+func ParseDevice(b []byte, n int) (Transform, PCS, error) {
+	space := map[int]string{1: "GRAY", 3: "RGB "}[n]
+	if space == "" {
+		return nil, 0, fmt.Errorf("cmyk: a device of %d components", n)
+	}
+	tags, pcs, err := header(b, space)
+	if err != nil {
+		return nil, 0, err
+	}
+	tag := "A2B1"
+	if _, ok := tags[tag]; !ok {
+		tag = "A2B0"
+	}
+	a2b, enc, err := readTable(tags[tag], pcs, n, false)
+	if err != nil {
+		return nil, 0, fmt.Errorf("cmyk: %s: %w", tag, err)
+	}
+	return a2b, enc, nil
 }
 
 // perceptualBlack is the black of the perceptual intent of ICC v4 (XYZ,
@@ -139,28 +172,29 @@ func cbrtLab(t float64) float64 {
 	return t*24389/27/116 + 16.0/116
 }
 
-// readTable reads an A2B (4 inputs, 3 outputs) or, with b2a, a B2A table
-// (3 inputs, 4 outputs), and the encoding of its PCS side.
-func readTable(b []byte, pcs PCS, b2a bool) (Transform, PCS, error) {
+// readTable reads an A2B (n inputs, 3 outputs) or, with b2a, a B2A table
+// (3 inputs, n outputs) of a device of n components, and the encoding of
+// its PCS side.
+func readTable(b []byte, pcs PCS, n int, b2a bool) (Transform, PCS, error) {
 	if len(b) < 12 {
 		return nil, 0, errors.New("missing")
 	}
-	in, out := 4, 3
+	in, out := n, 3
 	if b2a {
-		in, out = 3, 4
+		in, out = 3, n
 	}
 	var t Transform
 	var err error
 	enc := pcs
 	switch string(b[:4]) {
 	case "mft2":
-		t, err = readLut(b, 2, in, out)
+		t, err = readLut(b, 2, in, out, b2a)
 	case "mft1":
 		if pcs == XYZ {
 			return nil, 0, errors.New("lut8Type with XYZ")
 		}
 		enc = LabV4
-		t, err = readLut(b, 1, in, out)
+		t, err = readLut(b, 1, in, out, b2a)
 	case "mAB ", "mBA ":
 		if (string(b[:4]) == "mBA ") != b2a {
 			return nil, 0, fmt.Errorf("%q in the wrong direction", b[:4])
@@ -176,8 +210,8 @@ func readTable(b []byte, pcs PCS, b2a bool) (Transform, PCS, error) {
 }
 
 // readLut reads a lut8Type (w = 1) or lut16Type (w = 2) of in inputs and
-// out outputs.
-func readLut(b []byte, w, in, out int) (Transform, error) {
+// out outputs; b2a says that the inputs are the connection space.
+func readLut(b []byte, w, in, out int, b2a bool) (Transform, error) {
 	if len(b) < 48 || int(b[8]) != in || int(b[9]) != out {
 		return nil, errors.New("table of the wrong shape")
 	}
@@ -215,11 +249,11 @@ func readLut(b []byte, w, in, out int) (Transform, error) {
 	for range out {
 		t.OutCurves = append(t.OutCurves, get(nOut))
 	}
-	// The matrix applies to XYZ input only, which a CMYK table does not
-	// take, and to the three inputs of a B2A table (Little CMS: where it is
-	// not the identity).
+	// The matrix applies to XYZ input only, which a device does not give:
+	// to the three inputs of a B2A table (Little CMS: where it is not the
+	// identity).
 	m := matrixOf(b[12:], false)
-	if in == 3 && !m.identity() {
+	if b2a && !m.identity() {
 		return pipeline{m, t}, nil
 	}
 	return t, nil

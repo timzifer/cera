@@ -173,6 +173,15 @@ func (b *builder) change(x *source, r pdf.Ref, set ...pdf.Entry) {
 // outline of the output: after the entries of the edited document, each
 // source's under an entry of its own where it asks for one.
 func (b *builder) mergeOutlines() {
+	top := b.importedOutlines()
+	if len(top) == 0 {
+		return
+	}
+	b.attachOutlines(top)
+}
+
+// importedOutlines returns the outline entries imported pages bring.
+func (b *builder) importedOutlines() []*outItem {
 	var top []*outItem
 	for _, x := range b.sources {
 		opt := b.doc.Imports[x.d]
@@ -197,9 +206,11 @@ func (b *builder) mergeOutlines() {
 		}
 		top = append(top, items...)
 	}
-	if len(top) == 0 {
-		return
-	}
+	return top
+}
+
+// attachOutlines makes top part of the outline of the output.
+func (b *builder) attachOutlines(top []*outItem) {
 	// The outline of the edited document, when it has one that is an
 	// object of its own with entries: the new ones follow its last.
 	if own := b.own(); own != nil {
