@@ -1,0 +1,30 @@
+linear.go, the writer of linearised files, follows qpdf:
+
+    qpdf — https://github.com/qpdf/qpdf
+    Copyright (c) 2005-2021 Jay Berkenbilt,
+    2022-2026 Jay Berkenbilt and Manfred Holger
+
+    Licensed under the Apache License, Version 2.0 (the "License"); you
+    may not use qpdf except in compliance with the License. You may obtain
+    a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+    implied. See the License for the specific language governing
+    permissions and limitations under the License.
+
+No code of qpdf is in cera. Its sources libqpdf/QPDF_linearization.cc and
+libqpdf/QPDFWriter.cc, and the chapter on linearization of its manual,
+were read to learn how a linearised file is laid out so that readers
+accept it: which part of the file an object belongs to by who refers to
+it, which of two parts wins, in what order objects are walked and
+numbered, where the two cross-reference sections go, and what the hint
+tables say. qpdf's check of linearised files (qpdf --check-linearization)
+is what cera's output is tested against.
+
+What is in linear.go was written for cera, in Go and to its own design,
+and is under cera's licence. This notice is the credit qpdf's authors are
+due for the knowledge.
