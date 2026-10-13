@@ -281,7 +281,9 @@ Rich text values are dropped for the plain ones beside them, and what
 else the formats carry — annotations, pages, scripts — is not read.
 
 `dst` may be any sub-rectangle of the page (a tile or viewport): only that
-region is drawn. `RenderOptions.Region` narrows it further. Errors in the
+region is drawn. `RenderOptions.Region` narrows it further. A region gets,
+byte for byte, the pixels the page drawn at once has there: tiles can be
+cached and compared, and the number of workers does not show. Errors in the
 content never stop a page; a non-nil error means a partial image
 (`ErrDeadline`, a rasterizer budget, or a recovered `*PanicError`).
 

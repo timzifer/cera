@@ -25,6 +25,8 @@ type RenderOptions struct {
 	Scale float64
 	// Region restricts drawing to part of the page, in device pixels of the
 	// whole page at Scale (a tile or viewport). Empty means dst.Bounds().
+	// A region gets the pixels the page drawn at once has there, byte for
+	// byte, whatever the regions and however many Workers draw them.
 	Region image.Rectangle
 	// Background fills the region before drawing. The zero value leaves it
 	// transparent; use color.RGBA{255, 255, 255, 255} for paper.

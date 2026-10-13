@@ -283,14 +283,13 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		if !r.check("grey", err) {
 			return
 		}
-		// A large page is drawn in several bands, and a band of a page
-		// may differ from the page drawn whole by a level or two in a few
-		// pixels of an image.
+		// A large page is drawn in several bands; a band of a page has
+		// the pixels of the page drawn at once.
 		differ := 0
 		for y := before.Rect.Min.Y; y < before.Rect.Max.Y; y++ {
 			for x := before.Rect.Min.X; x < before.Rect.Max.X; x++ {
 				d := int(color.GrayModel.Convert(before.RGBAAt(x, y)).(color.Gray).Y) - int(grey.GrayAt(x, y).Y)
-				if d > 2 || d < -2 {
+				if d != 0 {
 					differ++
 				}
 			}
