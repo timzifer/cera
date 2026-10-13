@@ -70,7 +70,9 @@
   text, stencil masks), as a table per RGB component made once per
   ExtGState object. Images, shadings and patterns are drawn without and
   counted as `transfer`, as is a function that does not read. `TR2
-  /Default` is the identity.
+  /Default` is the identity. (Since #156 images go through the function
+  too: an image of one component or one bit gets another palette, a
+  colour image a copy, kept with the image per function.)
 
 ## Consequences
 

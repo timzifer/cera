@@ -70,7 +70,7 @@ Fonts a file does not embed:
 - Soft masks: luminosity (with backdrop colour) and alpha, transfer
   functions of all four types
 - Constant alpha (`CA`, `ca`), `/Font` in `gs`, transfer functions
-  (`TR`, `TR2`) on solid colours
+  (`TR`, `TR2`) on solid colours and images
 - Overprint (`OP`, `op`, `OPM`) simulated as Multiply with
   `RenderOptions.SimulateOverprint` (off by default)
 - Ignored on purpose: `BG`, `UCR`, `HT`, `FL`, `SM`, `SA`, `ri`
@@ -262,7 +262,7 @@ column says.
 | `alpha-is-shape` | `/AIS true` inside a knockout group (elsewhere shape and opacity read the same) | alpha as opacity |
 | `smask-transfer` | soft-mask transfer function that does not read | – |
 | `overprint` | overprint not simulated | painted over |
-| `transfer` | transfer functions on images, shadings, patterns, or that do not read | without |
+| `transfer` | transfer functions on shadings and patterns, or that do not read (fills, strokes, text and images go through them) | without |
 
 ### Content and annotations
 

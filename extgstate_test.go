@@ -156,12 +156,45 @@ func TestTransfer(t *testing.T) {
 			}
 		})
 	}
-	// Images keep their colours, and are counted.
-	img := streamObj("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8", []byte{255, 0, 0})
-	content := "/T gs q 100 0 0 100 0 0 cm /Im Do Q"
-	out, st := renderTransparent(t, content, "/ExtGState << /T 101 0 R >> /XObject << /Im 100 0 R >>", img, "<< /TR 102 0 R >>", invert)
+	// Images go through the function too, whatever they are made of: a
+	// colour image, one with a palette, one of one bit, one with a soft
+	// mask. The same image without the function is what it was.
+	for name, c := range map[string]struct {
+		img        string
+		want, with color.RGBA
+	}{
+		"colour": {streamObj("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8", []byte{255, 0, 0}), red, cyan},
+		"palette": {streamObj("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace [/Indexed /DeviceRGB 1 <000000FF0000>] /BitsPerComponent 8", []byte{1}),
+			red, cyan},
+		"one bit": {streamObj("/Type /XObject /Subtype /Image /Width 8 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 1", []byte{0xff}),
+			white, rgba(0, 0, 0, 255)},
+		"grey": {streamObj("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", []byte{64}),
+			rgba(64, 64, 64, 255), rgba(191, 191, 191, 255)},
+	} {
+		content := "/T gs q 100 0 0 100 0 0 cm /Im Do Q /N gs q 100 0 0 100 100 0 cm /Im Do Q"
+		out, st := renderTransparent(t, content, "/ExtGState << /T 101 0 R /N << /TR /Identity >> >> /XObject << /Im 100 0 R >>", c.img, "<< /TR 102 0 R >>", invert)
+		assertNear(t, out, 50, 50, c.with, 1)
+		assertNear(t, out, 150, 50, c.want, 1)
+		if st.Unsupported["transfer"] != 0 {
+			t.Errorf("%s image: transfer counted %d", name, st.Unsupported["transfer"])
+		}
+	}
+	// With a soft mask: the colour goes through the function, the mask
+	// does not. Half of red over white, and half of cyan.
+	masked := streamObj("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /SMask 103 0 R", []byte{255, 0, 0})
+	mask := streamObj("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", []byte{128})
+	content := "/T gs q 100 0 0 100 0 0 cm /Im Do Q /N gs q 100 0 0 100 100 0 cm /Im Do Q"
+	out, st := renderTransparent(t, content, "/ExtGState << /T 101 0 R /N << /TR /Identity >> >> /XObject << /Im 100 0 R >>", masked, "<< /TR 102 0 R >>", invert, mask)
+	assertNear(t, out, 50, 50, rgba(127, 255, 255, 255), 2)
+	assertNear(t, out, 150, 50, rgba(255, 127, 127, 255), 2)
+	if st.Unsupported["transfer"] != 0 {
+		t.Errorf("masked image: transfer counted %d", st.Unsupported["transfer"])
+	}
+	// A shading is still drawn without, and counted.
+	sh := "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [1 0 0] /N 1 >> /Extend [true true] >>"
+	out, st = renderTransparent(t, "/T gs /Sh sh", "/ExtGState << /T 101 0 R >> /Shading << /Sh 100 0 R >>", sh, "<< /TR 102 0 R >>", invert)
 	assertNear(t, out, 50, 50, red, 1)
 	if st.Unsupported["transfer"] != 1 {
-		t.Errorf("image: transfer counted %d", st.Unsupported["transfer"])
+		t.Errorf("shading: transfer counted %d", st.Unsupported["transfer"])
 	}
 }

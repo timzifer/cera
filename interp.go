@@ -988,7 +988,7 @@ func (in *interp) drawImage(r *imageResult) {
 			return
 		}
 		in.paint = Paint{Color: color.RGBA{A: a}}
-		in.untransferred()
+		img = img.transferred(in.gs.transfer)
 	}
 	in.st.Images++
 	if grouped {
