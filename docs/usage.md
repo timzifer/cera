@@ -1003,3 +1003,26 @@ go build -C cmd/cera -o "$PWD/cera" .
 it does not draw with: it writes the PNGs with
 [calamus](https://github.com/timzifer/calamus), which encodes them in bands
 on all cores (encoding was most of the command's time with `image/png`).
+The ending of `-o` says what is written: `.png`, `.jpg` (`-quality`),
+`.tif` (LZW) or `.webp` (without loss); `-gray` draws in grey. A TIFF is
+one page: several pages are several files.
+
+Besides drawing, the command does what the library does, as subcommands
+(`cera <command> -h` lists the flags of each):
+
+```sh
+./cera text input.pdf                       # the text; -json: every line with its box
+./cera search input.pdf 'a phrase'          # page: context [match] context
+./cera info input.pdf                       # pages, metadata, layers, fields, signatures,
+                                            # and what of each page is not drawn exactly
+./cera merge -o all.pdf a.pdf b.pdf         # with outlines, labels and fields
+./cera split -o 'page-%d.pdf' input.pdf     # -every 4: four pages a file
+./cera rotate -by 90 -pages 2-3 -o out.pdf input.pdf
+./cera delete -pages 1,7- -o out.pdf input.pdf
+./cera fill -field name=Ada -o out.pdf form.pdf   # -flatten; -update keeps signatures
+```
+
+Pages are given as `1-3,5,8-`. The commands that write a PDF take `-small`
+(unused resources left out, duplicates joined, streams compressed, object
+streams) and `-linearize`. `cera info` is the first thing to send with a
+bug report: it says what cera makes of a file.

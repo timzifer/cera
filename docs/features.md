@@ -154,7 +154,10 @@ Fonts a file does not embed:
   the form is saved
 - Native widgets through `FormWidgetProvider` and `FormLayer` (tab order,
   focus); fyne provider in [`form/fyneform`](../form/fyneform)
-- `cmd/cera -field name=value` fills a form
+- `cmd/cera -field name=value` fills a form for drawing; `cera fill`
+  writes it
+- `cmd/cera`: `text`, `search`, `info`, `merge`, `split`, `rotate`,
+  `delete`, `fill`; pages as PNG, JPEG, TIFF and WebP, in colour or grey
 - `Save` writes object streams and a cross-reference stream where the
   document had them, or on request (`SaveOptions.ObjectStreams`); also
   encrypted

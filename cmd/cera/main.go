@@ -1,9 +1,24 @@
-// Command cera renders PDF pages to PNG.
+// Command cera renders PDF pages to images, and does with PDF files what
+// the library does besides.
 //
 //	cera -dpi 150 -page 1 -o page.png input.pdf
 //	cera -dpi 150 -o 'out-%d.png' input.pdf   # all pages
+//	cera -o 'out-%d.jpg' -quality 85 input.pdf   # or .tif, .webp
+//	cera -gray -o 'fax-%d.tif' input.pdf
 //	cera -field name=Ada -field agree=Yes -page 1 form.pdf
 //	cera -cmyk-profile CoatedFOGRA39.icc -page 1 print.pdf
+//
+//	cera text input.pdf                 # the text; -json with places
+//	cera search input.pdf 'a phrase'    # where it is, by page
+//	cera info input.pdf                 # what cera makes of the file
+//	cera merge -o all.pdf a.pdf b.pdf
+//	cera split -o 'page-%d.pdf' input.pdf
+//	cera rotate -by 90 -pages 2-3 -o out.pdf input.pdf
+//	cera delete -pages 1,7- -o out.pdf input.pdf
+//	cera fill -field name=Ada -flatten -o out.pdf form.pdf
+//
+// `cera <command> -h` lists the flags of a command; `cera render` is the
+// command without a name.
 //
 // PNGs are written at the fastest compression level, which makes them
 // larger than other tools' (see docs/performance.md). With -png encode
@@ -21,19 +36,32 @@ import (
 	"image/color"
 	stdpng "image/png"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/timzifer/calamus/jpeg"
 	"github.com/timzifer/calamus/png"
+	"github.com/timzifer/calamus/tiff"
+	"github.com/timzifer/calamus/webp"
 	"github.com/timzifer/cera"
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		if os.Args[1] == "render" {
+			os.Args = append(os.Args[:1], os.Args[2:]...)
+		} else if code, ok := runCommand(os.Args[1], os.Args[2:], os.Stdout, os.Stderr); ok {
+			os.Exit(code)
+		}
+	}
 	dpi := flag.Float64("dpi", 150, "resolution")
 	page := flag.Int("page", 0, "page to render, 1-based (0 = all)")
-	out := flag.String("o", "page-%d.png", "output file; %d is replaced by the page number")
+	out := flag.String("o", "page-%d.png", "output file; %d is replaced by the page number, and its ending says what is written: .png, .jpg, .tif or .webp")
+	quality := flag.Int("quality", 0, "quality of a JPEG, 1 to 100 (default 75)")
+	gray := flag.Bool("gray", false, "draw in grey")
 	password := flag.String("password", "", "password of an encrypted file")
 	transparent := flag.Bool("transparent", false, "leave the background transparent")
 	timeout := flag.Duration("timeout", time.Minute, "deadline per page")
@@ -56,6 +84,7 @@ func main() {
 	})
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: cera [flags] input.pdf")
+		fmt.Fprintln(os.Stderr, "       cera text|search|info|merge|split|rotate|delete|fill ...   (-h for each)")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -94,13 +123,23 @@ func main() {
 		}
 		opt.CMYKProfile = b
 	}
-	if err := run(flag.Arg(0), opt, *dpi, *page, *out, *transparent, *timeout, *verbose, *workers, mode, box, filter, fields, *pngMode); err != nil {
+	if err := run(flag.Arg(0), opt, *dpi, *page, *out, *transparent, *timeout, *verbose, *workers, mode, box, filter, fields, *pngMode, *quality, *gray); err != nil {
 		fmt.Fprintln(os.Stderr, "cera:", err)
 		os.Exit(1)
 	}
 }
 
-func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, box cera.PageBox, filter cera.ImageFilter, fields []string, pngMode string) error {
+func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, box cera.PageBox, filter cera.ImageFilter, fields []string, pngMode string, quality int, gray bool) error {
+	format := strings.ToLower(filepath.Ext(out))
+	switch format {
+	case ".png", ".tif", ".tiff", ".webp":
+	case ".jpg", ".jpeg":
+		if transparent {
+			return fmt.Errorf("-o %q: a JPEG has no transparency", out)
+		}
+	default:
+		return fmt.Errorf("-o %q: want a name that ends in .png, .jpg, .tif or .webp", out)
+	}
 	data, err := os.ReadFile(in)
 	if err != nil {
 		return err
@@ -138,21 +177,31 @@ func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, tra
 		if strings.Contains(out, "%d") {
 			name = fmt.Sprintf(out, n)
 		}
-		dst := image.NewRGBA(p.Bounds(dpi / 72))
 		var st cera.Stats
 		ropt := cera.RenderOptions{
 			Scale: dpi / 72, Background: bg, Deadline: time.Now().Add(timeout), Stats: &st,
 			Workers: workers, Annotations: annots, Form: form, ImageFilter: filter,
 		}
+		var img image.Image
 		var sw *streamPNG
-		if pngMode == "stream" {
-			if sw, err = newStreamPNG(name, dst, bg.A == 255); err != nil {
-				return err
-			}
-			ropt.Band = sw.band
-		}
 		t0 := time.Now()
-		err = p.Render(context.Background(), dst, ropt)
+		if gray {
+			// In grey the page is drawn a band at a time, without the
+			// page in colour.
+			dst := image.NewGray(p.Bounds(dpi / 72))
+			img = dst
+			err = p.RenderGray(context.Background(), dst, ropt)
+		} else {
+			dst := image.NewRGBA(p.Bounds(dpi / 72))
+			img = dst
+			if pngMode == "stream" && format == ".png" {
+				if sw, err = newStreamPNG(name, dst, bg.A == 255); err != nil {
+					return err
+				}
+				ropt.Band = sw.band
+			}
+			err = p.Render(context.Background(), dst, ropt)
+		}
 		p.Release()
 		elapsed := time.Since(t0)
 		if err != nil {
@@ -167,10 +216,13 @@ func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, tra
 			}
 			fmt.Fprintln(os.Stderr)
 		}
-		if sw != nil {
+		switch {
+		case sw != nil:
 			err = sw.close()
-		} else {
-			err = writePNG(name, dst, pngMode)
+		case format == ".png":
+			err = writePNG(name, img, pngMode)
+		default:
+			err = writeImage(name, img, format, quality)
 		}
 		if err != nil {
 			return err
@@ -218,6 +270,25 @@ func writePNG(name string, img image.Image, mode string) error {
 		err = (&stdpng.Encoder{CompressionLevel: stdpng.BestSpeed}).Encode(f, img)
 	} else {
 		err = (&png.Encoder{CompressionLevel: png.BestSpeed}).Encode(f, img)
+	}
+	return cmp.Or(err, f.Close())
+}
+
+// writeImage writes img to the file name in one of the other formats
+// calamus encodes: a JPEG at quality, a TIFF with LZW, a WebP without
+// loss. A TIFF is one page; several pages are several files.
+func writeImage(name string, img image.Image, format string, quality int) error {
+	f, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	switch format {
+	case ".jpg", ".jpeg":
+		err = (&jpeg.Encoder{Quality: quality}).Encode(f, img)
+	case ".tif", ".tiff":
+		err = tiff.Encode(f, img, &tiff.Options{Compression: tiff.LZW, Predictor: true})
+	case ".webp":
+		err = webp.Encode(f, img)
 	}
 	return cmp.Or(err, f.Close())
 }
