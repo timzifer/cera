@@ -33,10 +33,21 @@ import (
 // which shared ones it needs, so that a reader fetches a page with few
 // requests.
 //
-// Which part an object belongs to follows the rules qpdf checks a file by
-// (QPDF_linearization.cc), so that its check passes: Acrobat's own files
-// depart from the specification in places, and qpdf's reading of it is
-// what other tools are measured against.
+// Which part an object belongs to follows the rules qpdf checks a file by,
+// so that its check passes: Acrobat's own files depart from the
+// specification in places, and qpdf's reading of it is what other tools
+// are measured against.
+//
+// This file owes those rules to qpdf (https://github.com/qpdf/qpdf,
+// copyright (c) 2005-2021 Jay Berkenbilt, 2022-2026 Jay Berkenbilt and
+// Manfred Holger, Apache License 2.0). Its libqpdf/QPDF_linearization.cc
+// and QPDFWriter.cc were read for them: the categories of objects and
+// which wins where two apply, the order of the walk that finds them, the
+// order of object numbers and of the two cross-reference sections, and
+// what the hint tables hold — much of it knowledge of what Acrobat and
+// other writers really do that the specification does not have. The code
+// here is written anew, in another language and to another design; the
+// thanks are for the understanding. See NOTICE-qpdf beside this file.
 
 // Linear lays a new file out linearised.
 type Linear struct {

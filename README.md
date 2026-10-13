@@ -120,3 +120,8 @@ err = e.Save(w)                            // a new file, or e.Update(w): the fi
 MIT. `internal/pdf` and `internal/pdffont` contain code ported from
 [go-pdfkit](https://github.com/go-pdfkit) under the BSD 3-Clause License;
 see their `LICENSE-go-pdfkit` files.
+
+The writer of linearised files lays them out by the rules of
+[qpdf](https://github.com/qpdf/qpdf) (Jay Berkenbilt and Manfred Holger,
+Apache License 2.0), learned from its sources and tested against its
+check; no code of qpdf is in cera. See `internal/pdfwrite/NOTICE-qpdf`.
