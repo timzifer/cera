@@ -14,7 +14,7 @@ require (
 	github.com/go-images/jpeg2000 v0.13.3 // indirect
 	github.com/go-opentype/opentype v0.15.0 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
-	github.com/timzifer/stilus v0.9.1-0.20261013103031-658ebcc8ca11 // indirect
+	github.com/timzifer/stilus v0.10.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )

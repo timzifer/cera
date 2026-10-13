@@ -49,8 +49,8 @@ github.com/timzifer/figure v0.14.1-0.20260929122627-5c067d67d2c9 h1:VkJaMs7ud22F
 github.com/timzifer/figure v0.14.1-0.20260929122627-5c067d67d2c9/go.mod h1:q8KmlPjxcoOTgAe9gR4RNdTCwTb2bzA9CDlNIyzbXtE=
 github.com/timzifer/go-highway v0.0.13-timzifer.1 h1:+DREnc494whho5HlwAkjX1m09fxDLdG3n0hYRBm6AFY=
 github.com/timzifer/go-highway v0.0.13-timzifer.1/go.mod h1:ZXPijqyP0TXlwJXJClrFCdp4q+zlQNAMZ3ncCROV648=
-github.com/timzifer/stilus v0.9.1-0.20261013103031-658ebcc8ca11 h1:xCjQ26POBygbAu9wMBIAZ/VIoKPo9kn1k+uFuw5Umzc=
-github.com/timzifer/stilus v0.9.1-0.20261013103031-658ebcc8ca11/go.mod h1:J8uybarHVrCcMUgRwrEkZOw5USCYqbIcfqjTGm2pB2o=
+github.com/timzifer/stilus v0.10.0 h1:M0NgK4GgRsOSCjcsfHHvLBHfjZeZGP1J6lmZsgMPgnU=
+github.com/timzifer/stilus v0.10.0/go.mod h1:J8uybarHVrCcMUgRwrEkZOw5USCYqbIcfqjTGm2pB2o=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
 github.com/xyproto/randomstring v1.0.5/go.mod h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E=
 go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
