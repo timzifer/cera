@@ -411,6 +411,14 @@ type SaveOptions struct {
 	// value, ObjectStreamsAsSource, writes the edited document as it was
 	// read, and a new document in the classic form.
 	ObjectStreams ObjectStreamMode
+	// Linearize lays the file out for a reader that gets it piece by
+	// piece ("fast web view"; PDF 2.0, Annex F): what the first page needs
+	// comes first, and a table of hints says where the other pages are, so
+	// that a viewer shows a page before the rest of the file has arrived.
+	// The whole file is laid out in memory before any of it is written. An
+	// update appended later (Editor.Update) makes it an ordinary file
+	// again.
+	Linearize bool
 
 	// The rest makes the file smaller without changing what it shows.
 	// Save copies what the pages reach as it is; each of these looks at it
@@ -507,6 +515,7 @@ func (e *Editor) SaveWith(w io.Writer, opt SaveOptions) (err error) {
 		return fmt.Errorf("cera: parts to drop %#x", uint(opt.Drop))
 	}
 	doc.Prune, doc.Join, doc.Compress = opt.PruneResources, opt.JoinDuplicates, opt.Compress
+	doc.Linear = opt.Linearize
 	if opt.Drop&DropThumbnails != 0 {
 		doc.Drop |= pdfedit.DropThumbnails
 	}

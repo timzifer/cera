@@ -158,6 +158,10 @@ Fonts a file does not embed:
 - `Save` writes object streams and a cross-reference stream where the
   document had them, or on request (`SaveOptions.ObjectStreams`); also
   encrypted
+- `SaveWith` writes linearised files (`SaveOptions.Linearize`, "fast web
+  view"): first-page section, page offset, shared object and outline
+  hint tables, with a cross-reference table or with object streams, also
+  encrypted; laid out by the rules qpdf checks linearised files by
 - `SaveWith` makes a file smaller on request, losing nothing of what it
   shows: resources no content names left out (`PruneResources`), streams
   and fonts that are the same written once, across merged documents too

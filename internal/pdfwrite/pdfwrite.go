@@ -60,6 +60,10 @@ type Writer struct {
 	// cross-reference stream tells where everything is. Readers older
 	// than that do not read it. (An update follows the file it extends.)
 	Packed bool
+	// Linear, when set, lays a new file out linearised (linear.go): the
+	// first page in front, with hints for the others. It goes with Packed
+	// and with Crypt.
+	Linear *Linear
 
 	// Sig, when not zero, is the output object that is a signature
 	// dictionary being made (PDF 2.0, 12.8.1). Its /Contents is written as

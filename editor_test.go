@@ -487,6 +487,7 @@ func FuzzEdit(f *testing.F) {
 	f.Add(testpdf.EncryptedWith("aes256", "", -4), uint8(1), uint8(0))
 	f.Add(testpdf.Encrypted("", -4), uint8(0), uint8(1))
 	f.Add(optFile(), uint8(2), uint8(0))
+	f.Add(linearFile(), uint8(3), uint8(1))
 	f.Add(testpdf.File{Objs: dupObjs(), Trailer: "/Root 1 0 R"}.Bytes(), uint8(1), uint8(1))
 	f.Fuzz(func(t *testing.T, data []byte, a, b uint8) {
 		d, err := Open(data)
@@ -537,6 +538,19 @@ func FuzzEdit(f *testing.F) {
 		}
 		if o.PageCount() != e.NumPages() || o.Repaired() {
 			t.Fatalf("smaller: %d pages, want %d; repaired %v", o.PageCount(), e.NumPages(), o.Repaired())
+		}
+		// And linearised, in both forms.
+		for _, mode := range []ObjectStreamMode{ObjectStreamsNever, ObjectStreamsAlways} {
+			out.Reset()
+			if err := e.SaveWith(&out, SaveOptions{Linearize: true, ObjectStreams: mode}); err != nil {
+				t.Fatalf("saved as it is, and not linearised: %v", err)
+			}
+			if o, err = pdf.Open(out.Bytes()); err != nil {
+				t.Fatalf("the linearised output does not open: %v", err)
+			}
+			if o.PageCount() != e.NumPages() || o.Repaired() || !bytes.Contains(out.Bytes()[:min(out.Len(), 200)], []byte("/Linearized 1")) {
+				t.Fatalf("linearised: %d pages, want %d; repaired %v", o.PageCount(), e.NumPages(), o.Repaired())
+			}
 		}
 		out.Reset()
 		if e.Update(&out) != nil {

@@ -852,6 +852,21 @@ cera.ObjectStreamsAlways})` packs any file, which makes a form of
 thousands of small objects a tenth smaller, and `ObjectStreamsNever`
 writes the classic form for a reader that knows no other.
 
+`SaveOptions{Linearize: true}` writes the file linearised ("fast web
+view"; PDF 2.0, Annex F): the catalogue and everything the first page
+needs come first, then the other pages one after another, then what
+several of them share, and a table of hints says where each page is and
+which shared objects it needs. A viewer that is sent the file from its
+start shows the first page before the rest has arrived, and fetches any
+other page with a few requests. It goes with object streams and with
+encryption. The file is laid out in memory before it is written, and is a
+little larger: half a percent with a cross-reference table, two with
+object streams, which are then made by part of the file. Viewers that
+read by ranges anyway (pdf.js, cera's own `OpenReaderAt`) gain little
+from it; servers that deliver to browser plug-ins and to Acrobat ask for
+it. `Update` on a linearised file gives an ordinary one, as in every
+writer.
+
 `Save` copies what the pages reach as it is. `SaveOptions` has more that
 makes the file smaller and changes nothing of what it shows, each on
 request:

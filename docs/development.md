@@ -50,7 +50,8 @@ flattened — each opened again with the pages it had and its first page
 compared with what the document shows (a page is reported when more than
 0.1 % of its pixels differ by more than 16 levels). A file saved with
 everything that makes it smaller has every page looked at compared, and
-the report says what the files come to that way. The gate is that of
+the report says what the files come to that way; a file saved linearised
+must say of itself how long it is. The gate is that of
 rendering: a panic, a hang or a deadline fails the run, and with
 `-fail-open` a file that does not open. Everything else is listed in the
 report as a difference, and what a document does not allow — it is signed,

@@ -73,6 +73,9 @@ type Doc struct {
 	// plain; see pdfwrite.Importer.Compress. Drop names what is left out.
 	Prune, Join, Compress bool
 	Drop                  Drop
+	// Linear writes a new file linearised ([Write]); see
+	// pdfwrite.Writer.Linear.
+	Linear bool
 }
 
 // Sig is a signature dictionary an update adds: Objects[Object], with a
@@ -104,6 +107,9 @@ func Write(w io.Writer, doc Doc) error {
 		return err
 	}
 	b.w.Packed = doc.Packed
+	if doc.Linear {
+		b.w.Linear = &pdfwrite.Linear{Pages: b.pageRefs}
+	}
 	return b.write(w)
 }
 
@@ -203,6 +209,8 @@ type builder struct {
 	// doc.ObjectSrc is the builder's own map.
 	pageRes []pdf.Object
 	srcOwn  bool
+	// pageRefs are the pages of the output, in order.
+	pageRefs []pdfwrite.Ref
 	// joined holds the output numbers of the objects written once for
 	// all that are the same, by their sums; docIDs numbers the documents.
 	joined map[sum]pdfwrite.Ref
@@ -400,6 +408,7 @@ func (b *builder) build() error {
 	}
 	b.pages = b.w.Alloc()
 	out := make([]pdfwrite.Ref, len(b.doc.Pages))
+	b.pageRefs = out
 	kids := make(pdf.Array, len(out))
 	for i, p := range b.doc.Pages {
 		if p.Src == nil {

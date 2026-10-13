@@ -16,6 +16,7 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -33,7 +34,7 @@ import (
 // flattened, a field added, a signature, a redaction — each opened again
 // and its first page compared with what it was, or for a redaction read
 // for what should be gone. A file saved smaller has every page looked at
-// compared.
+// compared; a linearised one says of itself how long it is.
 //
 // The gate is that of rendering: no panic, no hang, no deadline.
 // Everything else it finds is a difference, reported with its file.
@@ -95,6 +96,9 @@ func (r *apiResult) differ(format string, args ...any) {
 		r.differences = append(r.differences, fmt.Sprintf(format, args...))
 	}
 }
+
+// linearised matches the first object of a linearised file.
+var linearised = regexp.MustCompile(`^%PDF-[^\n]*\n%[^\n]*\n\d+ 0 obj\n<</Linearized 1 /L (\d+) `)
 
 // Limits of the API run: differences listed per file, places of a page
 // whose word is searched for, links of a page resolved.
@@ -243,6 +247,27 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		out.Reset()
 		if r.check("save, the other form", doc.Edit().SaveWith(&out, other)) {
 			reopen("save, the other form", out.Bytes(), true)
+		}
+	})
+	r.step("linearise", func() {
+		// Laid out for a reader that gets the file piece by piece: the
+		// first object says so and how long the file is, and the document
+		// is what it was.
+		for _, mode := range []cera.ObjectStreamMode{cera.ObjectStreamsNever, cera.ObjectStreamsAlways} {
+			var out bytes.Buffer
+			name := "linearise"
+			if mode == cera.ObjectStreamsAlways {
+				name = "linearise, packed"
+			}
+			if !r.check(name, doc.Edit().SaveWith(&out, cera.SaveOptions{Linearize: true, ObjectStreams: mode})) {
+				return
+			}
+			if m := linearised.FindSubmatch(out.Bytes()[:min(out.Len(), 1024)]); m == nil {
+				r.differ("%s: the file does not start with a linearisation dictionary", name)
+			} else if string(m[1]) != fmt.Sprint(out.Len()) {
+				r.differ("%s: the file says it has %s bytes and has %d", name, m[1], out.Len())
+			}
+			reopen(name, out.Bytes(), true)
 		}
 	})
 	r.step("optimise", func() {
