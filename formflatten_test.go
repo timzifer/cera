@@ -218,22 +218,26 @@ func TestFlattenTwice(t *testing.T) {
 }
 
 // TestFlattenValue draws the value SetFields wrote, at a place where the
-// border of the field does not fall on pixels. Nothing lies on the field:
-// the renderer draws a value that is not the file's above the annotations
-// of the page.
+// border of the field does not fall on pixels, with and without a line
+// across the field: a render with the value of a state keeps the line
+// above the field, as the flattened page does (#164).
 func TestFlattenValue(t *testing.T) {
-	doc := editOpen(t, stackFile(false))
-	state := fill(t, doc, map[string]Value{"name": TextValue("new")})
-	e := doc.Edit()
-	if err := e.SetFields(state); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.Flatten(); err != nil {
-		t.Fatal(err)
-	}
-	got := renderState(t, editOpen(t, editSave(t, e)), nil)
-	if n, max := pixDiff(renderState(t, doc, state), got); n > 0 {
-		t.Errorf("the flattened page renders unlike the form: %d pixels, by up to %d", n, max)
+	for _, line := range []bool{false, true} {
+		t.Run(fmt.Sprintf("line=%v", line), func(t *testing.T) {
+			doc := editOpen(t, stackFile(line))
+			state := fill(t, doc, map[string]Value{"name": TextValue("new")})
+			e := doc.Edit()
+			if err := e.SetFields(state); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.Flatten(); err != nil {
+				t.Fatal(err)
+			}
+			got := renderState(t, editOpen(t, editSave(t, e)), nil)
+			if n, max := pixDiff(renderState(t, doc, state), got); n > 0 {
+				t.Errorf("the flattened page renders unlike the form: %d pixels, by up to %d", n, max)
+			}
+		})
 	}
 }
 

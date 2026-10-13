@@ -21,9 +21,8 @@ var grayBands = sync.Pool{New: func() any { return new([]byte) }}
 // The page is drawn in colour, a band of it at a time, and each band is
 // converted as PDF converts DeviceRGB to DeviceGray (PDF 2.0, 10.4.2.2:
 // 0.3 R + 0.59 G + 0.11 B, here with the weights of [color.GrayModel]) —
-// the pixels Render draws into tiles of that size, converted, without
-// holding the page in colour: a page of 100 megapixels takes 100 MB and
-// not 500.
+// the pixels Render draws, converted, without holding the page in
+// colour: a page of 100 megapixels takes 100 MB and not 500.
 func (p *Page) RenderGray(ctx context.Context, dst *image.Gray, opt RenderOptions) (err error) {
 	region := dst.Bounds()
 	if !opt.Region.Empty() {

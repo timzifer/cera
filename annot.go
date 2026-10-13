@@ -154,6 +154,9 @@ type annotFilter struct {
 	mode        AnnotMode
 	skip        func(index int) bool
 	linkBorders bool
+	// alone leaves the page content out of what a display list draws:
+	// the annotations are drawn over what is there.
+	alone bool
 }
 
 // annotLinkBorder marks, among the flags an annotation is recorded with,

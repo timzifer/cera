@@ -164,3 +164,34 @@ func TestProviderChoice(t *testing.T) {
 		}
 	}
 }
+
+// TestWeight draws text of a font the document does not embed at the
+// weight the document asks for. The Noto fonts are variable and Thin
+// where nothing is said: the stroke of 「一」 at 100 points was three
+// pixels wide.
+func TestWeight(t *testing.T) {
+	// stroke returns how many rows the one stroke of 「一」 inks, in the
+	// column through its middle.
+	stroke := func(font string) int {
+		t.Helper()
+		data := pdf("BT /F1 100 Tf 50 60 Td "+ucs2("一")+" Tj ET", font)
+		img, st, _ := render(t, data, cjk.Provider{japan1.Collection})
+		if len(st.Unsupported) != 0 || st.Glyphs != 1 {
+			t.Fatalf("stats %+v", st)
+		}
+		return inked(img, image.Rect(100, 0, 101, 200))
+	}
+	regular := stroke(font("UniJIS-UCS2-H"))
+	bold := stroke(strings.ReplaceAll(strings.ReplaceAll(font("UniJIS-UCS2-H"), "KozMinPr6N-Regular", "KozGoPr6N-Bold"), "/Flags 4", "/Flags 4 /FontWeight 700"))
+	named := stroke(strings.ReplaceAll(font("UniJIS-UCS2-H"), "KozMinPr6N-Regular", "MS-Gothic,Bold"))
+	light := stroke(strings.ReplaceAll(font("UniJIS-UCS2-H"), "/Flags 4", "/Flags 4 /FontWeight 100"))
+	if regular < 6 || regular > 10 {
+		t.Errorf("the stroke of a regular font is %d pixels, want about 8", regular)
+	}
+	if bold <= regular+2 || named != bold {
+		t.Errorf("the stroke of a bold font is %d pixels, by its name %d; of a regular one %d", bold, named, regular)
+	}
+	if light >= regular-2 {
+		t.Errorf("the stroke of a font of weight 100 is %d pixels, of a regular one %d", light, regular)
+	}
+}

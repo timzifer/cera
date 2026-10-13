@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/go-opentype/fonts/arimo"
 	"github.com/go-opentype/fonts/cousine"
@@ -187,6 +188,7 @@ func (f *Font) substitute(d *Document) {
 	if p := d.fontProvider; p != nil {
 		if data, ok := p.Font(req); ok && len(data) > 0 {
 			if prog := parseProgram(data); prog != nil {
+				prog = atWeight(data, prog, req)
 				f.attach(prog)
 				f.substituted = true
 				f.byUnicode = f.composite() && !prog.IsCIDKeyed()
@@ -207,6 +209,88 @@ func (f *Font) substitute(d *Document) {
 		return
 	}
 	f.standIn(req, stretchOf(d, f.pdf.Descriptor()))
+}
+
+// A provider's font may be a variable one, and the default of a variable
+// font is what its designer drew first, not what a document means: Noto
+// Sans JP, SC and KR, the fonts of fonts/cjk, are Thin there. So a program
+// with a weight axis is used at the weight the document asks for: that of
+// the descriptor, 700 for a bold font and 400 for any other, within what
+// the axis has. An embedded variable font stays as it is: its writer
+// meant the default.
+//
+// Baking an instance is work — a quarter of a second for a CJK font — and
+// the result as large as the font, so the last few are kept, by the
+// program and the weight: the documents of a process share them where
+// the provider hands out the same bytes, as fonts/cjk does.
+
+// instanceKey tells the instances apart: the bytes of the program, by
+// where they are, and the weight.
+type instanceKey struct {
+	data   *byte
+	size   int
+	weight int
+}
+
+type instanceEntry struct {
+	once sync.Once
+	prog *opentype.Font
+}
+
+// maxInstances is how many instances of variable fonts are kept.
+const maxInstances = 8
+
+var instances struct {
+	sync.Mutex
+	m     map[instanceKey]*instanceEntry
+	order []instanceKey // oldest first
+}
+
+// atWeight returns the program p, parsed from data, at the weight req asks
+// for: p itself unless it is a variable font whose default is another.
+func atWeight(data []byte, p *opentype.Font, req FontRequest) *opentype.Font {
+	want := 400.0
+	switch {
+	case req.Weight != 0:
+		want = float64(req.Weight)
+	case req.Bold:
+		want = 700
+	}
+	for _, a := range p.Axes() {
+		if a.Tag != "wght" {
+			continue
+		}
+		want = min(max(want, a.Min), a.Max)
+		if want == a.Default {
+			return p
+		}
+		key := instanceKey{unsafe.SliceData(data), len(data), int(want)}
+		instances.Lock()
+		e := instances.m[key]
+		if e == nil {
+			if instances.m == nil {
+				instances.m = map[instanceKey]*instanceEntry{}
+			}
+			if len(instances.order) >= maxInstances {
+				delete(instances.m, instances.order[0])
+				instances.order = instances.order[1:]
+			}
+			e = &instanceEntry{}
+			instances.m[key] = e
+			instances.order = append(instances.order, key)
+		}
+		instances.Unlock()
+		e.once.Do(func() {
+			// A font that cannot be instanced (variable CFF) is used as
+			// it is.
+			e.prog = p
+			if q, err := p.Instance(map[string]float64{"wght": want}); err == nil {
+				e.prog = q
+			}
+		})
+		return e.prog
+	}
+	return p
 }
 
 // parseProgram reads a program a provider supplied, whatever its format.

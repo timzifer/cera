@@ -23,7 +23,7 @@ require (
 	github.com/klippa-app/go-pdfium v1.21.1 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
-	github.com/timzifer/stilus v0.9.0 // indirect
+	github.com/timzifer/stilus v0.10.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )

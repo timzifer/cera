@@ -126,6 +126,14 @@ type displayList struct {
 	// each nested in its parent; ocIndex finds them while recording.
 	ocTags  []ocTag
 	ocIndex map[ocTag]int32
+	// frame is the number of items before the page content that stay
+	// open to the end of the list (the clip to the page); annots is the
+	// first item of the annotations, which follow the content: -1 as long
+	// as none is recorded, and -2 if the content left something open
+	// around them, so that they cannot be drawn without it. annotBoxes
+	// says, in the order of /Annots, what each of them can touch.
+	frame, annots int32
+	annotBoxes    []annotBox
 
 	// bounds is the page in device pixels; bandH the height of a band.
 	bounds image.Rectangle
@@ -188,6 +196,8 @@ func (l *displayList) reset(bounds image.Rectangle) {
 	l.ocTags = append(l.ocTags[:0], ocTag{})
 	clear(l.ocIndex)
 	l.tag = 0
+	l.frame, l.annots = 0, -1
+	l.annotBoxes = l.annotBoxes[:0]
 	l.clips = append(l.clips[:0], bounds)
 	l.dead = 0
 	l.open = l.open[:0]
@@ -859,6 +869,7 @@ func (l *displayList) finish() {
 		}
 	}
 	l.makeUnions()
+	l.boxAnnots()
 	h := l.bounds.Dy()
 	l.bandH = bandHeight(h)
 	nb := (h + l.bandH - 1) / l.bandH
@@ -962,6 +973,15 @@ func (l *displayList) drawBand(dev Device, ds *drawState, b int, r image.Rectang
 	return l.drawItems(dev, ds, l.bandItems[l.bandStart[b]:l.bandStart[b+1]], r, vis, lim)
 }
 
+// drawAnnots replays, of the items idx (of a band or a region, in list
+// order), those of the annotations inside the frame of the page, without
+// the page content.
+func (l *displayList) drawAnnots(dev Device, ds *drawState, idx []int32, r image.Rectangle, vis []bool, lim *limit) bool {
+	n, _ := slices.BinarySearch(idx, l.frame)
+	k, _ := slices.BinarySearch(idx, l.annots)
+	return l.drawItems(dev, ds, idx[:n], r, vis, lim) && l.drawItems(dev, ds, idx[k:], r, vis, lim)
+}
+
 // regionItems returns the items one pass over bands [b0, b1) visits, in
 // list order: those of the band, for one band; for several, the union of
 // theirs, made in buf, when it is much smaller than the whole list (whose
@@ -1059,7 +1079,61 @@ func (l *displayList) ocTag(parent int32, e *ocExpr) int32 {
 // annotTag returns the tag of the appearance of annotation index with
 // flags f and membership e (nil if none), drawn after the page content.
 func (l *displayList) annotTag(index int, f AnnotFlags, e *ocExpr) int32 {
+	if l.annots == -1 {
+		l.annots = int32(len(l.items))
+		if l.dead > 0 || len(l.open) > 0 || len(l.clips) != 1+int(l.frame) {
+			l.annots = -2
+		}
+	}
 	return l.addTag(ocTag{expr: e, annot: int32(index) + 1, flags: f})
+}
+
+// annotBox is the device-space area the appearance of annotation index
+// can touch, recorded with flags.
+type annotBox struct {
+	index int
+	flags AnnotFlags
+	box   image.Rectangle
+}
+
+// boxAnnots fills annotBoxes from the items of the annotations.
+func (l *displayList) boxAnnots() {
+	if l.annots < 0 {
+		return
+	}
+	for i := int(l.annots); i < len(l.items); i++ {
+		it := &l.items[i]
+		// Clips have no tag; what they enclose lies within them.
+		t := it.tag
+		for t != 0 && l.ocTags[t].annot == 0 {
+			t = l.ocTags[t].parent
+		}
+		if t == 0 || it.op == dlNop {
+			continue
+		}
+		a := l.ocTags[t]
+		index := int(a.annot - 1)
+		if n := len(l.annotBoxes); n > 0 && l.annotBoxes[n-1].index == index {
+			l.annotBoxes[n-1].box = l.annotBoxes[n-1].box.Union(it.bbox)
+			continue
+		}
+		l.annotBoxes = append(l.annotBoxes, annotBox{index: index, flags: a.flags, box: it.bbox})
+	}
+}
+
+// covered returns the box of what af shows of the annotations with an
+// index above lo and up to hi, inside r.
+func (l *displayList) covered(lo, hi int, af *annotFilter, r image.Rectangle) (box image.Rectangle) {
+	k, _ := slices.BinarySearchFunc(l.annotBoxes, lo+1, func(b annotBox, i int) int { return b.index - i })
+	for _, b := range l.annotBoxes[k:] {
+		if b.index > hi {
+			break
+		}
+		if in := b.box.Intersect(r); !in.Empty() && af.shows(b.index, b.flags) {
+			box = box.Union(in)
+		}
+	}
+	return box
 }
 
 func (l *displayList) addTag(k ocTag) int32 {
