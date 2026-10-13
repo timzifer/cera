@@ -65,6 +65,14 @@ type Doc struct {
 	// Packed writes a new file with object streams and a cross-reference
 	// stream ([Write]); see pdfwrite.Writer.Packed.
 	Packed bool
+	// What makes a new file smaller ([Write]; optimise.go). Prune writes
+	// with every page, and with the form XObjects, tiling patterns and
+	// Type 3 fonts its content draws, the resources that content names and
+	// no others. Join writes streams and fonts that are the same once.
+	// Compress stores streams with the Flate filter that the sources have
+	// plain; see pdfwrite.Importer.Compress. Drop names what is left out.
+	Prune, Join, Compress bool
+	Drop                  Drop
 }
 
 // Sig is a signature dictionary an update adds: Objects[Object], with a
@@ -189,6 +197,16 @@ type builder struct {
 	// names of an old /Dests dictionary are in that tree.
 	outlines, names2 pdf.Object
 	dropDests        bool
+
+	// pageRes holds, by output page, the resources of the pages that lose
+	// some to pruning, in their source's space; srcOwn says that
+	// doc.ObjectSrc is the builder's own map.
+	pageRes []pdf.Object
+	srcOwn  bool
+	// joined holds the output numbers of the objects written once for
+	// all that are the same, by their sums; docIDs numbers the documents.
+	joined map[sum]pdfwrite.Ref
+	docIDs map[*pdf.Document]uint64
 }
 
 type srcKey struct {
@@ -219,6 +237,12 @@ type source struct {
 	dead map[int32]bool
 	// fields is what pages imported with their fields bring.
 	fields *fieldCopy
+
+	// pr finds the unused resources of what the source's importer
+	// copies; sums holds the sums of objects, summing those being summed.
+	pr      *pruner
+	sums    map[int32]sum
+	summing map[int32]bool
 }
 
 func newBuilder(doc Doc, upd *pdf.UpdateBase) *builder {
@@ -290,6 +314,8 @@ func (b *builder) source(d *pdf.Document, own bool) *source {
 		x.im.Drop = map[pdf.Name]bool{"Parent": true}
 		x.shared = b.bySrc[srcKey{d, true}]
 	}
+	b.dropKeys(x.im)
+	x.im.Compress = b.doc.Compress && b.upd == nil
 	for i := range d.PageCount() {
 		if r, ok := d.PageRef(i + 1); ok {
 			x.isPage[r.Num] = true
@@ -352,6 +378,9 @@ func (x *source) ref(r pdf.Ref) pdfwrite.Ref {
 			return 0
 		}
 	}
+	if x.b.doc.Join && x.b.upd == nil && joins(o) {
+		return x.join(r)
+	}
 	return x.im.Copy(r)
 }
 
@@ -398,6 +427,10 @@ func (b *builder) build() error {
 			x.freeDeleted()
 		}
 	}
+	// Before anything of a source is copied: pruning changes objects.
+	if b.doc.Prune && b.upd == nil {
+		b.prunePages()
+	}
 	// Pages are made once every page has its number, so links between
 	// them can point at the copies.
 	for i, p := range b.doc.Pages {
@@ -407,7 +440,7 @@ func (b *builder) build() error {
 		}
 		x := b.bySrc[srcKey{p.Src, p.Own}]
 		r, _ := x.d.PageRef(p.Index + 1)
-		dict, err := x.page(p, x.pageOut[r.Num] == out[i])
+		dict, err := x.page(p, i, x.pageOut[r.Num] == out[i])
 		if err != nil {
 			return err
 		}
@@ -605,6 +638,9 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 			}
 		}
 		for k, v := range cat.All() {
+			if b.dropped(k, false) {
+				continue
+			}
 			switch k {
 			case "Type", "Pages", "OCProperties":
 				continue
@@ -728,8 +764,10 @@ var (
 	}
 )
 
-// page makes the dictionary of one output page.
-func (x *source) page(p Page, first bool) (pdf.Dict, error) {
+// pageDict returns the dictionary of a source page as it is written, in
+// the source's space: with the attributes it inherits, and changed where
+// it is patched.
+func (x *source) pageDict(p Page) (pdf.Dict, error) {
 	src, err := x.d.Page(p.Index + 1) // with the inherited attributes
 	if err != nil {
 		return pdf.Dict{}, fmt.Errorf("page %d: %w", p.Index, err)
@@ -744,8 +782,22 @@ func (x *source) page(p Page, first bool) (pdf.Dict, error) {
 			}
 		}
 	}
+	return src, nil
+}
+
+// page makes the dictionary of output page i.
+func (x *source) page(p Page, i int, first bool) (pdf.Dict, error) {
+	src, err := x.pageDict(p)
+	if err != nil {
+		return pdf.Dict{}, err
+	}
+	// The resources without those nothing names, before a drawing adds
+	// to them.
+	if res := x.b.pageRes; res != nil && !res[i].IsNull() {
+		src = src.With("Resources", res[i])
+	}
 	if len(p.Draws) > 0 {
-		src = x.b.drawn(src, x.d.Resolve, p.Draws)
+		src = x.b.drawn(src, x.resolve, p.Draws)
 	}
 	entries := []pdf.Entry{
 		{Key: "Type", Val: pdf.Name("Page").Object()},
@@ -756,7 +808,7 @@ func (x *source) page(p Page, first bool) (pdf.Dict, error) {
 		dropped = ownDropped
 	}
 	for k, v := range src.All() {
-		if dropped[k] {
+		if dropped[k] || x.b.dropped(k, true) {
 			continue
 		}
 		if k == "Annots" {

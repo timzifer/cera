@@ -411,7 +411,49 @@ type SaveOptions struct {
 	// value, ObjectStreamsAsSource, writes the edited document as it was
 	// read, and a new document in the classic form.
 	ObjectStreams ObjectStreamMode
+
+	// The rest makes the file smaller without changing what it shows.
+	// Save copies what the pages reach as it is; each of these looks at it
+	// first, which takes the time of reading the document through.
+
+	// PruneResources writes with every page the resources its content
+	// names and no others, and likewise with the form XObjects, tiling
+	// patterns and Type 3 fonts that content draws. A resource dictionary
+	// that all pages share keeps every font and image of the document
+	// with every page: after DeletePages, or in a file made of some pages
+	// of another, what only the other pages drew is then left out. A page
+	// whose content cannot be read to the end keeps what it has.
+	PruneResources bool
+	// JoinDuplicates writes streams that are the same — an image or a
+	// font program embedded once for every page it is on — and the fonts
+	// of the same program once, also those of different documents.
+	JoinDuplicates bool
+	// Compress stores the streams that the document has plain, or under a
+	// filter that packs worse (LZW, run length, ASCII85, ASCIIHex), with
+	// the Flate filter where that is shorter. Metadata streams stay plain.
+	Compress bool
+	// Drop names parts of the document that are left out.
+	Drop Drop
 }
+
+// Drop names parts of a document a viewer does not need to show it, for
+// [SaveOptions.Drop] to leave out.
+type Drop uint
+
+const (
+	// DropThumbnails leaves out the thumbnail images of the pages:
+	// viewers make their own.
+	DropThumbnails Drop = 1 << iota
+	// DropPieceInfo leaves out the private data that the programs which
+	// made the document keep in it, with the document, its pages and its
+	// form XObjects (/PieceInfo): what an illustration program needs to
+	// edit its file again, often larger than the page it belongs to.
+	DropPieceInfo
+	// DropObjectMetadata leaves out the metadata streams of the pages,
+	// images, fonts and other objects. The metadata of the document
+	// itself stays.
+	DropObjectMetadata
+)
 
 // ObjectStreamMode says whether a file is written with object streams;
 // see [SaveOptions.ObjectStreams].
@@ -460,6 +502,19 @@ func (e *Editor) SaveWith(w io.Writer, opt SaveOptions) (err error) {
 	case ObjectStreamsNever:
 	default:
 		return fmt.Errorf("cera: object stream mode %d", opt.ObjectStreams)
+	}
+	if opt.Drop&^(DropThumbnails|DropPieceInfo|DropObjectMetadata) != 0 {
+		return fmt.Errorf("cera: parts to drop %#x", uint(opt.Drop))
+	}
+	doc.Prune, doc.Join, doc.Compress = opt.PruneResources, opt.JoinDuplicates, opt.Compress
+	if opt.Drop&DropThumbnails != 0 {
+		doc.Drop |= pdfedit.DropThumbnails
+	}
+	if opt.Drop&DropPieceInfo != 0 {
+		doc.Drop |= pdfedit.DropPieceInfo
+	}
+	if opt.Drop&DropObjectMetadata != 0 {
+		doc.Drop |= pdfedit.DropMetadata
 	}
 	if e.base != nil && e.base.signing().signed {
 		return ErrSigned

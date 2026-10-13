@@ -433,3 +433,33 @@ func runLengthDecode(data []byte) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// Peel applies the filters at the head of a chain that pack bytes without
+// knowing what they are and are not Flate — ASCIIHex, ASCII85, LZW, run
+// length — and returns what they give with the filters and parameters that
+// remain: for a writer that stores the stream anew. It reports false when
+// the chain has no such filter at its head or one cannot be applied to the
+// end.
+func (d *Document) Peel(dict Dict, raw []byte) (data []byte, filters []Name, parms []Dict, ok bool) {
+	ctx := getCtx()
+	defer putCtx(ctx)
+	t := d.tab.Load()
+	resolve := func(o Object) Object { return d.resolve(ctx, t, o) }
+	filters, parms, err := filterChain(dict, resolve)
+	if err != nil {
+		return nil, nil, nil, false
+	}
+	data = raw
+	n := 0
+	for ; n < len(filters); n++ {
+		switch filters[n] {
+		case "ASCIIHexDecode", "AHx", "ASCII85Decode", "A85", "LZWDecode", "LZW", "RunLengthDecode", "RL":
+		default:
+			return data, filters[n:], parms[n:], n > 0
+		}
+		if data, err = applyFilter(filters[n], data, parms[n], resolve); err != nil {
+			return nil, nil, nil, false
+		}
+	}
+	return data, nil, nil, n > 0
+}

@@ -158,6 +158,12 @@ Fonts a file does not embed:
 - `Save` writes object streams and a cross-reference stream where the
   document had them, or on request (`SaveOptions.ObjectStreams`); also
   encrypted
+- `SaveWith` makes a file smaller on request, losing nothing of what it
+  shows: resources no content names left out (`PruneResources`), streams
+  and fonts that are the same written once, across merged documents too
+  (`JoinDuplicates`), plain, LZW, run length and ASCII streams under Flate
+  (`Compress`), thumbnails, `/PieceInfo` and the metadata of objects
+  dropped (`Drop`). Images are not resampled and fonts not subset
 - `Editor.Redact` and `ApplyRedactions`: content taken out of pages for
   good — glyphs out of their strings, paths left out or clipped, images
   re-encoded without the samples, forms rewritten per use, annotations,

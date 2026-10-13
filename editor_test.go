@@ -486,6 +486,8 @@ func FuzzEdit(f *testing.F) {
 	f.Add(fieldsFile(true), uint8(2), uint8(1))
 	f.Add(testpdf.EncryptedWith("aes256", "", -4), uint8(1), uint8(0))
 	f.Add(testpdf.Encrypted("", -4), uint8(0), uint8(1))
+	f.Add(optFile(), uint8(2), uint8(0))
+	f.Add(testpdf.File{Objs: dupObjs(), Trailer: "/Root 1 0 R"}.Bytes(), uint8(1), uint8(1))
 	f.Fuzz(func(t *testing.T, data []byte, a, b uint8) {
 		d, err := Open(data)
 		if err != nil || d.NumPages() == 0 {
@@ -520,6 +522,21 @@ func FuzzEdit(f *testing.F) {
 		}
 		if o.PageCount() != e.NumPages() || o.Repaired() {
 			t.Fatalf("%d pages, want %d; repaired %v", o.PageCount(), e.NumPages(), o.Repaired())
+		}
+		// And with everything that makes the file smaller.
+		out.Reset()
+		small := SaveOptions{
+			PruneResources: true, JoinDuplicates: true, Compress: true, ObjectStreams: ObjectStreamsAlways,
+			Drop: DropThumbnails | DropPieceInfo | DropObjectMetadata,
+		}
+		if err := e.SaveWith(&out, small); err != nil {
+			t.Fatalf("saved as it is, and not smaller: %v", err)
+		}
+		if o, err = pdf.Open(out.Bytes()); err != nil {
+			t.Fatalf("the smaller output does not open: %v", err)
+		}
+		if o.PageCount() != e.NumPages() || o.Repaired() {
+			t.Fatalf("smaller: %d pages, want %d; repaired %v", o.PageCount(), e.NumPages(), o.Repaired())
 		}
 		out.Reset()
 		if e.Update(&out) != nil {

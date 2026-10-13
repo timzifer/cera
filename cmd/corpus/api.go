@@ -32,7 +32,8 @@ import (
 // anew, an update with a highlight, the form and the annotations
 // flattened, a field added, a signature, a redaction — each opened again
 // and its first page compared with what it was, or for a redaction read
-// for what should be gone.
+// for what should be gone. A file saved smaller has every page looked at
+// compared.
 //
 // The gate is that of rendering: no panic, no hang, no deadline.
 // Everything else it finds is a difference, reported with its file.
@@ -52,6 +53,9 @@ type apiResult struct {
 	// refused is what the document does not allow, differences what is
 	// not as it should be.
 	refused, differences []string
+	// plain and small are the bytes of the file saved as it is and with
+	// everything that makes it smaller, where both were written.
+	plain, small int64
 }
 
 func (r *apiResult) fatal() bool { return r.hang || len(r.failed) > 0 }
@@ -224,10 +228,12 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		}
 		return od
 	}
+	plain := 0
 	r.step("save", func() {
 		var out bytes.Buffer
 		if r.check("save", doc.Edit().Save(&out)) {
 			reopen("save", out.Bytes(), true)
+			plain = out.Len()
 		}
 		// And in the other form: packed into object streams, or not.
 		other := cera.SaveOptions{ObjectStreams: cera.ObjectStreamsAlways}
@@ -237,6 +243,38 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		out.Reset()
 		if r.check("save, the other form", doc.Edit().SaveWith(&out, other)) {
 			reopen("save, the other form", out.Bytes(), true)
+		}
+	})
+	r.step("optimise", func() {
+		// Everything that makes the file smaller and loses nothing: the
+		// pages are what they were.
+		var out bytes.Buffer
+		small := cera.SaveOptions{
+			ObjectStreams: cera.ObjectStreamsAlways, PruneResources: true, JoinDuplicates: true, Compress: true,
+			Drop: cera.DropThumbnails | cera.DropPieceInfo | cera.DropObjectMetadata,
+		}
+		if !r.check("optimise", doc.Edit().SaveWith(&out, small)) {
+			return
+		}
+		od := reopen("optimise", out.Bytes(), true)
+		if od == nil || od.NumPages() != doc.NumPages() {
+			return
+		}
+		if plain > 0 {
+			r.plain, r.small = int64(plain), int64(out.Len())
+		}
+		for i := 1; i < n; i++ {
+			a, err := c.apiRender(doc, i)
+			if err != nil || a == nil {
+				continue
+			}
+			b, err := c.apiRender(od, i)
+			if !r.check(fmt.Sprintf("optimise: render page %d", i+1), err) || b == nil {
+				continue
+			}
+			if share := pixelShare(a, b); share > apiPixelShare {
+				r.differ("optimise: page %d differs in %.2f %% of its pixels", i+1, 100*share)
+			}
 		}
 	})
 	r.step("update", func() {
@@ -652,6 +690,8 @@ func writeAPIReport(w io.Writer, rs []apiResult, pages int) {
 		sum.links += r.links
 		sum.leads += r.leads
 		sum.saved += r.saved
+		sum.plain += r.plain
+		sum.small += r.small
 	}
 	of := "all pages"
 	if pages > 0 {
@@ -662,6 +702,10 @@ func writeAPIReport(w io.Writer, rs []apiResult, pages int) {
 	fmt.Fprintln(w, "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 	fmt.Fprintf(w, "| %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
 		len(rs), opened, sum.pages, sum.chars, sum.words, sum.links, sum.leads, sum.saved, refused, differing, failed)
+	if sum.plain > 0 {
+		fmt.Fprintf(w, "\nSaved with everything that makes a file smaller and loses nothing, the files are %d bytes; saved as they are, %d (%.1f %%).\n",
+			sum.small, sum.plain, 100*float64(sum.small)/float64(sum.plain))
+	}
 
 	list := func(title, intro string, of func(*apiResult) []string) {
 		first := true

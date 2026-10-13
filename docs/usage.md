@@ -852,6 +852,48 @@ cera.ObjectStreamsAlways})` packs any file, which makes a form of
 thousands of small objects a tenth smaller, and `ObjectStreamsNever`
 writes the classic form for a reader that knows no other.
 
+`Save` copies what the pages reach as it is. `SaveOptions` has more that
+makes the file smaller and changes nothing of what it shows, each on
+request:
+
+- `PruneResources` leaves out the resources no content names. A resource
+  dictionary that all pages share reaches every font and image of the
+  document from every page: after `DeletePages`, or in a file made of
+  some pages of another, what only the other pages drew is still written.
+  With the option the content of the pages, and of the form XObjects,
+  tiling patterns, Type 3 fonts and appearance streams they draw, is read
+  for the names it uses, and a dictionary is written without the entries
+  that none of those that have it names. A dictionary several pages
+  share stays one dictionary. Content that does not read to its end keeps
+  what it has, and so do the resources of the form (`/DR`), with which a
+  viewer writes what is typed into a field.
+- `JoinDuplicates` writes streams that are the same once — an image or a
+  font program embedded once for every page it is on — and the fonts of
+  one program. It joins what the pages of different documents have in
+  common too, which a merged file gains from. Layers, annotations and
+  fields that read the same stay as many as they are.
+- `Compress` stores streams that are plain, or under LZW, run length,
+  ASCII85 or ASCIIHex, with the Flate filter where that is shorter. An
+  image under ASCII85 and DCT stays the JPEG it is, without the ASCII85.
+  Metadata streams stay plain.
+- `Drop` leaves out the thumbnails of the pages (`DropThumbnails`), the
+  private data of the programs that made the document (`DropPieceInfo`:
+  what an illustration program keeps to edit its file again) and the
+  metadata of pages, images and fonts (`DropObjectMetadata`; the
+  document's own stays).
+
+```go
+err := e.SaveWith(w, cera.SaveOptions{
+	ObjectStreams:  cera.ObjectStreamsAlways,
+	PruneResources: true, JoinDuplicates: true, Compress: true,
+	Drop:           cera.DropThumbnails | cera.DropPieceInfo | cera.DropObjectMetadata,
+})
+```
+
+All of it together writes the test files of pdf.js at 84 % of what `Save`
+writes. No image is sampled anew and no font subset: what the pages show
+is what they showed, sample for sample.
+
 `Update` writes the edited file unchanged and appends only what changed
 (PDF 2.0, 7.5.6), so signatures over the original bytes stay valid: the
 document's pages keep their objects, deleted pages and what hung on them
