@@ -32,7 +32,7 @@ Fonts a file does not embed:
 | sans serif monospaces (Consolas, Menlo, Lucida Console …) | Cousine |
 | Symbol, ZapfDingbats | DejaVu Sans subsets at AFM widths |
 | Adobe CJK collections | Noto Sans through `fonts/cjk` (opt-in, see [usage](usage.md)); reads back as Unicode without ToUnicode |
-| anything else | a `FontProvider` of your own (`cera.OpenWith`) |
+| anything else | the fonts of the machine through `fonts/system` (opt-in), or a `FontProvider` of your own (`cera.OpenWith`); `cera.FontProviders` asks several in turn |
 
 ### Images
 

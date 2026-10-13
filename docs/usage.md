@@ -127,6 +127,28 @@ doc, err := cera.OpenWith(data, cera.OpenOptions{
 })
 ```
 
+The fonts installed on the machine are a provider too, in a module of
+its own, `fonts/system`: a document that asks for "Segoe UI" or "MS
+Mincho" where they are installed gets them. `cera.FontProviders` asks
+several in their order:
+
+```go
+import "github.com/timzifer/cera/fonts/system"
+
+doc, err := cera.OpenWith(data, cera.OpenOptions{
+	Fonts: cera.FontProviders{system.New(), cjk.Provider{japan1.Collection}},
+})
+```
+
+`system.New()` reads the font directories of the platform on first use —
+Windows' `Fonts` and the user's, macOS' three `Fonts` folders, what
+fontconfig reads elsewhere, nothing on js/wasm — and keeps the names. A
+font is found by the name the document spells (`Arial,Bold`, `ArialMT`,
+`Arial-BoldMT`), or by its family with the weight and slope asked for,
+and never by a font of another family: there the stand-ins below do
+better. A page drawn with the machine's fonts is not the same on every
+machine; that is why it is a module to ask for.
+
 Helvetica, Times and Courier that a document does not embed are drawn with
 TeX Gyre Heros, Termes and Cursor, the shapes PDFium and MuPDF draw too.
 They add 1.45 MB to the binary; the build tag `cera_nogyre` leaves them

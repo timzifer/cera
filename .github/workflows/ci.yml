@@ -390,10 +390,43 @@ jobs:
           go vet ./...
           go test -race ./...
 
+  # The fonts of the machine are a module of their own: what it supplies
+  # depends on where it runs. Its directories differ by platform, so it is
+  # tested on each and built for those without one.
+  system-fonts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: fonts/system
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: fonts/system/go.mod
+          cache-dependency-path: fonts/system/go.sum
+      - name: go mod tidy
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Vet, test, and build for js/wasm
+        shell: bash
+        run: |
+          go vet ./...
+          go test ./...
+          GOOS=js GOARCH=wasm go build ./...
+      - name: Race
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race ./...
+
   # The single required status check for main (see .github/rulesets).
   ci-ok:
     if: always()
-    needs: [lint, test, coverage, cross, fuzz, readerdiff, corpus, accuracy, bench, fyneform, cjk, cli]
+    needs: [lint, test, coverage, cross, fuzz, readerdiff, corpus, accuracy, bench, fyneform, cjk, system-fonts, cli]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed

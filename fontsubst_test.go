@@ -366,3 +366,21 @@ func TestStandardStandIns(t *testing.T) {
 		}
 	}
 }
+
+// TestFontProviders asks providers in their order: the first that has a
+// font supplies it.
+func TestFontProviders(t *testing.T) {
+	font := `<< /Type /Font /Subtype /TrueType /BaseFont /Frobnicate /FirstChar 72 /LastChar 73 /Widths [600 600]
+		/FontDescriptor << /Type /FontDescriptor /FontName /Frobnicate /Flags 34 >> >>`
+	none, has, never := &recorder{}, &recorder{ttf: cousine.TTF}, &recorder{ttf: cousine.TTF}
+	_, st := renderWith(t, textPDF("BT /F1 40 Tf 10 30 Td (HI) Tj ET", font), FontProviders{none, nil, has, never})
+	if len(none.reqs) != 1 || len(has.reqs) != 1 || len(never.reqs) != 0 || none.reqs[0].Name != "Frobnicate" {
+		t.Errorf("asked: %d, %d and %d times", len(none.reqs), len(has.reqs), len(never.reqs))
+	}
+	if st.Glyphs != 2 || len(st.Unsupported) != 0 {
+		t.Errorf("%d glyphs, unsupported %v", st.Glyphs, st.Unsupported)
+	}
+	if _, ok := (FontProviders{}).Font(FontRequest{Name: "x"}); ok {
+		t.Error("no providers have a font")
+	}
+}
