@@ -20,7 +20,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jolestar/go-commons-pool/v2 v2.1.2 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
-	github.com/timzifer/stilus v0.10.0 // indirect
+	github.com/timzifer/stilus v0.11.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
 
