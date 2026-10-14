@@ -289,11 +289,16 @@ over it stay valid (`Update`).
   and fonts that are the same written once, across merged documents too
   (`JoinDuplicates`), plain, LZW, run length and ASCII streams under Flate
   (`Compress`), thumbnails, `/PieceInfo` and the metadata of objects
-  dropped (`Drop`). Images are not resampled and fonts not subset
+  dropped (`Drop`); and at a loss, on request (`SaveOptions.Images`):
+  images resampled where they are drawn finer than a resolution, measured
+  where each is drawn largest, photographs in grey or RGB as JPEG, images
+  of one bit a pixel as CCITT Group 4 (written by cera's own encoder),
+  each in its colour space and only where that is smaller. Fonts are not
+  subset
 
 Not done, each with its issue: what a redaction leaves (#198),
-destinations on resized pages (#205), images and fonts when a file is
-made smaller (#201, #202).
+destinations on resized pages (#205), fonts embedded whole when a file
+is made smaller (#202).
 
 ### Command line
 

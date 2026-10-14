@@ -505,6 +505,43 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 			reopen(name, out.Bytes(), true)
 		}
 	})
+	r.step("images", func() {
+		// The images made smaller, at a loss: the pages looked at are as
+		// bright as they were, the file opens and is no larger.
+		var out bytes.Buffer
+		opt := cera.SaveOptions{Images: &cera.ImageOptions{MaxPPI: 150, TargetPPI: 110, JPEGQuality: 75, Bilevel: true}}
+		if !r.check("images", doc.Edit().SaveWith(&out, opt)) {
+			return
+		}
+		od := reopen("images", out.Bytes(), false)
+		if od == nil || od.NumPages() != doc.NumPages() {
+			return
+		}
+		var plain bytes.Buffer
+		// Strings of an encrypted file get a random vector each time: a
+		// few bytes either way.
+		if doc.Edit().Save(&plain) == nil && out.Len() > plain.Len()+64 {
+			r.differ("images: the file is %d bytes, saved as it is %d", out.Len(), plain.Len())
+		}
+		for i := range n {
+			a, err := c.apiRender(doc, i)
+			if err != nil || a == nil {
+				continue
+			}
+			b, err := c.apiRender(od, i)
+			if !r.check(fmt.Sprintf("images: render page %d", i+1), err) || b == nil || a.Rect != b.Rect {
+				continue
+			}
+			var sa, sb float64
+			for k := 0; k < len(a.Pix); k += 4 {
+				sa += float64(a.Pix[k]) + float64(a.Pix[k+1]) + float64(a.Pix[k+2])
+				sb += float64(b.Pix[k]) + float64(b.Pix[k+1]) + float64(b.Pix[k+2])
+			}
+			if px := float64(len(a.Pix) / 4 * 3); math.Abs(sa-sb)/px > 2 {
+				r.differ("images: page %d is %.1f levels brighter on average", i+1, (sb-sa)/px)
+			}
+		}
+	})
 	r.step("optimise", func() {
 		// Everything that makes the file smaller and loses nothing: the
 		// pages are what they were.

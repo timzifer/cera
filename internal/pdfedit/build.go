@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 
 	"github.com/timzifer/cera/internal/pdf"
@@ -76,6 +77,10 @@ type Doc struct {
 	// plain; see pdfwrite.Importer.Compress. Drop names what is left out.
 	Prune, Join, Compress bool
 	Drop                  Drop
+	// Replace holds objects of the documents of the pages to write in
+	// place of what they have, by object number, in the space of their
+	// document: images made smaller ([Write]).
+	Replace map[*pdf.Document]map[int32]pdf.Object
 	// Linear writes a new file linearised ([Write]); see
 	// pdfwrite.Writer.Linear.
 	Linear bool
@@ -332,6 +337,11 @@ func (b *builder) source(d *pdf.Document, own bool) *source {
 	}
 	x.im.MapRef = x.ref
 	if own {
+		for num, o := range b.doc.Replace[d] {
+			if _, ok := b.patched[num]; !ok {
+				b.patched[num] = o
+			}
+		}
 		x.im.Patch = b.patched
 		// Fields of deleted pages leave holes in the lists of fields.
 		x.im.Compact = map[pdf.Name]bool{"Fields": true, "Kids": true, "CO": true, "Annots": true}
@@ -341,6 +351,9 @@ func (b *builder) source(d *pdf.Document, own bool) *source {
 		// itself stay.
 		x.im.Drop = map[pdf.Name]bool{"Parent": true}
 		x.shared = b.bySrc[srcKey{d, true}]
+		if r := b.doc.Replace[d]; len(r) > 0 {
+			x.im.Patch = maps.Clone(r)
+		}
 	}
 	b.dropKeys(x.im)
 	x.im.Compress = b.doc.Compress && b.upd == nil

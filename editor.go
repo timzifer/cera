@@ -485,6 +485,11 @@ type SaveOptions struct {
 	Compress bool
 	// Drop names parts of the document that are left out.
 	Drop Drop
+
+	// Images, when set, makes the images smaller, at a loss: resampled
+	// where they are drawn finer than needed, photographs stored as JPEG,
+	// bilevel images as CCITT Group 4.
+	Images *ImageOptions
 }
 
 // Drop names parts of a document a viewer does not need to show it, for
@@ -558,6 +563,11 @@ func (e *Editor) SaveWith(w io.Writer, opt SaveOptions) (err error) {
 		return fmt.Errorf("cera: parts to drop %#x", uint(opt.Drop))
 	}
 	doc.Prune, doc.Join, doc.Compress = opt.PruneResources, opt.JoinDuplicates, opt.Compress
+	if opt.Images != nil {
+		if err := e.imagePlan(&doc, opt.Images); err != nil {
+			return err
+		}
+	}
 	doc.Linear = opt.Linearize
 	if opt.Drop&DropThumbnails != 0 {
 		doc.Drop |= pdfedit.DropThumbnails
