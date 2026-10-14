@@ -294,8 +294,22 @@ type info struct {
 	Fields     []fieldInfo       `json:"fields,omitempty"`
 	Signatures []string          `json:"signatures,omitempty"`
 	Files      []string          `json:"attachments,omitempty"`
+	Fonts      []fontInfo        `json:"fonts,omitempty"`
 	// Unsupported lists, by page, what was not drawn exactly.
 	Unsupported map[int]map[string]int `json:"unsupported,omitempty"`
+}
+
+// fontInfo is a font of the document: what it is, whether the file holds
+// its program, what cera draws it with in place of one, and its pages
+// (1-based).
+type fontInfo struct {
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Subset     bool   `json:"subset,omitempty"`
+	Embedded   bool   `json:"embedded"`
+	Unreadable bool   `json:"unreadable,omitempty"`
+	DrawnWith  string `json:"drawnWith,omitempty"`
+	Pages      []int  `json:"pages"`
 }
 
 type pageSize struct {
@@ -399,6 +413,15 @@ func cmdInfo(c *cli, args []string) error {
 		}
 		p.Release()
 	}
+	if fonts, err := doc.Fonts(context.Background()); err == nil {
+		for _, f := range fonts {
+			fi := fontInfo{Name: f.Name(), Type: f.Type(), Subset: f.Subset(), Embedded: f.Embedded(), Unreadable: f.Unreadable(), DrawnWith: f.DrawnWith()}
+			for _, p := range f.Pages {
+				fi.Pages = append(fi.Pages, p+1)
+			}
+			in.Fonts = append(in.Fonts, fi)
+		}
+	}
 	if *asJSON {
 		enc := json.NewEncoder(c.out)
 		enc.SetIndent("", " ")
@@ -432,6 +455,30 @@ func cmdInfo(c *cli, args []string) error {
 	}
 	list("signatures", in.Signatures)
 	list("attachments", in.Files)
+	for _, f := range in.Fonts {
+		name := f.Name
+		if name == "" {
+			name = "(no name)"
+		}
+		how := "embedded"
+		switch {
+		case f.Unreadable:
+			how = "embedded, unreadable"
+		case !f.Embedded:
+			how = "not embedded"
+		}
+		if f.Subset {
+			how += " subset"
+		}
+		if f.DrawnWith != "" {
+			how += ", drawn with " + f.DrawnWith
+		}
+		pages := make([]string, len(f.Pages))
+		for i, p := range f.Pages {
+			pages[i] = strconv.Itoa(p)
+		}
+		fmt.Fprintf(c.out, "font: %s (%s), %s, pages %s\n", name, f.Type, how, strings.Join(pages, " "))
+	}
 	for _, page := range slices.Sorted(func(yield func(int) bool) {
 		for k := range in.Unsupported {
 			if !yield(k) {

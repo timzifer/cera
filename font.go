@@ -27,6 +27,10 @@ type Font struct {
 	id   uint64
 	pdf  *pdffont.Font
 	name string // BaseFont without a subset tag
+	// kind, subset and embedded are what Type, Subset and Embedded
+	// report (fontinfo.go).
+	kind             string
+	subset, embedded bool
 
 	// program is the embedded font program or a stand-in, face the handle
 	// its outlines are read through (not safe for concurrent use; guarded
@@ -206,6 +210,7 @@ func (d *Document) loadFontWith(dict pdf.Dict, key pdf.Name, data []byte) *Font 
 		}
 	}
 	f.hasToUnicode = !d.resolve(dict.Get("ToUnicode")).IsNull()
+	f.fontFacts(d, dict)
 	if f.composite() {
 		f.readCMap(d, dict)
 	}

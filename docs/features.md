@@ -308,8 +308,12 @@ with patterns, rotation as geometry).
 
 - `cmd/cera -field name=value` fills a form for drawing; `cera fill`
   writes it
-- `cmd/cera`: `text`, `search`, `info`, `merge`, `split`, `rotate`,
-  `delete`, `fill`; pages as PNG, JPEG, TIFF and WebP, in colour or grey
+- `cmd/cera`: `text`, `search`, `info` (with the fonts: embedded or not,
+  subset, what cera draws them with, their pages), `merge`, `split`,
+  `rotate`, `delete`, `fill`; pages as PNG, JPEG, TIFF and WebP, in colour
+  or grey
+- `Page.Fonts`, `Document.Fonts`: the fonts pages show text in, with
+  `Font.Type`, `Subset`, `Embedded`, `Unreadable` and `DrawnWith`
 
 ## Unsupported
 
