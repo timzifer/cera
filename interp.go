@@ -111,6 +111,9 @@ type interp struct {
 	mcBuf MarkedContent
 
 	annotBuf []byte // generated appearance streams
+	// pixelBox, set while an annotation's appearance stream starts,
+	// rounds the clip to its /BBox outward to whole device pixels.
+	pixelBox bool
 	// formVals are the field values that differ from the saved ones, for
 	// the appearances of widgets (RenderOptions.Form).
 	formVals map[*Field]Value

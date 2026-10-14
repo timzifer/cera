@@ -2,6 +2,7 @@ package cera
 
 import (
 	"image/color"
+	"math"
 
 	"github.com/timzifer/cera/internal/pdf"
 	"github.com/timzifer/stilus"
@@ -267,9 +268,34 @@ func (in *interp) formSpace(s *pdf.Stream) (bbox Rect, ok bool) {
 			in.gs.ctm = m.Mul(in.gs.ctm)
 		}
 	}
+	pixel := in.pixelBox
+	in.pixelBox = false
 	if bbox, ok = doc.rect(s.Dict.Get("BBox")); ok {
-		in.dev.ClipRect(bbox, in.gs.ctm)
+		if r, m, snapped := pixelRect(bbox, in.gs.ctm); pixel && snapped {
+			in.dev.ClipRect(r, m)
+		} else {
+			in.dev.ClipRect(bbox, in.gs.ctm)
+		}
 		in.gs.clips++
 	}
 	return bbox, ok
+}
+
+// pixelRect returns r, transformed by m, rounded outward to whole device
+// pixels, and the identity to clip to it with; ok is false when m turns r
+// off the axes. An annotation's appearance is clipped to its box in this
+// way, as the reference viewers clip a rectangle: its border is drawn on
+// the edge of the box, and an exact clip off the pixels, antialiased as
+// the border is, would lighten the border's edge pixels a second time.
+func pixelRect(r Rect, m Matrix) (Rect, Matrix, bool) {
+	if (m[1] != 0 || m[2] != 0) && (m[0] != 0 || m[3] != 0) {
+		return Rect{}, Matrix{}, false
+	}
+	x0, y0 := m.Apply(r.X0, r.Y0)
+	x1, y1 := m.Apply(r.X1, r.Y1)
+	const eps = 1e-6 // of a pixel: what the numbers of a box carry
+	return Rect{
+		math.Floor(min(x0, x1) + eps), math.Floor(min(y0, y1) + eps),
+		math.Ceil(max(x0, x1) - eps), math.Ceil(max(y0, y1) - eps),
+	}, identity, true
 }

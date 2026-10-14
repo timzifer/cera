@@ -661,7 +661,9 @@ func (in *interp) annotation(p *Page, a *Annotation, flags AnnotFlags, base Matr
 		in.exec(in.annotBuf, res, 1)
 	default:
 		in.gs.ctm = appearanceMatrix(doc, ap, a.Rect).Mul(ctm)
+		in.pixelBox = true
 		in.form(ap, pdf.Dict{}, 0)
+		in.pixelBox = false
 	}
 	in.unwind(0)
 	in.popClips(in.gs.clips)
