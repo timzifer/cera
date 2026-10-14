@@ -202,7 +202,8 @@ displayed page:
   and spot colours through their alternate, RGB through the profile's
   colour-to-ink table (B2A) or as PDF converts DeviceRGB; blend modes on
   the inks' complements, black kept or taken in the non-separable ones
-  (#209)
+  (#209); `Page.CMYKProfile` is the ICC profile they are for, and
+  `cera -cmyk` writes them as a CMYK TIFF with it
 
 ### Metadata
 

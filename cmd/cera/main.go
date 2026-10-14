@@ -5,6 +5,7 @@
 //	cera -dpi 150 -o 'out-%d.png' input.pdf   # all pages
 //	cera -o 'out-%d.jpg' -quality 85 input.pdf   # or .tif, .webp
 //	cera -gray -o 'fax-%d.tif' input.pdf
+//	cera -cmyk -o 'press-%d.tif' print.pdf   # the inks, with the profile
 //	cera -field name=Ada -field agree=Yes -page 1 form.pdf
 //	cera -cmyk-profile CoatedFOGRA39.icc -page 1 print.pdf
 //
@@ -62,6 +63,7 @@ func main() {
 	out := flag.String("o", "page-%d.png", "output file; %d is replaced by the page number, and its ending says what is written: .png, .jpg, .tif or .webp")
 	quality := flag.Int("quality", 0, "quality of a JPEG, 1 to 100 (default 75)")
 	gray := flag.Bool("gray", false, "draw in grey")
+	cmykOut := flag.Bool("cmyk", false, "draw in the CMYK of the document, as a press gets it, into a .tif that carries the profile of the output intent or of -cmyk-profile")
 	password := flag.String("password", "", "password of an encrypted file")
 	transparent := flag.Bool("transparent", false, "leave the background transparent")
 	timeout := flag.Duration("timeout", time.Minute, "deadline per page")
@@ -123,14 +125,24 @@ func main() {
 		}
 		opt.CMYKProfile = b
 	}
-	if err := run(flag.Arg(0), opt, *dpi, *page, *out, *transparent, *timeout, *verbose, *workers, mode, box, filter, fields, *pngMode, *quality, *gray); err != nil {
+	if err := run(flag.Arg(0), opt, *dpi, *page, *out, *transparent, *timeout, *verbose, *workers, mode, box, filter, fields, *pngMode, *quality, *gray, *cmykOut); err != nil {
 		fmt.Fprintln(os.Stderr, "cera:", err)
 		os.Exit(1)
 	}
 }
 
-func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, box cera.PageBox, filter cera.ImageFilter, fields []string, pngMode string, quality int, gray bool) error {
+func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, box cera.PageBox, filter cera.ImageFilter, fields []string, pngMode string, quality int, gray, cmykOut bool) error {
 	format := strings.ToLower(filepath.Ext(out))
+	if cmykOut {
+		switch {
+		case gray:
+			return fmt.Errorf("-cmyk and -gray: draw in one or the other")
+		case transparent:
+			return fmt.Errorf("-cmyk: what is drawn on nothing is paper, no ink; -transparent has no say")
+		case format != ".tif" && format != ".tiff":
+			return fmt.Errorf("-o %q: -cmyk writes a TIFF, want a name that ends in .tif", out)
+		}
+	}
 	switch format {
 	case ".png", ".tif", ".tiff", ".webp":
 	case ".jpg", ".jpeg":
@@ -184,14 +196,20 @@ func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, tra
 		}
 		var img image.Image
 		var sw *streamPNG
+		var icc []byte
 		t0 := time.Now()
-		if gray {
+		switch {
+		case cmykOut:
+			dst := image.NewCMYK(p.Bounds(dpi / 72))
+			img, icc = dst, p.CMYKProfile()
+			err = p.RenderCMYK(context.Background(), dst, ropt)
+		case gray:
 			// In grey the page is drawn a band at a time, without the
 			// page in colour.
 			dst := image.NewGray(p.Bounds(dpi / 72))
 			img = dst
 			err = p.RenderGray(context.Background(), dst, ropt)
-		} else {
+		default:
 			dst := image.NewRGBA(p.Bounds(dpi / 72))
 			img = dst
 			if pngMode == "stream" && format == ".png" {
@@ -222,7 +240,7 @@ func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, tra
 		case format == ".png":
 			err = writePNG(name, img, pngMode)
 		default:
-			err = writeImage(name, img, format, quality)
+			err = writeImage(name, img, format, quality, icc)
 		}
 		if err != nil {
 			return err
@@ -276,8 +294,9 @@ func writePNG(name string, img image.Image, mode string) error {
 
 // writeImage writes img to the file name in one of the other formats
 // calamus encodes: a JPEG at quality, a TIFF with LZW, a WebP without
-// loss. A TIFF is one page; several pages are several files.
-func writeImage(name string, img image.Image, format string, quality int) error {
+// loss. A TIFF is one page; several pages are several files. A TIFF
+// carries icc, the profile of its samples, unless that is nil.
+func writeImage(name string, img image.Image, format string, quality int, icc []byte) error {
 	f, err := os.Create(name)
 	if err != nil {
 		return err
@@ -286,7 +305,7 @@ func writeImage(name string, img image.Image, format string, quality int) error 
 	case ".jpg", ".jpeg":
 		err = (&jpeg.Encoder{Quality: quality}).Encode(f, img)
 	case ".tif", ".tiff":
-		err = tiff.Encode(f, img, &tiff.Options{Compression: tiff.LZW, Predictor: true})
+		err = tiff.Encode(f, img, &tiff.Options{Compression: tiff.LZW, Predictor: true, ICCProfile: icc})
 	case ".webp":
 		err = webp.Encode(f, img)
 	}

@@ -198,6 +198,20 @@ func (d *Document) rgbInks(r, g, b float64) [4]float64 {
 	return [4]float64{c - k, m - k, y - k, k}
 }
 
+// CMYKProfile returns the ICC profile of the CMYK RenderCMYK draws p in,
+// for what is written of it to say so (a TIFF, say): the caller's
+// (OpenOptions.CMYKProfile), or that of the output intent of the page or
+// of the document. It is nil where that is the bundled SWOP profile, with
+// NaiveCMYK, and where cera cannot use the intent's profile. The bytes are
+// the caller's or decoded anew; they are not to be changed.
+func (p *Page) CMYKProfile() []byte {
+	cs, _ := p.cmykDoc().deviceCMYK()
+	if cs == nil || cs.icc == nil {
+		return nil
+	}
+	return cs.icc()
+}
+
 // cmykPixels is how many pixels of a page RenderCMYK draws at a time: 4 MB
 // of RGBA.
 const cmykPixels = 1 << 20
