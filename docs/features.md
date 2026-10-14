@@ -272,10 +272,11 @@ over it stay valid (`Update`).
 - `Editor.SetMetadata` writes `/Info` and the XMP packet in agreement,
   keeping what else the packet holds
 - `Editor.Redact` and `ApplyRedactions`: content taken out of pages for
-  good — glyphs out of their strings, paths left out or clipped, images
-  re-encoded without the samples, forms rewritten per use, annotations,
-  fields and the text that stood for the content in marked content and
-  the structure tree — failing closed, written as a new file
+  good — glyphs out of their strings, paths left out or cut out of the
+  areas, images re-encoded without the samples, forms rewritten per use,
+  annotations, fields and the text that stood for the content in marked
+  content and the structure tree — failing closed, written as a new file;
+  the overlay text of redaction annotations written over their areas
 - `Save` writes object streams and a cross-reference stream where the
   document had them, or on request (`SaveOptions.ObjectStreams`); also
   encrypted
