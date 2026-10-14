@@ -10,7 +10,7 @@ require (
 	github.com/go-opentype/opentype v0.15.0
 	github.com/tannevaled/gobig2 v0.2.0
 	github.com/timzifer/stilus v0.11.0
-	golang.org/x/text v0.42.0
+	golang.org/x/text v0.43.0
 )
 
 require (
