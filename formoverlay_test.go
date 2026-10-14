@@ -120,7 +120,7 @@ func TestFormOverlayPlain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dl, _ := p.list(2, false, &limit{ctx: context.Background()})
+	dl, _ := p.list(2, false, projRGB, &limit{ctx: context.Background()})
 	defer p.done(dl)
 	for _, tt := range []struct {
 		names []string
@@ -136,14 +136,14 @@ func TestFormOverlayPlain(t *testing.T) {
 		for _, n := range tt.names {
 			values[n] = TextValue("new")
 		}
-		overlays, own := p.widgetLists(fill(t, doc, values).snapshot(), nil, 2, false, &limit{ctx: context.Background()})
+		overlays, own := p.widgetLists(fill(t, doc, values).snapshot(), nil, 2, false, projRGB, &limit{ctx: context.Background()})
 		af := annotFilter{mode: tt.mode, skip: func(i int) bool { return own[i] }}
 		if got := fmt.Sprint(dl.cuts(overlays, &af, dl.bounds)); got != tt.want {
 			t.Errorf("%v, mode %d: the list is cut at %s, want %s", tt.names, tt.mode, got, tt.want)
 		}
 	}
 	// Outside the region nothing is cut.
-	overlays, own := p.widgetLists(fill(t, doc, map[string]Value{"a": TextValue("new")}).snapshot(), nil, 2, false, &limit{ctx: context.Background()})
+	overlays, own := p.widgetLists(fill(t, doc, map[string]Value{"a": TextValue("new")}).snapshot(), nil, 2, false, projRGB, &limit{ctx: context.Background()})
 	af := annotFilter{skip: func(i int) bool { return own[i] }}
 	if got := dl.cuts(overlays, &af, image.Rect(0, 0, 40, 40)); got != nil {
 		t.Errorf("cut at %v for a region the widget is not in", got)

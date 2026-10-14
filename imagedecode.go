@@ -195,7 +195,7 @@ func (dc *imageDecoder) unmatte(dict pdf.Dict, o pdf.Object, p plane, m *plane) 
 	if cs.kind != csGray && cs.kind != csRGB {
 		dc.out.approx = "smask-matte"
 	}
-	r, g, b := cs.rgb(v[:len(a)])
+	r, g, b := d.colorOf(cs, v[:len(a)])
 	mr, mg, mb := int32(unit8(r)), int32(unit8(g)), int32(unit8(b))
 	w, h := p.W, p.H
 	if p.Kind != stilus.PlaneRGBA {
@@ -551,7 +551,7 @@ func (dc *imageDecoder) palettePlane(data []byte, sp *sampleSpec) (plane, bool) 
 		switch sp.use {
 		case useColor:
 			v[0] = x
-			r, g, b := sp.cs.rgb(v[:])
+			r, g, b := dc.d.colorOf(sp.cs, v[:])
 			pal[raw] = pack(unit8(r), unit8(g), unit8(b), 255)
 			if sp.keyed(0, raw) {
 				pal[raw] = 0
@@ -633,7 +633,9 @@ func (dc *imageDecoder) rgbaPlane(data []byte, sp *sampleSpec) (plane, *plane, b
 			lut[c<<bpc+int(raw)] = sp.value(c, raw)
 		}
 	}
-	plain := sp.decode == nil && bpc == 8
+	// The fast conversions are to sRGB; a projection to inks takes the
+	// general one.
+	plain := sp.decode == nil && bpc == 8 && dc.d.proj == projRGB
 	var v [maxComps]float64
 	for y := range h {
 		row := rowOf(data, y, sp.stride)
@@ -684,7 +686,7 @@ func (dc *imageDecoder) rgbaPlane(data []byte, sp *sampleSpec) (plane, *plane, b
 					v[c] = lut[c<<bpc+int(raw)]
 				}
 				if !same {
-					r, g, b := sp.cs.rgb(v[:n])
+					r, g, b := dc.d.colorOf(sp.cs, v[:n])
 					lastC, have = pack(unit8(r), unit8(g), unit8(b), 255), true
 				}
 				dst[x] = lastC
@@ -793,7 +795,7 @@ func (dc *imageDecoder) jpeg(dict pdf.Dict, data []byte, sp *sampleSpec) (plane,
 			pix, sp.stride, sp.n = im.Y, im.YStride, 1
 			break
 		}
-		if !csOK || cs.n != 3 || cs == spaceRGB {
+		if (!csOK || cs.n != 3 || cs == spaceRGB) && dc.d.proj == projRGB {
 			if dc.decodeArray(dict, 3) == nil && dc.colorKey(dict, 3) == nil {
 				return rgbaFrom(im), nil, true
 			}
@@ -853,7 +855,7 @@ func (dc *imageDecoder) jpx(dict pdf.Dict, data []byte, sp *sampleSpec) (plane, 
 			return dc.fail("")
 		}
 		cs, ok := dc.colorSpace(dict, sp.use)
-		if !ok || cs.n != 3 || cs == spaceRGB {
+		if (!ok || cs.n != 3 || cs == spaceRGB) && dc.d.proj == projRGB {
 			// Pixels as decoded, with the alpha a codestream may carry
 			// (SMaskInData).
 			return rgbaFrom(img), nil, true

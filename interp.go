@@ -664,8 +664,8 @@ func (in *interp) setPaint(cs *colorSpace, v []float64, alpha float64) bool {
 	if cs.none {
 		return false
 	}
-	r, g, b := cs.rgb(v)
-	if t := in.gs.transfer; t != nil {
+	r, g, b := in.doc.colorOf(cs, v)
+	if t := in.gs.transfer; t != nil && in.doc.proj == projRGB {
 		r, g, b = t.apply(r, g, b)
 	}
 	in.paint = Paint{Color: premul(r, g, b, alpha)}

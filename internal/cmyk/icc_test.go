@@ -414,3 +414,33 @@ func FuzzParse(f *testing.F) {
 		}
 	})
 }
+
+// TestInk reads the colour-to-ink table of a profile and converts through
+// it: the inks Eval gives for the encoded Lab of a colour.
+func TestInk(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "swop-lut16.icc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Parse(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.B2A == nil {
+		t.Fatal("no B2A")
+	}
+	xyz := LabToXYZ(50, 20, -30)
+	got, ok := p.Ink(xyz)
+	var want [4]float64
+	in := p.B2APCS.encodeLab(50, 20, -30)
+	p.B2A.Eval(in[:], want[:])
+	for i := range want {
+		want[i] = min(max(want[i], 0), 1)
+	}
+	if !ok || got != want {
+		t.Errorf("ink %v, want %v", got, want)
+	}
+	if _, ok := SWOP().Ink(xyz); ok {
+		t.Error("the bundled profile converts colours into ink")
+	}
+}

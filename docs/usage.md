@@ -28,8 +28,17 @@ For a monochrome printer, a fax or text recognition,
 `page.RenderGray(ctx, gray, opt)` draws into an `*image.Gray` with the
 same options: the pixels of the page drawn in colour and converted as PDF
 converts DeviceRGB to DeviceGray, without holding the page in colour — it
-is drawn a band at a time. The output is sRGB or that grey; a page drawn
-in the CMYK of its document, or in another RGB than sRGB, is not there
+is drawn a band at a time.
+
+For a press or a proof, `page.RenderCMYK(ctx, cmyk, opt)` draws into an
+`*image.CMYK` in the CMYK of the document — the profile of its output
+intent, `OpenOptions.CMYKProfile` or SWOP: DeviceCMYK keeps its values
+(black text stays 0 0 0 100 %), grey goes on black, Separation and DeviceN
+colorants named Cyan, Magenta, Yellow and Black on those inks, and RGB is
+converted through the profile's colour-to-ink table where it has one, else
+as PDF converts DeviceRGB. What is drawn on nothing is paper, no ink. The
+page is drawn twice, about twice the time of `Render`; overprint is not
+simulated in it yet (#155). A page in another RGB than sRGB is not there
 yet.
 
 A viewer that turns its view asks for the page turned:

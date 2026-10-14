@@ -237,7 +237,12 @@ var recorders = sync.Pool{New: func() any { return new(interp) }}
 //
 // Broken content does not stop rendering. A non-nil error means the page
 // was drawn partially: ErrDeadline, a rasterizer budget, or a *PanicError.
-func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (err error) {
+func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) error {
+	return p.render(ctx, dst, opt, projRGB)
+}
+
+// render is Render with the colours projected to pr.
+func (p *Page) render(ctx context.Context, dst *image.RGBA, opt RenderOptions, pr proj) (err error) {
 	region := dst.Bounds()
 	if !opt.Region.Empty() {
 		region = region.Intersect(opt.Region)
@@ -274,7 +279,7 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 	}
 	scale := normScale(opt.Scale)
 
-	dl, reused := p.list(scale, opt.SimulateOverprint, lim)
+	dl, reused := p.list(scale, opt.SimulateOverprint, pr, lim)
 	defer p.done(dl)
 	st.set(&dl.stats)
 	st.Reused = reused
@@ -298,7 +303,7 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) (
 	pageAF := af
 	if vals, hide := opt.Form.snapshot(), opt.Form.hidden(); len(vals)+len(hide) > 0 && opt.Form.form == p.doc.Form() {
 		var own map[int]bool
-		overlays, own = p.widgetLists(vals, hide, scale, opt.SimulateOverprint, lim)
+		overlays, own = p.widgetLists(vals, hide, scale, opt.SimulateOverprint, pr, lim)
 		if len(own) > 0 {
 			pageAF.skip = func(i int) bool { return own[i] || af.skip != nil && af.skip(i) }
 		}
@@ -387,6 +392,7 @@ func (l *displayList) cuts(overlays []overlay, af *annotFilter, region image.Rec
 type widgetList struct {
 	scale     float64
 	overprint bool
+	proj      proj
 	val       Value
 	shown     bool // drawn though the document hides it
 	dl        *displayList
@@ -396,7 +402,7 @@ type widgetList struct {
 // gives values and of those hide shows though the document hides them,
 // recording those not cached, and the annotation indices they replace in
 // the page's list, with those hide hides.
-func (p *Page) widgetLists(vals map[*Field]Value, hide map[*Widget]bool, scale float64, overprint bool, lim *limit) ([]overlay, map[int]bool) {
+func (p *Page) widgetLists(vals map[*Field]Value, hide map[*Widget]bool, scale float64, overprint bool, pr proj, lim *limit) ([]overlay, map[int]bool) {
 	var lists []overlay
 	var own map[int]bool
 	for _, w := range p.doc.Form().PageWidgets(p.index) {
@@ -420,12 +426,12 @@ func (p *Page) widgetLists(vals map[*Field]Value, hide map[*Widget]bool, scale f
 		p.mu.Lock()
 		wl := p.wl[w.Annotation]
 		p.mu.Unlock()
-		if wl == nil || wl.scale != scale || wl.overprint != overprint || !wl.val.Equal(v) || wl.shown != shown {
-			dl := p.recordWidget(w, vals, shown, scale, overprint, lim)
+		if wl == nil || wl.scale != scale || wl.overprint != overprint || wl.proj != pr || !wl.val.Equal(v) || wl.shown != shown {
+			dl := p.recordWidget(w, vals, shown, scale, overprint, pr, lim)
 			if dl == nil {
 				continue
 			}
-			wl = &widgetList{scale: scale, overprint: overprint, val: v, shown: shown, dl: dl}
+			wl = &widgetList{scale: scale, overprint: overprint, proj: pr, val: v, shown: shown, dl: dl}
 			if dl.complete {
 				p.mu.Lock()
 				if p.wl == nil {
@@ -447,7 +453,7 @@ func (p *Page) widgetLists(vals map[*Field]Value, hide map[*Widget]bool, scale f
 // recordWidget records the annotation of w alone, with the values vals;
 // with shown also one the document hides. Its list is not pooled: renders
 // may still draw it when it is replaced.
-func (p *Page) recordWidget(w *Widget, vals map[*Field]Value, shown bool, scale float64, overprint bool, lim *limit) (dl *displayList) {
+func (p *Page) recordWidget(w *Widget, vals map[*Field]Value, shown bool, scale float64, overprint bool, pr proj, lim *limit) (dl *displayList) {
 	annots := p.Annotations()
 	i, ok := slices.BinarySearchFunc(annots, w.Annotation, func(a Annotation, idx int) int { return a.Index - idx })
 	if !ok {
@@ -455,7 +461,7 @@ func (p *Page) recordWidget(w *Widget, vals map[*Field]Value, shown bool, scale 
 	}
 	dl = new(displayList)
 	dl.reset(p.Bounds(scale))
-	dl.scale, dl.overprint = scale, overprint
+	dl.scale, dl.overprint, dl.proj = scale, overprint, pr
 	base := p.deviceMatrix(scale)
 	dl.ClipRect(p.Box, base)
 	dl.frame = int32(len(dl.items))
@@ -467,7 +473,7 @@ func (p *Page) recordWidget(w *Widget, vals map[*Field]Value, shown bool, scale 
 				dl.complete = false
 			}
 		}()
-		in.reset(p.cmykDoc(), dl, &dl.stats, lim)
+		in.reset(p.viewFor(pr), dl, &dl.stats, lim)
 		in.overprint = overprint
 		in.devBox = p.Bounds(scale)
 		in.formVals = vals
@@ -488,11 +494,11 @@ func (p *Page) recordWidget(w *Widget, vals map[*Field]Value, shown bool, scale 
 // simulated or not, recording it unless the cached one fits. Renders that
 // want a list being recorded wait for it rather than record it again,
 // unless their limit ends first. The caller must pass it to done.
-func (p *Page) list(scale float64, overprint bool, lim *limit) (dl *displayList, reused bool) {
-	key := listKey{scale, overprint}
+func (p *Page) list(scale float64, overprint bool, pr proj, lim *limit) (dl *displayList, reused bool) {
+	key := listKey{scale, overprint, pr}
 	for {
 		p.mu.Lock()
-		if dl := p.dl; dl != nil && dl.scale == scale && dl.overprint == overprint {
+		if dl := p.dl; dl != nil && dl.scale == scale && dl.overprint == overprint && dl.proj == pr {
 			dl.refs++
 			p.mu.Unlock()
 			return dl, true
@@ -533,6 +539,7 @@ func (p *Page) list(scale float64, overprint bool, lim *limit) (dl *displayList,
 type listKey struct {
 	scale     float64
 	overprint bool
+	proj      proj
 }
 
 // listFlight is a recording in progress that renders wait for.
@@ -592,7 +599,7 @@ func (p *Page) recordList(key listKey, lim *limit, flight bool) (dl *displayList
 	scale, overprint := key.scale, key.overprint
 	dl = getList()
 	dl.reset(p.Bounds(scale))
-	dl.scale, dl.overprint = scale, overprint
+	dl.scale, dl.overprint, dl.proj = scale, overprint, key.proj
 	in := recorders.Get().(*interp)
 	func() {
 		defer func() {
@@ -604,7 +611,7 @@ func (p *Page) recordList(key listKey, lim *limit, flight bool) (dl *displayList
 				dl.panic = &PanicError{Value: v, Stack: debug.Stack()}
 			}
 		}()
-		dl.complete = p.record(in, dl, &dl.stats, scale, overprint, nil, nil, nil, nil, lim)
+		dl.complete = p.record(in, dl, &dl.stats, scale, overprint, key.proj, nil, nil, nil, nil, lim)
 	}()
 	if in != nil {
 		in.release()
@@ -641,13 +648,13 @@ func (p *Page) recordList(key listKey, lim *limit, flight bool) (dl *displayList
 // annotations that can be drawn; any other device sees what vis and af
 // show. Widgets show the field values vals, and the saved ones for fields
 // it leaves out.
-func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, overprint bool, vis *Visibility, af *annotFilter, vals map[*Field]Value, hide map[*Widget]bool, lim *limit) bool {
+func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, overprint bool, pr proj, vis *Visibility, af *annotFilter, vals map[*Field]Value, hide map[*Widget]bool, lim *limit) bool {
 	base := p.deviceMatrix(scale)
 	dev.ClipRect(p.Box, base)
 	if l, ok := dev.(*displayList); ok {
 		l.frame = int32(len(l.items))
 	}
-	in.reset(p.cmykDoc(), dev, st, lim)
+	in.reset(p.viewFor(pr), dev, st, lim)
 	in.overprint = overprint
 	in.devBox = p.Bounds(scale)
 	in.formVals, in.formHide = vals, hide
@@ -735,7 +742,7 @@ func (p *Page) RunWith(ctx context.Context, dev Device, opt RunOptions) (err err
 	if opt.Form != nil && opt.Form.form == p.doc.Form() {
 		vals, hide = opt.Form.snapshot(), opt.Form.hidden()
 	}
-	ok := p.record(in, dev, st, normScale(opt.Scale), opt.SimulateOverprint, vis, &af, vals, hide, lim)
+	ok := p.record(in, dev, st, normScale(opt.Scale), opt.SimulateOverprint, projRGB, vis, &af, vals, hide, lim)
 	dev.PopClip()
 	in.release()
 	recorders.Put(in)
@@ -1033,6 +1040,7 @@ func (j *job) paint(pt *painter, b int, r image.Rectangle) {
 	}
 	pt.dev.Reset(dst, r)
 	pt.dev.ImageFilter = j.filter
+	pt.dev.proj = j.l.proj
 	var ok bool
 	switch {
 	case j.alone:

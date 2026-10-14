@@ -35,6 +35,8 @@ type colorSpace struct {
 	// separation /None, which paints nothing.
 	fn   function
 	none bool
+	// colorants are the names of the colorants of a tint space.
+	colorants []string
 	// cmyk is the profile a CMYK space converts through, nil for the naive
 	// conversion.
 	cmyk *cmyk.Table
@@ -90,27 +92,35 @@ func (cs *colorSpace) rgb(v []float64) (r, g, b float64) {
 	case csCIE:
 		return cs.cie.rgb(v)
 	case csIndexed:
-		i := int(v[0] + 0.5)
-		i = min(max(i, 0), cs.hival)
 		var c [maxComps]float64
-		n := cs.base.n
-		for j := range n {
-			if k := i*n + j; k < len(cs.lookup) {
-				c[j] = float64(cs.lookup[k]) / 255
-			}
-		}
-		if cs.base.kind == csCIE && cs.base.cie.lab {
-			// Lab entries are bytes over the ranges of L*, a* and b*.
-			c[0] *= 100
-			rng := &cs.base.cie.rng
-			c[1] = rng[0] + c[1]*(rng[1]-rng[0])
-			c[2] = rng[2] + c[2]*(rng[3]-rng[2])
-		}
+		n := cs.indexed(v, c[:])
 		return cs.base.rgb(c[:n])
 	case csTint:
 		return cs.tintRGB(v)
 	}
 	return 0, 0, 0
+}
+
+// indexed writes the base components of the palette entry of the index
+// v[0] to c and returns how many there are.
+func (cs *colorSpace) indexed(v, c []float64) int {
+	i := int(v[0] + 0.5)
+	i = min(max(i, 0), cs.hival)
+	n := cs.base.n
+	for j := range n {
+		c[j] = 0
+		if k := i*n + j; k < len(cs.lookup) {
+			c[j] = float64(cs.lookup[k]) / 255
+		}
+	}
+	if cs.base.kind == csCIE && cs.base.cie.lab {
+		// Lab entries are bytes over the ranges of L*, a* and b*.
+		c[0] *= 100
+		rng := &cs.base.cie.rng
+		c[1] = rng[0] + c[1]*(rng[1]-rng[0])
+		c[2] = rng[2] + c[2]*(rng[3]-rng[2])
+	}
+	return n
 }
 
 // tintRGB converts tints through the tint transform and the alternate
@@ -558,19 +568,7 @@ func (p *Page) cmykDoc() *Document {
 // withCMYK returns the view of d that converts DeviceCMYK through cs,
 // counted as approx.
 func (d *Document) withCMYK(cs *colorSpace, approx string) *Document {
-	d.viewMu.Lock()
-	defer d.viewMu.Unlock()
-	k := csEntry{cs, approx}
-	if v, ok := d.views[k]; ok {
-		return v
-	}
-	v := &Document{docShared: d.docShared, cmykView: cmykView{devCMYK: cs, devApprox: approx, id: docIDs.Add(1)}}
-	v.dropWithCache()
-	if d.views == nil {
-		d.views = map[csEntry]*Document{}
-	}
-	d.views[k] = v
-	return v
+	return d.view(cs, approx, projRGB)
 }
 
 // gammas reads /Gamma: a number for CalGray, three for CalRGB.
@@ -595,13 +593,16 @@ func (d *Document) tintSpace(fam pdf.Name, a pdf.Array, res pdf.Dict, depth int)
 		names, _ := d.resolve(a[1]).Array()
 		cs.n = min(max(len(names), 1), maxComps)
 		none := len(names) > 0
-		for _, o := range names {
+		for _, o := range names[:min(len(names), maxComps)] {
 			n, _ := d.name(o)
 			none = none && n == "None"
+			cs.colorants = append(cs.colorants, string(n))
 		}
 		cs.none = none
 	} else if n, _ := d.name(a[1]); n == "None" {
 		cs.none = true
+	} else {
+		cs.colorants = []string{string(n)}
 	}
 	if len(a) >= 4 {
 		alt, approx := d.colorSpace(a[2], res, depth+1)

@@ -148,6 +148,7 @@ type displayList struct {
 	// What the list was recorded for, and what recording did.
 	scale     float64
 	overprint bool // simulated
+	proj      proj // what colours are projected to (cmykout.go)
 	stats     Stats
 	complete  bool
 	// cost estimates the drawing of the whole list in nanoseconds on one

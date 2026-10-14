@@ -92,6 +92,13 @@ func Parse(b []byte) (*Profile, error) {
 	}
 	L, _, _ := XYZToLab(enc.XYZOf(lab[:]))
 	p.Black = LabToXYZ(min(max(L, 0), 50), 0, 0)
+	// What converts colours into the profile's inks.
+	for _, tag := range []string{"B2A1", "B2A0"} {
+		if t, enc, err := readTable(tags[tag], pcs, 4, true); err == nil {
+			p.B2A, p.B2APCS = t, enc
+			break
+		}
+	}
 	return p, nil
 }
 

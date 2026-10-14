@@ -196,6 +196,13 @@ displayed page:
   the CropBox, a view as `Rotated` makes one
 - `Page.RenderGray` draws into an `*image.Gray`, band by band, without
   the page in colour: for monochrome printers, fax, text recognition
+- `Page.RenderCMYK` draws into an `*image.CMYK` in the CMYK of the
+  document, for a press or a proof: DeviceCMYK and ICC CMYK as they are,
+  grey on black, process colorants of Separation and DeviceN on their inks
+  and spot colours through their alternate, RGB through the profile's
+  colour-to-ink table (B2A) or as PDF converts DeviceRGB; blend modes on
+  the inks' complements, black kept or taken in the non-separable ones
+  (#209)
 
 ### Metadata
 
@@ -385,5 +392,5 @@ Not counted, because no page is drawn differently for it:
 | text | text whose font says neither what its codes stand for nor has a known encoding | the characters with their boxes and codes, `Text` empty |
 | signatures | revocation when verifying (OCSP, CRLs, also those of `/DSS`); EdDSA and RSASSA-PSS keys when signing | integrity, what was appended, and the chain against the caller's roots |
 | encryption | public-key security handlers, AES-GCM (#161) | the file does not open |
-| output | pages in the CMYK of the document (#209), in another RGB than sRGB (#210); overprint per colorant (#155) | sRGB or grey; overprint simulated on request |
+| output | pages in another RGB than sRGB (#210); overprint per colorant (#155), also in `RenderCMYK`; spot colours as separations of their own | sRGB, grey or the document's CMYK; overprint simulated on request in sRGB |
 | tagged PDF | structure for what the editor adds (drawings, new pages, fields, annotations): it comes untagged | the structure tree of a document is read and kept; imported pages bring theirs on request |
