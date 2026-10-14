@@ -477,7 +477,7 @@ func (s *Signature) changes() Changes {
 	if err != nil {
 		return Changes{Other: true}
 	}
-	od := &Document{r: old}
+	od := newDocument(old)
 	var c Changes
 	cmp := &objectCompare{a: od, b: d, seen: map[[2]pdf.Ref]bool{}, left: maxCompareNodes}
 

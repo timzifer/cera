@@ -56,7 +56,7 @@ Fonts a file does not embed:
 | space | notes |
 |---|---|
 | DeviceGray, DeviceRGB | |
-| DeviceCMYK | through the CMYK profile of the document's output intent (PDF/X, PDF/A, PDF/E; `OpenOptions.IgnoreOutputIntent` to skip it), else a SWOP press profile; or the caller's (`OpenOptions.CMYKProfile`); `OpenOptions.NaiveCMYK` for raw device values |
+| DeviceCMYK | through the CMYK profile of the document's output intent (PDF/X, PDF/A, PDF/E; a page's own intent, PDF 2.0, on that page; `OpenOptions.IgnoreOutputIntent` to skip them), else a SWOP press profile; or the caller's (`OpenOptions.CMYKProfile`); `OpenOptions.NaiveCMYK` for raw device values |
 | CalGray, CalRGB, Lab | through CIE XYZ, D50 (Bradford) |
 | ICCBased | grey and RGB profiles of curves and a matrix, or where they have none of lut8, lut16 or lutAtoB tables (scanner and camera profiles); CMYK profiles of such tables; Lab or XYZ; others by channel count |
 | Separation, DeviceN | tint transforms; `/None` paints nothing |

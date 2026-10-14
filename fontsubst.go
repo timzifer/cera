@@ -110,7 +110,8 @@ type OpenOptions struct {
 	// the CMYK profile of the document's output intent (/OutputIntents of
 	// the catalogue: PDF/X, PDF/A, PDF/E), as Acrobat and MuPDF do: a file
 	// made for uncoated paper or for newsprint is shown with those
-	// colours. PDFium does not use output intents.
+	// colours. A page with output intents of its own (PDF 2.0) converts
+	// through its own profile. PDFium does not use output intents.
 	IgnoreOutputIntent bool
 	// ImageCacheBytes bounds the decoded images the document keeps for
 	// the next page that shows them: 0 means 256 MB, a negative number

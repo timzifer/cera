@@ -52,6 +52,11 @@ func (c *Cache) Trim() {
 // display list of a page is freed by [Page.Release].
 func (d *Document) Trim() {
 	d.imgs.drop(d.id)
+	d.viewMu.Lock()
+	for _, v := range d.views {
+		d.imgs.drop(v.id)
+	}
+	d.viewMu.Unlock()
 	d.r.TrimCache()
 }
 
