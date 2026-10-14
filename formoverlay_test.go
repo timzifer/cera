@@ -14,9 +14,9 @@ import (
 // bottom up: a field a, a translucent highlight on a part of it, a field
 // b on a part of both, a line across b, a field c with nothing on it, an
 // opaque square on a corner of a, and a field d under a stamp that is not
-// printed. The fields lie on pixels: a field the editor wrote is drawn
-// like one that shows a value of a state only there. The content of the
-// page leaves a clip open.
+// printed. The fields but d lie off the pixels: a field the editor wrote
+// is drawn like one that shows a value of a state there too (#222). The
+// content of the page leaves a clip open.
 func overlayFile() []byte {
 	field := func(name, rect, bg string) string {
 		return "<</Type /Annot /Subtype /Widget /FT /Tx /T (" + name + ") /V (old) /F 4 /Rect [" + rect + "] /MK <</BG [" + bg + "] /BC [1 0 0]>>>>"
@@ -29,11 +29,11 @@ func overlayFile() []byte {
 			20: "<</Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding>>",
 			30: testpdf.Stream("/Type /XObject /Subtype /Form /BBox [0 0 40 30]", []byte("0 0 1 rg 0 0 40 30 re f")),
 			43: testpdf.Stream("", []byte("0.9 g 0 0 300 200 re f 0 0.6 0.6 rg 20 90 200 40 re f q 0 0 100 100 re W n")),
-			50: field("a", "30 100 170 130", "1 1 1"),
+			50: field("a", "30.4 100.3 170.7 130.6", "1 1 1"),
 			51: "<</Type /Annot /Subtype /Highlight /F 4 /Rect [10 90 120 125] /QuadPoints [10 125 120 125 10 90 120 90] /C [1 1 0] /CA 0.5>>",
-			52: field("b", "90 80 220 115", "0.8 0.8 1"),
+			52: field("b", "90.2 80.6 220.5 115.3", "0.8 0.8 1"),
 			53: "<</Type /Annot /Subtype /Line /F 4 /Rect [100 70 230 125] /L [105 75 225 120] /C [0 0.5 0] /BS <</W 3>>>>",
-			54: field("c", "30 20 130 40", "1 1 1"),
+			54: field("c", "30.3 20.7 130.6 40.2", "1 1 1"),
 			55: "<</Type /Annot /Subtype /Square /F 4 /Rect [150 120 190 150] /AP <</N 30 0 R>>>>",
 			56: field("d", "200 20 280 40", "1 1 1"),
 			57: "<</Type /Annot /Subtype /Square /Rect [220 10 260 50] /AP <</N 30 0 R>>>>",

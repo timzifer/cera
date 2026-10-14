@@ -28,7 +28,8 @@ import (
 //     a movement of their width stands in for them, so that the rest of
 //     the line stays where it was;
 //   - paths: one that lies in an area is left out, one that reaches into
-//     an area is clipped to what is outside;
+//     an area is cut out of it and clipped to what is outside
+//     (redactcut.go), a clip that lies in an area becomes an empty one;
 //   - images: one that lies in an area is left out; of one that reaches
 //     into an area the samples are decoded, emptied there, and encoded
 //     again; an inline image that meets an area is left out;
@@ -44,6 +45,23 @@ import (
 type redaction struct {
 	areas []Quad
 	fill  color.Color
+	// overlay is the text a redaction annotation writes over its area,
+	// nil for none.
+	overlay *redOverlay
+}
+
+// redOverlay is the text a redaction annotation asks to be written over
+// what it took out (/OverlayText): in rect, its rectangle in default user
+// space, at size (0 for as large as fits) in the colour of comps, aligned
+// by align (0 left, 1 centred, 2 right), and with repeat over and over to
+// fill it.
+type redOverlay struct {
+	text   string
+	rect   Rect
+	size   float64
+	comps  []float64
+	align  int
+	repeat bool
 }
 
 // ErrRedaction is returned when a file with a redaction is written and
@@ -68,9 +86,12 @@ var ErrRedaction = errors.New("cera: the page cannot be redacted")
 // belongs to, and the thumbnail of the page. What it leaves, for the
 // caller to look at: the outline, whose titles may quote a heading; the
 // metadata; attachments; other pages. A path that reaches into an area is
-// clipped, not cut: its numbers stay in the file. Of a tiling pattern or a
-// soft mask the cells are not rewritten; what they paint in an area is
-// clipped away with the path they fill.
+// cut out of it — the parts in it replaced by straight lines across it —
+// and clipped to what is outside; a stroke keeps what lies nearer the edge
+// than it reaches, and a dashed stroke is clipped only, its numbers left
+// in the file. Of a tiling pattern or a soft mask the cells are not
+// rewritten; what they paint in an area is clipped away with the path they
+// fill.
 //
 // Fields that reach into an area are removed as [Editor.RemoveField]
 // removes them, and Redact returns what that returns: [ErrCertified],
@@ -166,9 +187,13 @@ func (e *Editor) Redact(i int, areas []Quad, fill color.Color) error {
 // ApplyRedactions carries out the redaction annotations of the edited
 // document's pages that the result still has (/Subtype /Redact): the areas
 // they mark are redacted as [Editor.Redact] does, with boxes in their
-// interior colour, and the annotations go with them. It returns the number
-// of annotations applied. The text an annotation asks to be written over
-// its area (/OverlayText) is not written.
+// interior colour, and the annotations go with them. The text an
+// annotation asks to be written over its area (/OverlayText) is written in
+// its rectangle, in Helvetica at the size and in the colour of its /DA,
+// aligned by /Q, and with /Repeat over and over; a character Helvetica and
+// the fallback fonts lack is written as '?'. It returns the number of
+// annotations applied. The rollover appearance (/RO) is not used: it is
+// what a viewer shows before the redaction is applied.
 func (e *Editor) ApplyRedactions() (int, error) {
 	if e.base == nil {
 		return 0, nil
@@ -214,6 +239,9 @@ func (e *Editor) ApplyRedactions() (int, error) {
 			}
 			if err := e.Redact(i, areas, fill); err != nil {
 				return n, err
+			}
+			if ov := e.overlay(a); ov != nil {
+				ep.redacts[len(ep.redacts)-1].overlay = ov
 			}
 			// Its rectangle may lie beside its quads: it goes in any case.
 			if ep.annots == nil || !ep.annots.gone[a.Index] {
@@ -320,6 +348,9 @@ type redFrame struct {
 	path   [][2]int
 	clipOp string
 	mixed  bool
+	// paintAs is the painting operator written for the one that ran
+	// where cutPath closed the path itself, "" for that one.
+	paintAs string
 	// The strings a text operator has shown, and their glyphs.
 	strs   int
 	glyphs []redGlyph
@@ -513,6 +544,12 @@ func (fr *redFrame) before(in *interp, sc *content.Scanner, op []byte) {
 		if len(in.path.Points) > 0 {
 			fr.hit = r.meets(fr.box, fr.ctm)
 		}
+	case name == "n" && fr.clipOp != "":
+		// A clip: one in an area goes, one that reaches into one is cut.
+		if b := in.path.Bounds(); len(in.path.Points) > 0 {
+			fr.box = Rect{float64(b.X0) - 0.01, float64(b.Y0) - 0.01, float64(b.X1) + 0.01, float64(b.Y1) + 0.01}
+			fr.hit = r.meets(fr.box, fr.ctm)
+		}
 	case showOps[name]:
 		fr.strs, fr.glyphs = 0, fr.glyphs[:0]
 	case name == "Do":
@@ -558,12 +595,20 @@ func (fr *redFrame) after(in *interp, sc *content.Scanner, op []byte) {
 		switch {
 		case fr.hit == hitNone:
 			keep()
-		case fr.hit == hitWhole || fr.mixed || !fr.clipPath(in):
+		case fr.hit == hitWhole || fr.mixed || !fr.clipPath(in, name):
 			fr.dropPath()
 		}
 		fr.path, fr.clipOp, fr.mixed = fr.path[:0], "", false
 	case name == "n":
-		keep()
+		switch {
+		case fr.clipOp != "" && !fr.mixed && fr.hit == hitWhole:
+			fr.dropPath()
+		case fr.clipOp != "" && fr.hit == hitPart && fr.cutPath(in, name):
+			keep()
+			fr.touch()
+		default:
+			keep()
+		}
 		fr.path, fr.clipOp, fr.mixed = fr.path[:0], "", false
 	case showOps[name]:
 		if !slices.ContainsFunc(fr.glyphs, func(g redGlyph) bool { return g.hit }) {
@@ -641,12 +686,15 @@ func (fr *redFrame) dropPath() {
 	fr.touch()
 }
 
-// clipPath writes the path under construction clipped to what is outside
-// the areas. It reports false where it cannot.
-func (fr *redFrame) clipPath(in *interp) bool {
+// clipPath writes the path under construction, which paint ends, cut out
+// of the areas where it can be (cutPath), and clipped to what is outside
+// them. It reports false where it cannot.
+func (fr *redFrame) clipPath(in *interp, paint string) bool {
 	if len(fr.path) == 0 {
 		return false
 	}
+	fr.paintAs = ""
+	fr.cutPath(in, paint)
 	b := fr.box
 	clip, ok := fr.clipOut(in, Rect{b.X0 - 1, b.Y0 - 1, b.X1 + 1, b.Y1 + 1}, true)
 	if !ok {
@@ -660,7 +708,11 @@ func (fr *redFrame) clipPath(in *interp) bool {
 		}
 		again = append(again, "n\n"...)
 	}
-	fr.out = append(fr.out, fr.src[fr.start:fr.end]...)
+	if fr.paintAs != "" {
+		fr.out = append(append(fr.out, ' '), fr.paintAs...)
+	} else {
+		fr.out = append(fr.out, fr.src[fr.start:fr.end]...)
+	}
 	fr.out = append(fr.out, "\nQ\n"...)
 	fr.out = append(fr.out, again...)
 	fr.out = slices.Insert(fr.out, fr.path[0][0], append([]byte("q\n"), clip...)...)
@@ -1078,10 +1130,37 @@ func (e *Editor) redactPage(objs *[]pdf.Object, index int, rs []redaction, gone 
 		}
 		out.op("Q")
 	}
+	resources := root.resources()
+	// The texts over the areas, in Helvetica.
+	var enc *encoder
+	for _, x := range rs {
+		if x.overlay == nil {
+			continue
+		}
+		if enc == nil {
+			var fonts genFonts = &editFonts{objs: objs}
+			if e.gen != nil {
+				fonts = e.gen
+			}
+			enc = d.drFont(nil, "", nil, fonts)
+		}
+		x.overlay.write(&out, enc)
+	}
+	if enc != nil {
+		fonts := pdf.Dict{}
+		if f := d.dict(resources.Get("Font")); !f.IsZero() {
+			fonts = f
+		}
+		added, _ := enc.resources().Get("Font").Dict()
+		for k, v := range added.All() {
+			fonts = fonts.With(k, v)
+		}
+		resources = resources.With("Font", fonts.Object())
+	}
 	contents := r.add(pdfwrite.Flate(pdf.NewDict(), out).Object())
 	patch = pdfedit.Patch{Ref: ref, Set: []pdf.Entry{
 		{Key: "Contents", Val: contents},
-		{Key: "Resources", Val: root.resources().Object()},
+		{Key: "Resources", Val: resources.Object()},
 		// What may hold a picture of the page as it was.
 		{Key: "Thumb", Val: pdf.Null},
 		{Key: "PieceInfo", Val: pdf.Null},

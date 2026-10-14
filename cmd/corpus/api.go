@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/timzifer/cera"
+	"github.com/timzifer/cera/internal/cms"
 	"github.com/timzifer/cera/internal/corpus"
 )
 
@@ -420,6 +421,69 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		_, err = c.apiRender(od, doc.NumPages())
 		r.check("sheets: render", err)
 	})
+	r.step("import structure", func() {
+		// The pages looked at, imported with their structure into the
+		// document itself, opened a second time: the tree gains a part
+		// with as much content on the copies as the pages have.
+		if doc.Structure() == nil {
+			return
+		}
+		again, err := cera.OpenWith(data, opt)
+		if err != nil {
+			return
+		}
+		e := doc.Edit()
+		var pages []cera.EditPage
+		for i := range n {
+			pages = append(pages, cera.EditPage{Index: i})
+		}
+		if !r.check("import structure", e.ImportPagesWith(e.NumPages(), again, cera.ImportOptions{Structure: true}, pages...)) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("import structure: save", e.Save(&out)) {
+			return
+		}
+		od, err := cera.OpenWith(out.Bytes(), opt)
+		if err != nil {
+			r.differ("import structure: the file does not open again: %v", err)
+			return
+		}
+		r.saved++
+		if od.Structure() == nil {
+			r.differ("import structure: the result is untagged")
+			return
+		}
+		// Marked content by page, of a tree; truncated trees are not
+		// compared.
+		count := func(t *cera.StructTree) map[int]int {
+			got := map[int]int{}
+			var walk func(e *cera.StructElem)
+			walk = func(e *cera.StructElem) {
+				for _, k := range e.Kids {
+					if k.Elem != nil {
+						walk(k.Elem)
+					} else if k.MCID >= 0 {
+						got[k.Page]++
+					}
+				}
+			}
+			for _, e := range t.Elems {
+				walk(e)
+			}
+			return got
+		}
+		if doc.Structure().Truncated || od.Structure().Truncated {
+			return
+		}
+		was, is := count(doc.Structure()), count(od.Structure())
+		for i := range n {
+			if was[i] != is[doc.NumPages()+i] || was[i] != is[i] {
+				r.differ("import structure: page %d has %d marked contents in the tree, its copy %d, the page itself %d", i+1, was[i], is[doc.NumPages()+i], is[i])
+				return
+			}
+		}
+	})
 	r.step("linearise", func() {
 		// Laid out for a reader that gets the file piece by piece: the
 		// first object says so and how long the file is, and the document
@@ -439,6 +503,82 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 				r.differ("%s: the file says it has %s bytes and has %d", name, m[1], out.Len())
 			}
 			reopen(name, out.Bytes(), true)
+		}
+	})
+	r.step("subset fonts", func() {
+		// The programs embedded whole written with the glyphs shown: the
+		// pages look and read as they did.
+		var out bytes.Buffer
+		if !r.check("subset fonts", doc.Edit().SaveWith(&out, cera.SaveOptions{SubsetFonts: true})) {
+			return
+		}
+		od := reopen("subset fonts", out.Bytes(), true)
+		if od == nil || od.NumPages() != doc.NumPages() {
+			return
+		}
+		for i := range n {
+			if i > 0 {
+				a, err := c.apiRender(doc, i)
+				if err != nil || a == nil {
+					continue
+				}
+				b, err := c.apiRender(od, i)
+				if !r.check(fmt.Sprintf("subset fonts: render page %d", i+1), err) || b == nil {
+					continue
+				}
+				if share := pixelShare(a, b); share > apiPixelShare {
+					r.differ("subset fonts: page %d differs in %.2f %% of its pixels", i+1, 100*share)
+				}
+			}
+			pa, err1 := doc.Page(i)
+			pb, err2 := od.Page(i)
+			if err1 != nil || err2 != nil {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+			ta, err1 := pa.Text(ctx)
+			tb, err2 := pb.Text(ctx)
+			cancel()
+			if err1 == nil && err2 == nil && ta.String() != tb.String() {
+				r.differ("subset fonts: page %d reads otherwise", i+1)
+			}
+		}
+	})
+	r.step("images", func() {
+		// The images made smaller, at a loss: the pages looked at are as
+		// bright as they were, the file opens and is no larger.
+		var out bytes.Buffer
+		opt := cera.SaveOptions{Images: &cera.ImageOptions{MaxPPI: 150, TargetPPI: 110, JPEGQuality: 75, Bilevel: true}}
+		if !r.check("images", doc.Edit().SaveWith(&out, opt)) {
+			return
+		}
+		od := reopen("images", out.Bytes(), false)
+		if od == nil || od.NumPages() != doc.NumPages() {
+			return
+		}
+		var plain bytes.Buffer
+		// Strings of an encrypted file get a random vector each time: a
+		// few bytes either way.
+		if doc.Edit().Save(&plain) == nil && out.Len() > plain.Len()+64 {
+			r.differ("images: the file is %d bytes, saved as it is %d", out.Len(), plain.Len())
+		}
+		for i := range n {
+			a, err := c.apiRender(doc, i)
+			if err != nil || a == nil {
+				continue
+			}
+			b, err := c.apiRender(od, i)
+			if !r.check(fmt.Sprintf("images: render page %d", i+1), err) || b == nil || a.Rect != b.Rect {
+				continue
+			}
+			var sa, sb float64
+			for k := 0; k < len(a.Pix); k += 4 {
+				sa += float64(a.Pix[k]) + float64(a.Pix[k+1]) + float64(a.Pix[k+2])
+				sb += float64(b.Pix[k]) + float64(b.Pix[k+1]) + float64(b.Pix[k+2])
+			}
+			if px := float64(len(a.Pix) / 4 * 3); math.Abs(sa-sb)/px > 2 {
+				r.differ("images: page %d is %.1f levels brighter on average", i+1, (sb-sa)/px)
+			}
 		}
 	})
 	r.step("optimise", func() {
@@ -623,8 +763,16 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		if err != nil {
 			return
 		}
+		// With a timestamp of a test authority, the signer's own (B-T).
+		stamp := func(_ context.Context, digest []byte) ([]byte, error) {
+			info, err := cms.TimestampInfo(digest, time.Now())
+			if err != nil {
+				return nil, err
+			}
+			return cms.SignContent(info, true, signer.cert, signer.key, time.Now())
+		}
 		var out bytes.Buffer
-		if !r.check("sign", doc.Edit().Sign(&out, cera.SignOptions{Key: signer.key, Certificate: signer.cert})) {
+		if !r.check("sign", doc.Edit().Sign(&out, cera.SignOptions{Key: signer.key, Certificate: signer.cert, Timestamp: stamp})) {
 			return
 		}
 		if !bytes.HasPrefix(out.Bytes(), data) {
@@ -641,8 +789,36 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 			return
 		}
 		last := &sigs[len(sigs)-1]
-		if st, err := last.Verify(cera.VerifyOptions{}); err != nil || !st.Intact || !last.CoversWholeFile || st.Changes.Any() {
+		st, err := last.Verify(cera.VerifyOptions{})
+		if err != nil || !st.Intact || !last.CoversWholeFile || st.Changes.Any() || !st.Timestamped {
 			r.differ("sign: the signature does not hold: %+v, %v", st, err)
+			return
+		}
+		// Its validation data, and a document timestamp over it (B-LTA):
+		// the signature still holds, and sees no change.
+		e := od.Edit()
+		if !r.check("sign: validation", e.AddValidation(last, cera.Validation{Certificates: st.Certificates})) {
+			return
+		}
+		out.Reset()
+		if !r.check("sign: document timestamp", e.Timestamp(context.Background(), &out, stamp)) {
+			return
+		}
+		ld := reopen("sign: document timestamp", out.Bytes(), true)
+		if ld == nil {
+			return
+		}
+		sigs = ld.Signatures()
+		if len(sigs) < 2 {
+			r.differ("sign: the stamped file has %d signatures", len(sigs))
+			return
+		}
+		first, stamped := &sigs[len(sigs)-2], &sigs[len(sigs)-1]
+		if st, err := first.Verify(cera.VerifyOptions{}); err != nil || !st.Intact || st.Changes.Any() || !st.ChangesAllowed {
+			r.differ("sign: the signature after the document timestamp: %+v, %v", st, err)
+		}
+		if st, err := stamped.Verify(cera.VerifyOptions{}); err != nil || !st.Intact || !stamped.CoversWholeFile || !st.Timestamped {
+			r.differ("sign: the document timestamp does not hold: %+v, %v", st, err)
 		}
 	})
 	r.step("flatten", func() {

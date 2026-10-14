@@ -112,14 +112,16 @@ func TestCommands(t *testing.T) {
 
 	// info.
 	out, _, code = runCera(t, "info", in)
-	for _, want := range []string{"pages: 3", "300 x 200 pt: 3 from page 1", "page labels: i, ii, iii", "outline: 2 entries", `field: name (text) = "old"`} {
+	for _, want := range []string{"pages: 3", "300 x 200 pt: 3 from page 1", "page labels: i, ii, iii", "outline: 2 entries", `field: name (text) = "old"`,
+		"font: Helvetica (Type1), not embedded, drawn with "} {
 		if !strings.Contains(out, want) {
 			t.Errorf("info lacks %q:\n%s", want, out)
 		}
 	}
 	out, _, _ = runCera(t, "info", "-json", in)
 	var inf info
-	if err := json.Unmarshal([]byte(out), &inf); err != nil || inf.Pages != 3 || len(inf.Fields) != 1 || inf.Outline != 2 || code != 0 {
+	if err := json.Unmarshal([]byte(out), &inf); err != nil || inf.Pages != 3 || len(inf.Fields) != 1 || inf.Outline != 2 || code != 0 ||
+		len(inf.Fonts) == 0 || inf.Fonts[0].Name != "Helvetica" || inf.Fonts[0].Embedded || inf.Fonts[0].DrawnWith == "" {
 		t.Errorf("info -json: %v %+v", err, inf)
 	}
 

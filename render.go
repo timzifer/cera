@@ -467,7 +467,7 @@ func (p *Page) recordWidget(w *Widget, vals map[*Field]Value, shown bool, scale 
 				dl.complete = false
 			}
 		}()
-		in.reset(p.doc, dl, &dl.stats, lim)
+		in.reset(p.cmykDoc(), dl, &dl.stats, lim)
 		in.overprint = overprint
 		in.devBox = p.Bounds(scale)
 		in.formVals = vals
@@ -647,7 +647,7 @@ func (p *Page) record(in *interp, dev Device, st *Stats, scale float64, overprin
 	if l, ok := dev.(*displayList); ok {
 		l.frame = int32(len(l.items))
 	}
-	in.reset(p.doc, dev, st, lim)
+	in.reset(p.cmykDoc(), dev, st, lim)
 	in.overprint = overprint
 	in.devBox = p.Bounds(scale)
 	in.formVals, in.formHide = vals, hide

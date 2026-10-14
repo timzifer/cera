@@ -93,6 +93,13 @@ type ImportOptions struct {
 	// Labels keeps the page labels of the imported pages: the numbers
 	// printed on them.
 	Labels bool
+	// Structure brings the elements of the source's structure tree whose
+	// content is on imported pages, with the elements above them, so that
+	// a tagged document stays tagged (PDF/UA). Where the result has a
+	// tree, they follow its elements in a Part under its Document element
+	// (or its root); a result without one takes the first tree brought as
+	// its own. A page imported twice is tagged once, its first copy.
+	Structure bool
 }
 
 // Editor records the pages of a document being edited or put together.
@@ -131,6 +138,8 @@ type Editor struct {
 	meta *Metadata
 	// sign is the signature being made, while Sign writes.
 	sign *signPlan
+	// validation is the validation data AddValidation recorded.
+	validation []validationFor
 	// addFields are the fields added and the widgets added to fields of
 	// the edited document, by AddField, and delFields the names of its
 	// fields that are removed, by RemoveField.
@@ -196,7 +205,7 @@ func (e *Editor) ImportPages(at int, src *Document, pages ...EditPage) error {
 // the result when it is written is left out. Pages of the edited document
 // imported into itself bring nothing more: it has all that already.
 //
-// The structure tree is not brought: imported pages are untagged.
+// Without [ImportOptions.Structure] imported pages are untagged.
 func (e *Editor) ImportPagesWith(at int, src *Document, opt ImportOptions, pages ...EditPage) error {
 	if at < 0 || at > len(e.pages) {
 		return fmt.Errorf("cera: insert position %d is out of range [0, %d]", at, len(e.pages))
@@ -219,12 +228,13 @@ func (e *Editor) ImportPagesWith(at int, src *Document, opt ImportOptions, pages
 		add[i].id = e.newID()
 	}
 	e.pages = append(e.pages[:at], append(add, e.pages[at:]...)...)
-	if src != e.base && (opt.Outline || opt.Destinations) {
+	if src != e.base && (opt.Outline || opt.Destinations || opt.Structure) {
 		if e.imports == nil {
 			e.imports = map[*Document]ImportOptions{}
 		}
 		had := e.imports[src]
 		had.Outline, had.Destinations = had.Outline || opt.Outline, had.Destinations || opt.Destinations
+		had.Structure = had.Structure || opt.Structure
 		if opt.Outline {
 			had.OutlineTitle = opt.OutlineTitle
 		}
@@ -390,7 +400,9 @@ func (e *Editor) plan() pdfedit.Doc {
 		if doc.Imports == nil {
 			doc.Imports = map[*pdf.Document]pdfedit.Import{}
 		}
-		doc.Imports[src.r] = pdfedit.Import{Outline: opt.Outline, OutlineTitle: opt.OutlineTitle, Destinations: opt.Destinations}
+		doc.Imports[src.r] = pdfedit.Import{
+			Outline: opt.Outline, OutlineTitle: opt.OutlineTitle, Destinations: opt.Destinations, Structure: opt.Structure,
+		}
 	}
 	if e.meta != nil {
 		e.metaPatches(&doc)
@@ -401,6 +413,9 @@ func (e *Editor) plan() pdfedit.Doc {
 	e.planErr = nil
 	if e.base != nil && e.redacts() {
 		e.planErr = e.redactPlan(&doc)
+	}
+	if e.base != nil {
+		e.dssPlan(&doc)
 	}
 	cf := e.canvasForms(&doc)
 	e.drawPlan(&doc, cf)
@@ -470,6 +485,17 @@ type SaveOptions struct {
 	Compress bool
 	// Drop names parts of the document that are left out.
 	Drop Drop
+
+	// SubsetFonts writes the font programs embedded whole with the
+	// glyphs the pages show only, and tags their names as subsets:
+	// TrueType programs and CFF programs keyed by name. The fonts of the
+	// form, which a viewer writes typed text with, stay whole.
+	SubsetFonts bool
+
+	// Images, when set, makes the images smaller, at a loss: resampled
+	// where they are drawn finer than needed, photographs stored as JPEG,
+	// bilevel images as CCITT Group 4.
+	Images *ImageOptions
 }
 
 // Drop names parts of a document a viewer does not need to show it, for
@@ -543,6 +569,16 @@ func (e *Editor) SaveWith(w io.Writer, opt SaveOptions) (err error) {
 		return fmt.Errorf("cera: parts to drop %#x", uint(opt.Drop))
 	}
 	doc.Prune, doc.Join, doc.Compress = opt.PruneResources, opt.JoinDuplicates, opt.Compress
+	if opt.Images != nil {
+		if err := e.imagePlan(&doc, opt.Images); err != nil {
+			return err
+		}
+	}
+	if opt.SubsetFonts {
+		if err := e.fontPlan(&doc); err != nil {
+			return err
+		}
+	}
 	doc.Linear = opt.Linearize
 	if opt.Drop&DropThumbnails != 0 {
 		doc.Drop |= pdfedit.DropThumbnails

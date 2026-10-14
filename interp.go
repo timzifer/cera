@@ -872,6 +872,11 @@ func (in *interp) drawXObject(ref pdf.Ref, s *pdf.Stream, res pdf.Dict, depth in
 	sub, _ := doc.name(s.Dict.Get("Subtype"))
 	switch sub {
 	case "Image":
+		if is, ok := in.dev.(imageSeer); ok {
+			// Measured, not drawn: nothing is decoded.
+			is.seeImage(doc, ref, s, in.gs.ctm)
+			return
+		}
 		r := doc.image(ref, s, res)
 		in.drawImage(&r)
 	case "Form":

@@ -184,21 +184,21 @@ func (d *Document) colorSpace(o pdf.Object, res pdf.Dict, depth int) (cs *colorS
 	}
 	ref, isRef := o.Ref()
 	if isRef {
-		d.csMu.Lock()
+		d.spMu.Lock()
 		e, ok := d.spaces[ref]
-		d.csMu.Unlock()
+		d.spMu.Unlock()
 		if ok {
 			return e.cs, e.approx
 		}
 	}
 	cs, approx = d.makeColorSpace(d.resolve(o), res, depth)
 	if isRef {
-		d.csMu.Lock()
+		d.spMu.Lock()
 		if d.spaces == nil {
 			d.spaces = map[pdf.Ref]csEntry{}
 		}
 		d.spaces[ref] = csEntry{cs, approx}
-		d.csMu.Unlock()
+		d.spMu.Unlock()
 	}
 	return cs, approx
 }
@@ -463,7 +463,7 @@ const maxIntents = 32
 func (d *Document) deviceCMYK() (*colorSpace, string) {
 	switch {
 	case d.devCMYK != nil:
-		return d.devCMYK, ""
+		return d.devCMYK, d.devApprox
 	case d.ignoreIntent || d.r == nil:
 		return spaceCMYK, ""
 	}
@@ -473,38 +473,104 @@ func (d *Document) deviceCMYK() (*colorSpace, string) {
 		if err != nil {
 			return
 		}
-		intents, _ := d.resolve(cat.Get("OutputIntents")).Array()
-		for _, o := range intents[:min(len(intents), maxIntents)] {
-			it := d.dict(o)
-			switch s, _ := d.name(it.Get("S")); s {
-			case "GTS_PDFX", "GTS_PDFA1", "ISO_PDFE1":
-			default:
-				continue
-			}
-			prof := it.Get("DestOutputProfile")
-			s, ok := d.resolve(prof).Stream()
-			if !ok {
-				continue
-			}
-			data := d.r.Decode(s).Data
-			// The colour space of the profile: of its header, or where
-			// that does not read, by the number of its components.
-			space := ""
-			if len(data) >= 20 {
-				space = string(data[16:20])
-			}
-			if n, _ := d.integer(s.Dict.Get("N")); space != "CMYK" && (space == "RGB " || space == "GRAY" || n != 4) {
-				continue
-			}
-			ref, _ := prof.Ref()
-			d.intent, d.intentApprox = d.profileCMYK(ref, func() []byte { return data })
-			return
-		}
+		d.intent, d.intentApprox, _ = d.intentCMYK(cat.Get("OutputIntents"))
 	})
 	if d.intent != nil {
 		return d.intent, ""
 	}
 	return spaceCMYK, d.intentApprox
+}
+
+// intentCMYK returns the conversion through the profile of the first
+// output intent of a list that decides DeviceCMYK (see deviceCMYK), with
+// ok true; nil and what that is counted as when cera cannot use the
+// profile. ok is false when no intent of the list decides.
+func (d *Document) intentCMYK(list pdf.Object) (cs *colorSpace, approx string, ok bool) {
+	intents, _ := d.resolve(list).Array()
+	for _, o := range intents[:min(len(intents), maxIntents)] {
+		it := d.dict(o)
+		switch s, _ := d.name(it.Get("S")); s {
+		case "GTS_PDFX", "GTS_PDFA1", "ISO_PDFE1":
+		default:
+			continue
+		}
+		prof := it.Get("DestOutputProfile")
+		s, ok := d.resolve(prof).Stream()
+		if !ok {
+			continue
+		}
+		data := d.r.Decode(s).Data
+		// The colour space of the profile: of its header, or where that
+		// does not read, by the number of its components.
+		space := ""
+		if len(data) >= 20 {
+			space = string(data[16:20])
+		}
+		if n, _ := d.integer(s.Dict.Get("N")); space != "CMYK" && (space == "RGB " || space == "GRAY" || n != 4) {
+			continue
+		}
+		ref, _ := prof.Ref()
+		cs, approx = d.profileCMYK(ref, func() []byte { return data })
+		return cs, approx, true
+	}
+	return nil, "", false
+}
+
+// cmykDoc returns the document page p is drawn with: its own, or for a page
+// with an output intent of its own (PDF 2.0, 14.11.5), which takes
+// precedence over the document's on it, a view of the document that
+// converts DeviceCMYK through the profile of that intent. Pages with one
+// profile share a view. A profile cera cannot use is counted as the
+// document's is, and DeviceCMYK then converted as the document converts
+// it. The options that decide DeviceCMYK for the document (NaiveCMYK,
+// CMYKProfile, IgnoreOutputIntent) decide it for its pages.
+func (p *Page) cmykDoc() *Document {
+	d := p.doc
+	if d.devCMYK != nil || d.ignoreIntent || !p.dict.Has("OutputIntents") {
+		return d
+	}
+	ref, _ := d.r.PageRef(p.index + 1)
+	d.viewMu.Lock()
+	v, ok := d.pageViews[ref]
+	d.viewMu.Unlock()
+	if ok {
+		return v
+	}
+	v = d
+	if cs, approx, ok := d.intentCMYK(p.dict.Get("OutputIntents")); ok {
+		base, _ := d.deviceCMYK()
+		if cs == nil {
+			cs = base
+		}
+		if cs != base || approx != "" {
+			v = d.withCMYK(cs, approx)
+		}
+	}
+	d.viewMu.Lock()
+	defer d.viewMu.Unlock()
+	if d.pageViews == nil {
+		d.pageViews = map[pdf.Ref]*Document{}
+	}
+	d.pageViews[ref] = v
+	return v
+}
+
+// withCMYK returns the view of d that converts DeviceCMYK through cs,
+// counted as approx.
+func (d *Document) withCMYK(cs *colorSpace, approx string) *Document {
+	d.viewMu.Lock()
+	defer d.viewMu.Unlock()
+	k := csEntry{cs, approx}
+	if v, ok := d.views[k]; ok {
+		return v
+	}
+	v := &Document{docShared: d.docShared, cmykView: cmykView{devCMYK: cs, devApprox: approx, id: docIDs.Add(1)}}
+	v.dropWithCache()
+	if d.views == nil {
+		d.views = map[csEntry]*Document{}
+	}
+	d.views[k] = v
+	return v
 }
 
 // gammas reads /Gamma: a number for CalGray, three for CalRGB.

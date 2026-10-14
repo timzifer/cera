@@ -477,7 +477,7 @@ func (s *Signature) changes() Changes {
 	if err != nil {
 		return Changes{Other: true}
 	}
-	od := &Document{r: old}
+	od := newDocument(old)
 	var c Changes
 	cmp := &objectCompare{a: od, b: d, seen: map[[2]pdf.Ref]bool{}, left: maxCompareNodes}
 
@@ -533,9 +533,32 @@ func (s *Signature) changes() Changes {
 		c.Other = fa != fb
 		return c
 	}
+	// Fields by their objects, which an update keeps: two fields of a
+	// form may have one name.
+	byRef := map[pdf.Ref]*Field{}
+	for _, f := range fa.Fields {
+		if f.ref.Num > 0 {
+			byRef[f.ref] = f
+		}
+	}
+	find := func(fs *Form, byRef map[pdf.Ref]*Field, f *Field) *Field {
+		if f.ref.Num > 0 {
+			if g, ok := byRef[f.ref]; ok {
+				return g
+			}
+			return nil
+		}
+		return fs.Field(f.Name)
+	}
 	for _, f := range fb.Fields {
-		before := fa.Field(f.Name)
+		before := find(fa, byRef, f)
+		// A document timestamp is no change (PDF 2.0, 12.8.2.2.2).
+		stamp := func() bool {
+			t, _ := d.name(d.dict(d.dict(f.ref.Object()).Get("V")).Get("Type"))
+			return t == "DocTimeStamp"
+		}
 		switch {
+		case f.Type == FieldSignature && (before == nil || od.dict(od.dict(before.ref.Object()).Get("V")).IsZero()) && stamp():
 		case before == nil && f.Type == FieldSignature:
 			c.Signed = true
 		case before == nil:
@@ -555,8 +578,14 @@ func (s *Signature) changes() Changes {
 			c.Fields = append(c.Fields, f.Name)
 		}
 	}
+	now := map[pdf.Ref]*Field{}
+	for _, f := range fb.Fields {
+		if f.ref.Num > 0 {
+			now[f.ref] = f
+		}
+	}
 	for _, f := range fa.Fields {
-		if fb.Field(f.Name) == nil {
+		if find(fb, now, f) == nil {
 			c.Other = true // a field was removed
 		}
 	}
@@ -599,6 +628,11 @@ func (c *objectCompare) same(x, y pdf.Object) bool {
 	rx, okx := x.Ref()
 	ry, oky := y.Ref()
 	if okx && oky {
+		// A page is named by its place: what is on it is compared
+		// page by page, and its /Annots change with every signature.
+		if px, py := c.a.pageIndex(rx), c.b.pageIndex(ry); px >= 0 || py >= 0 {
+			return px == py
+		}
 		pair := [2]pdf.Ref{rx, ry}
 		if c.seen[pair] {
 			return true // already compared, or being compared further up

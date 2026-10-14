@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 
 	"github.com/timzifer/cera/internal/pdf"
@@ -76,6 +77,10 @@ type Doc struct {
 	// plain; see pdfwrite.Importer.Compress. Drop names what is left out.
 	Prune, Join, Compress bool
 	Drop                  Drop
+	// Replace holds objects of the documents of the pages to write in
+	// place of what they have, by object number, in the space of their
+	// document: images made smaller ([Write]).
+	Replace map[*pdf.Document]map[int32]pdf.Object
 	// Linear writes a new file linearised ([Write]); see
 	// pdfwrite.Writer.Linear.
 	Linear bool
@@ -230,6 +235,12 @@ type builder struct {
 	// all that are the same, by their sums; docIDs numbers the documents.
 	joined map[sum]pdfwrite.Ref
 	docIDs map[*pdf.Document]uint64
+	// st is the structure tree of the output where imported pages bring
+	// theirs (structure.go).
+	st *structMerge
+	// pageGeo holds the geometry of the pages of the output that move,
+	// by their numbers.
+	pageGeo map[pdfwrite.Ref]*Geometry
 }
 
 type srcKey struct {
@@ -266,6 +277,8 @@ type source struct {
 	pr      *pruner
 	sums    map[int32]sum
 	summing map[int32]bool
+	// st is the structure tree the source's pages bring.
+	st *srcStruct
 }
 
 func newBuilder(doc Doc, upd *pdf.UpdateBase) *builder {
@@ -327,6 +340,11 @@ func (b *builder) source(d *pdf.Document, own bool) *source {
 	}
 	x.im.MapRef = x.ref
 	if own {
+		for num, o := range b.doc.Replace[d] {
+			if _, ok := b.patched[num]; !ok {
+				b.patched[num] = o
+			}
+		}
 		x.im.Patch = b.patched
 		// Fields of deleted pages leave holes in the lists of fields.
 		x.im.Compact = map[pdf.Name]bool{"Fields": true, "Kids": true, "CO": true, "Annots": true}
@@ -336,6 +354,9 @@ func (b *builder) source(d *pdf.Document, own bool) *source {
 		// itself stay.
 		x.im.Drop = map[pdf.Name]bool{"Parent": true}
 		x.shared = b.bySrc[srcKey{d, true}]
+		if r := b.doc.Replace[d]; len(r) > 0 {
+			x.im.Patch = maps.Clone(r)
+		}
 	}
 	b.dropKeys(x.im)
 	x.im.Compress = b.doc.Compress && b.upd == nil
@@ -371,6 +392,9 @@ func (x *source) ref(r pdf.Ref) pdfwrite.Ref {
 		return pdfwrite.Ref(r.Num)
 	}
 	if n, ok := x.pageOut[r.Num]; ok {
+		return n
+	}
+	if n, ok := x.structRef(r.Num); ok {
 		return n
 	}
 	if x.shared != nil {
@@ -443,8 +467,17 @@ func (b *builder) build() error {
 			x.pageOut[r.Num] = out[i]
 		}
 	}
+	for i, p := range b.doc.Pages {
+		if p.Geo != nil && p.Geo.Moves {
+			if b.pageGeo == nil {
+				b.pageGeo = map[pdfwrite.Ref]*Geometry{}
+			}
+			b.pageGeo[out[i]] = p.Geo
+		}
+	}
 	// Before the changed objects of the edited document are written.
 	b.movePages()
+	b.moveDests()
 	if b.doc.Base != nil {
 		x := b.bySrc[srcKey{b.doc.Base, true}]
 		x.pruneDeleted()
@@ -457,6 +490,9 @@ func (b *builder) build() error {
 	if b.doc.Prune && b.upd == nil {
 		b.prunePages()
 	}
+	// Before the pages: their keys of the structure tree, and the forms
+	// they draw with theirs.
+	b.prepareStructure()
 	// Pages are made once every page has its number, so links between
 	// them can point at the copies.
 	for i, p := range b.doc.Pages {
@@ -488,6 +524,7 @@ func (b *builder) build() error {
 	if len(b.doc.Imports) > 0 {
 		b.mergeDests()
 	}
+	b.writeStructure()
 	b.form = b.formDict()
 
 	b.w.Set(b.pages, pdf.NewDict(
@@ -695,6 +732,14 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 				if b.dropDests {
 					continue
 				}
+			case "MarkInfo":
+				if b.st != nil {
+					continue // below
+				}
+			case "StructTreeRoot":
+				if b.st != nil && b.st.lead != nil {
+					continue // a tree the edited document has not as an object of its own
+				}
 			}
 			entries = append(entries, pdf.Entry{Key: k, Val: x.im.Map(v)})
 		}
@@ -731,6 +776,12 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 	}
 	if !b.form.IsNull() {
 		entries = append(entries, pdf.Entry{Key: "AcroForm", Val: b.form})
+	}
+	if b.st != nil {
+		if b.st.lead != nil {
+			entries = append(entries, pdf.Entry{Key: "StructTreeRoot", Val: b.st.root.Object()})
+		}
+		entries = append(entries, pdf.Entry{Key: "MarkInfo", Val: b.markInfo()})
 	}
 	if b.upd != nil {
 		// An update keeps the header: a newer version goes into the
@@ -863,8 +914,13 @@ func (x *source) page(p Page, i int, first bool) (pdf.Dict, error) {
 		entries = append(entries, pdf.Entry{Key: "Rotate", Val: pdf.Integer(int64(rot))})
 	}
 	if !x.own {
-		if annots := x.annots(src.Get("Annots"), p.Fields && first, p.Geo); len(annots) > 0 {
+		if annots := x.annots(src.Get("Annots"), p.Fields && first, first, p.Geo); len(annots) > 0 {
 			entries = append(entries, pdf.Entry{Key: "Annots", Val: annots.Object()})
+		}
+		if r, ok := x.d.PageRef(p.Index + 1); ok && first && x.st != nil {
+			if k, ok := x.st.pageKey[r.Num]; ok {
+				entries = append(entries, pdf.Entry{Key: "StructParents", Val: pdf.Integer(k)})
+			}
 		}
 	}
 	return pdf.NewDict(entries...), nil

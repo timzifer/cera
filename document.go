@@ -18,11 +18,16 @@ import (
 // loaded once and shared. Once a page has been rendered at a scale, further
 // renders of it at that scale only draw its display list.
 type Document struct {
+	*docShared
+	cmykView
+}
+
+// docShared is what a document has once for all its views (cmykView).
+type docShared struct {
 	r *pdf.Document
 
 	fontProvider FontProvider // fonts the document does not embed
 	naiveCMYK    bool         // OpenOptions.NaiveCMYK
-	devCMYK      *colorSpace  // DeviceCMYK as the options convert it; nil: as the document says, see deviceCMYK
 	ignoreIntent bool         // OpenOptions.IgnoreOutputIntent
 	intentOnce   sync.Once
 	intent       *colorSpace // DeviceCMYK through the output intent, nil without one
@@ -32,12 +37,9 @@ type Document struct {
 	fonts  map[pdf.Ref]*Font // loaded fonts, by reference
 
 	// Decoded images: the document's own cache or the one it shares
-	// (OpenOptions.Cache), which knows its images by id.
-	imgs *imageCache
-	id   uint64
-	// Decodes in progress by reference.
-	imgMu      sync.Mutex
-	imgFlights map[pdf.Ref]*imageFlight
+	// (OpenOptions.Cache), which knows its images by the id of a view.
+	imgs        *imageCache
+	sharedCache bool // imgs is an OpenOptions.Cache
 
 	ocOnce sync.Once
 	oc     *ocProps // optional content, read on first use
@@ -70,16 +72,10 @@ type Document struct {
 	structTreeOnce sync.Once
 	structTree     *StructTree // the structure tree, read on first use
 
-	// Colour spaces and shadings by reference.
-	csMu     sync.Mutex
-	spaces   map[pdf.Ref]csEntry
-	shMu     sync.Mutex
-	shadings map[pdf.Ref]*shadingEntry
-	patterns map[pdf.Ref]*patternEntry
-
 	// CMYK profiles by profile object — a nil space for one that is not
 	// used, with the key it is counted under — and their tables, at most
 	// maxCMYKProfiles; under csMu.
+	csMu       sync.Mutex
 	iccSpaces  map[pdf.Ref]csEntry
 	iccTables  int // grey and RGB profiles tabulated
 	cmykTables map[*cmyk.Table]bool
@@ -87,6 +83,39 @@ type Document struct {
 	// Transfer functions by ExtGState reference.
 	trMu      sync.Mutex
 	transfers map[pdf.Ref]trEntry
+
+	// The views of pages with an output intent of their own (Page.cmykDoc):
+	// by DeviceCMYK, and by page.
+	viewMu    sync.Mutex
+	views     map[csEntry]*Document
+	pageViews map[pdf.Ref]*Document
+}
+
+// cmykView is DeviceCMYK as a document converts it, and what is made of
+// it: colour spaces, shadings and patterns by reference, decoded images.
+// The pages of a document convert it alike but those with an output
+// intent of their own (PDF 2.0, 14.11.5), which are drawn with a view of
+// the document of their own (Page.cmykDoc).
+type cmykView struct {
+	devCMYK   *colorSpace // DeviceCMYK as the options or the page convert it; nil: as the document says, see deviceCMYK
+	devApprox string      // what devCMYK is counted as
+
+	id uint64 // of the view's images in imgs
+	// Decodes in progress by reference.
+	imgMu      sync.Mutex
+	imgFlights map[pdf.Ref]*imageFlight
+
+	// Colour spaces and shadings by reference.
+	spMu     sync.Mutex
+	spaces   map[pdf.Ref]csEntry
+	shMu     sync.Mutex
+	shadings map[pdf.Ref]*shadingEntry
+	patterns map[pdf.Ref]*patternEntry
+}
+
+// newDocument returns a document of r, converting DeviceCMYK as it says.
+func newDocument(r *pdf.Document) *Document {
+	return &Document{docShared: &docShared{r: r}, cmykView: cmykView{id: docIDs.Add(1)}}
 }
 
 // Open parses a PDF file. Damaged cross-reference tables, wrong stream
@@ -146,14 +175,21 @@ func open(read func(pdf.Options) (*pdf.Document, error), opt OpenOptions) (doc *
 	if err != nil {
 		return nil, openError(err)
 	}
-	doc = &Document{r: d, fontProvider: opt.Fonts, naiveCMYK: opt.NaiveCMYK, devCMYK: devCMYK, ignoreIntent: opt.IgnoreOutputIntent,
-		imgs: imgs, id: docIDs.Add(1)}
-	if opt.Cache != nil {
-		// A shared cache outlives the document: what it has of it goes
-		// with it.
-		runtime.AddCleanup(doc, func(id uint64) { imgs.drop(id) }, doc.id)
-	}
+	doc = newDocument(d)
+	doc.fontProvider, doc.naiveCMYK, doc.ignoreIntent = opt.Fonts, opt.NaiveCMYK, opt.IgnoreOutputIntent
+	doc.imgs, doc.sharedCache = imgs, opt.Cache != nil
+	doc.devCMYK = devCMYK
+	doc.dropWithCache()
 	return doc, nil
+}
+
+// dropWithCache drops, when d is collected, what a shared cache has of
+// it: a shared cache outlives the document.
+func (d *Document) dropWithCache() {
+	if d.sharedCache {
+		imgs := d.imgs
+		runtime.AddCleanup(d, func(id uint64) { imgs.drop(id) }, d.id)
+	}
 }
 
 // NumPages returns the number of pages.

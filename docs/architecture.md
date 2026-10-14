@@ -133,7 +133,10 @@ profile convert through tables per channel. A grey or RGB profile that has
 lookup tables in place of curves and a matrix — a scanner's, a camera's —
 is read as the press profiles are (`internal/cmyk`) and tabulated: 256
 nodes along a grey, 33 along each of R, G and B. DeviceCMYK converts through
-the CMYK profile of the document's output intent, where it has one, else
+the CMYK profile of the document's output intent, where it has one (a page
+with an intent of its own is drawn with a view of the document whose
+colour spaces, shadings, patterns and images are made through that one's
+profile), else
 through a SWOP press profile (colord's profile of CGATS TR 005, NPES, the
 characterization data's source; `internal/cmyk`), as a press prints it,
 or through the caller's (`OpenOptions.CMYKProfile`), or with

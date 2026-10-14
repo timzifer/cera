@@ -56,7 +56,7 @@ Fonts a file does not embed:
 | space | notes |
 |---|---|
 | DeviceGray, DeviceRGB | |
-| DeviceCMYK | through the CMYK profile of the document's output intent (PDF/X, PDF/A, PDF/E; `OpenOptions.IgnoreOutputIntent` to skip it), else a SWOP press profile; or the caller's (`OpenOptions.CMYKProfile`); `OpenOptions.NaiveCMYK` for raw device values |
+| DeviceCMYK | through the CMYK profile of the document's output intent (PDF/X, PDF/A, PDF/E; a page's own intent, PDF 2.0, on that page; `OpenOptions.IgnoreOutputIntent` to skip them), else a SWOP press profile; or the caller's (`OpenOptions.CMYKProfile`); `OpenOptions.NaiveCMYK` for raw device values |
 | CalGray, CalRGB, Lab | through CIE XYZ, D50 (Bradford) |
 | ICCBased | grey and RGB profiles of curves and a matrix, or where they have none of lut8, lut16 or lutAtoB tables (scanner and camera profiles); CMYK profiles of such tables; Lab or XYZ; others by channel count |
 | Separation, DeviceN | tint transforms; `/None` paints nothing |
@@ -230,7 +230,13 @@ displayed page:
 - `Editor.Sign`: approval and certification signatures (PAdES B-B,
   `ETSI.CAdES.detached`) by an RSA or ECDSA key behind `crypto.Signer`,
   in a field of the form or a new one, invisible or with an appearance
-  drawn on a canvas, with field locks; no timestamps or validation data
+  drawn on a canvas, with field locks; with a timestamp authority's
+  token (`SignOptions.Timestamp`, B-T)
+- `Editor.Timestamp`: document timestamps (`ETSI.RFC3161`);
+  `Editor.AddValidation`: certificates, OCSP responses and CRLs the
+  caller fetched, in the document security store (`/DSS`, `/VRI`; B-LT,
+  B-LTA with a document timestamp after it). cera does no network I/O:
+  the caller reaches the authority and the responders
 
 ### Editing
 
@@ -242,14 +248,17 @@ over it stay valid (`Update`).
 - Pages: imported from any document (`ImportPages`, with their fields on
   request), deleted, moved, turned
 - `Editor.ImportPagesWith`: imported pages bring their outline entries,
-  named destinations and page labels
+  named destinations, page labels and structure elements, so that a
+  tagged document stays tagged
 - `Editor.AddPage` and `Editor.Draw`: blank pages, and drawings over or
   under the content of any page — paths, images (JPEG as it is, others
   Flate with a soft mask), text in the standard 14 fonts and in embedded
   subsets of TrueType and OpenType fonts, other pages as forms; opacity
   and blend modes
 - `Editor.SetPageBox`, `ResizePage` (a page on another format: content as
-  a form through a matrix, annotations and boxes with it) and `AddSheets`
+  a form through a matrix, annotations and boxes with it, their borders
+  and own font sizes scaled, and the destinations that lead to it, of
+  links, the outline, named destinations and /OpenAction) and `AddSheets`
   (n-up, imposition)
 - Form values written with their appearances (`SetFields`), the form or
   all annotations made part of the pages (`Flatten`,
@@ -265,10 +274,11 @@ over it stay valid (`Update`).
 - `Editor.SetMetadata` writes `/Info` and the XMP packet in agreement,
   keeping what else the packet holds
 - `Editor.Redact` and `ApplyRedactions`: content taken out of pages for
-  good — glyphs out of their strings, paths left out or clipped, images
-  re-encoded without the samples, forms rewritten per use, annotations,
-  fields and the text that stood for the content in marked content and
-  the structure tree — failing closed, written as a new file
+  good — glyphs out of their strings, paths left out or cut out of the
+  areas, images re-encoded without the samples, forms rewritten per use,
+  annotations, fields and the text that stood for the content in marked
+  content and the structure tree — failing closed, written as a new file;
+  the overlay text of redaction annotations written over their areas
 - `Save` writes object streams and a cross-reference stream where the
   document had them, or on request (`SaveOptions.ObjectStreams`); also
   encrypted
@@ -281,19 +291,29 @@ over it stay valid (`Update`).
   and fonts that are the same written once, across merged documents too
   (`JoinDuplicates`), plain, LZW, run length and ASCII streams under Flate
   (`Compress`), thumbnails, `/PieceInfo` and the metadata of objects
-  dropped (`Drop`). Images are not resampled and fonts not subset
+  dropped (`Drop`); and at a loss, on request (`SaveOptions.Images`):
+  images resampled where they are drawn finer than a resolution, measured
+  where each is drawn largest, photographs in grey or RGB as JPEG, images
+  of one bit a pixel as CCITT Group 4 (written by cera's own encoder),
+  each in its colour space and only where that is smaller; font programs
+  embedded whole subset to the glyphs the pages show (`SubsetFonts`:
+  TrueType and name-keyed CFF, glyph numbers kept, read back and checked
+  glyph by glyph; the form's fonts stay whole)
 
-Not done, each with its issue: the structure tree of imported pages
-(#183), what a redaction leaves (#198), destinations on resized pages
-(#205), images and fonts when a file is made smaller (#201, #202),
-timestamps and validation data in signatures (#193).
+Not done, each with its issue: what a redaction leaves (#198), what a
+resized page leaves (#205: the editor's own coordinates, tagged pages
+with patterns, rotation as geometry).
 
 ### Command line
 
 - `cmd/cera -field name=value` fills a form for drawing; `cera fill`
   writes it
-- `cmd/cera`: `text`, `search`, `info`, `merge`, `split`, `rotate`,
-  `delete`, `fill`; pages as PNG, JPEG, TIFF and WebP, in colour or grey
+- `cmd/cera`: `text`, `search`, `info` (with the fonts: embedded or not,
+  subset, what cera draws them with, their pages), `merge`, `split`,
+  `rotate`, `delete`, `fill`; pages as PNG, JPEG, TIFF and WebP, in colour
+  or grey
+- `Page.Fonts`, `Document.Fonts`: the fonts pages show text in, with
+  `Font.Type`, `Subset`, `Embedded`, `Unreadable` and `DrawnWith`
 
 ## Unsupported
 
@@ -363,7 +383,7 @@ Not counted, because no page is drawn differently for it:
 | scripts | JavaScript is never run: of form fields (but for Acrobat's form functions, see Forms), of links, bookmarks and buttons | the action is reported by its type (`LinkTarget.Action`, `WidgetAction`) |
 | forms | XFA | the AcroForm the file has beside it (`xfa`) |
 | text | text whose font says neither what its codes stand for nor has a known encoding | the characters with their boxes and codes, `Text` empty |
-| signatures | revocation and long-term validation (`/DSS`, OCSP, CRLs); timestamps when signing (#193) | integrity, what was appended, and the chain against the caller's roots |
+| signatures | revocation when verifying (OCSP, CRLs, also those of `/DSS`); EdDSA and RSASSA-PSS keys when signing | integrity, what was appended, and the chain against the caller's roots |
 | encryption | public-key security handlers, AES-GCM (#161) | the file does not open |
 | output | pages in the CMYK of the document (#209), in another RGB than sRGB (#210); overprint per colorant (#155) | sRGB or grey; overprint simulated on request |
-| tagged PDF | writing structure: imported pages come untagged (#183) | the structure tree of a document is read and kept |
+| tagged PDF | structure for what the editor adds (drawings, new pages, fields, annotations): it comes untagged | the structure tree of a document is read and kept; imported pages bring theirs on request |
