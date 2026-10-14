@@ -10,8 +10,8 @@ github.com/go-opentype/opentype v0.15.0 h1:ioE3eCbNZavlk/w073J3uX5FKjqhgOHQw+wZZ
 github.com/go-opentype/opentype v0.15.0/go.mod h1:ZB31jTJl2mhPESXYMuUW+p36UrOabw/2+6mtyh/vNnI=
 github.com/tannevaled/gobig2 v0.2.0 h1:yx97/ltljALrIWDFVqHjPUIjAp3bfUUhH8Z8UROvNLc=
 github.com/tannevaled/gobig2 v0.2.0/go.mod h1:X0S1H+N35kg6zYgVYRqGMsGj3C35zs+iA2r1MXyPcV4=
-github.com/timzifer/calamus v0.2.0 h1:pOdCAVu75XASMhL5fiI3+qObJMCtiKZ1ehA4ZOOPWdA=
-github.com/timzifer/calamus v0.2.0/go.mod h1:Z6fVRZRraaG0hgfvqynq9TM9vCq1ZGVm8AgDvnugCqw=
+github.com/timzifer/calamus v0.3.1-0.20261014111300-bd50c1615f30 h1:vivSe451Wk0AyCPzVB2XcsPxK1lrLkForE477KaP/RE=
+github.com/timzifer/calamus v0.3.1-0.20261014111300-bd50c1615f30/go.mod h1:Z6fVRZRraaG0hgfvqynq9TM9vCq1ZGVm8AgDvnugCqw=
 github.com/timzifer/go-highway v0.0.13-timzifer.1 h1:+DREnc494whho5HlwAkjX1m09fxDLdG3n0hYRBm6AFY=
 github.com/timzifer/go-highway v0.0.13-timzifer.1/go.mod h1:ZXPijqyP0TXlwJXJClrFCdp4q+zlQNAMZ3ncCROV648=
 github.com/timzifer/stilus v0.11.0 h1:vCj79ga4NRr7oE/6YYxnly3UMJleTj9tNyPYmRVY/bE=

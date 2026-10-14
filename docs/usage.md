@@ -38,8 +38,9 @@ colorants named Cyan, Magenta, Yellow and Black on those inks, and RGB is
 converted through the profile's colour-to-ink table where it has one, else
 as PDF converts DeviceRGB. What is drawn on nothing is paper, no ink. The
 page is drawn twice, about twice the time of `Render`; overprint is not
-simulated in it yet (#155). A page in another RGB than sRGB is not there
-yet.
+simulated in it yet (#155). `page.CMYKProfile()` is the ICC profile the
+inks are for, to embed in what is written of them (nil for the bundled
+SWOP). A page in another RGB than sRGB is not there yet.
 
 A viewer that turns its view asks for the page turned:
 `page.Rotated(90)` is the page as it is shown then — a `Page` with its
@@ -1037,8 +1038,10 @@ it does not draw with: it writes the PNGs with
 [calamus](https://github.com/timzifer/calamus), which encodes them in bands
 on all cores (encoding was most of the command's time with `image/png`).
 The ending of `-o` says what is written: `.png`, `.jpg` (`-quality`),
-`.tif` (LZW) or `.webp` (without loss); `-gray` draws in grey. A TIFF is
-one page: several pages are several files.
+`.tif` (LZW) or `.webp` (without loss); `-gray` draws in grey, `-cmyk`
+in the CMYK of the document into a TIFF of inks that carries the profile
+of the output intent or of `-cmyk-profile`. A TIFF is one page: several
+pages are several files.
 
 Besides drawing, the command does what the library does, as subcommands
 (`cera <command> -h` lists the flags of each):

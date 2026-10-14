@@ -38,8 +38,9 @@ type colorSpace struct {
 	// colorants are the names of the colorants of a tint space.
 	colorants []string
 	// cmyk is the profile a CMYK space converts through, nil for the naive
-	// conversion.
+	// conversion; icc returns its bytes, nil for the bundled one.
 	cmyk *cmyk.Table
+	icc  func() []byte
 
 	once sync.Once
 	tint *[256][3]uint8 // one-component tint transform, tabulated
@@ -429,7 +430,7 @@ func (d *Document) profileCMYK(ref pdf.Ref, data func() []byte) (*colorSpace, st
 	}
 	e := csEntry{nil, "icc-lut"}
 	if t, err := cmyk.Load(data()); err == nil {
-		e = csEntry{&colorSpace{kind: csCMYK, n: 4, cmyk: t}, ""}
+		e = csEntry{&colorSpace{kind: csCMYK, n: 4, cmyk: t, icc: data}, ""}
 	}
 	d.csMu.Lock()
 	defer d.csMu.Unlock()
@@ -520,7 +521,8 @@ func (d *Document) intentCMYK(list pdf.Object) (cs *colorSpace, approx string, o
 			continue
 		}
 		ref, _ := prof.Ref()
-		cs, approx = d.profileCMYK(ref, func() []byte { return data })
+		// Decoded again when asked for (Page.CMYKProfile), not kept.
+		cs, approx = d.profileCMYK(ref, func() []byte { return d.r.Decode(s).Data })
 		return cs, approx, true
 	}
 	return nil, "", false

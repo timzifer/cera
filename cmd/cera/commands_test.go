@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -249,7 +250,7 @@ func TestFormats(t *testing.T) {
 	for ext, magic := range map[string]string{"jpg": "\xff\xd8\xff", "tif": "II*\x00", "webp": "RIFF", "png": "\x89PNG"} {
 		for _, gray := range []bool{false, true} {
 			out := filepath.Join(dir, "p-%d."+ext)
-			if err := run(in, cera.OpenOptions{}, 72, 2, out, false, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, "encode", 80, gray); err != nil {
+			if err := run(in, cera.OpenOptions{}, 72, 2, out, false, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, "encode", 80, gray, false); err != nil {
 				t.Fatalf("%s, grey %v: %v", ext, gray, err)
 			}
 			b, err := os.ReadFile(fmt.Sprintf(out, 2))
@@ -258,10 +259,55 @@ func TestFormats(t *testing.T) {
 			}
 		}
 	}
-	if err := run(in, cera.OpenOptions{}, 72, 1, filepath.Join(dir, "p.jpg"), true, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, "encode", 0, false); err == nil {
+	if err := run(in, cera.OpenOptions{}, 72, 1, filepath.Join(dir, "p.jpg"), true, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, "encode", 0, false, false); err == nil {
 		t.Error("a transparent JPEG was written")
 	}
-	if err := run(in, cera.OpenOptions{}, 72, 1, filepath.Join(dir, "p.bmp"), false, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, "encode", 0, false); err == nil {
+	if err := run(in, cera.OpenOptions{}, 72, 1, filepath.Join(dir, "p.bmp"), false, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, "encode", 0, false, false); err == nil {
 		t.Error("a format nobody writes was written")
+	}
+}
+
+// -cmyk writes the inks into a TIFF with the profile they are for.
+func TestCMYKTIFF(t *testing.T) {
+	dir := t.TempDir()
+	in := textPDF(t, dir, "in.pdf")
+	icc, err := os.ReadFile(filepath.Join("..", "..", "internal", "cmyk", "testdata", "toy-lut16.icc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "p.tif")
+	if err := run(in, cera.OpenOptions{CMYKProfile: icc}, 72, 1, out, false, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, "encode", 0, false, true); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The IFD: PhotometricInterpretation 5 (separated), InkSet 1 (CMYK)
+	// and the profile (34675).
+	le := binary.LittleEndian
+	ifd := int(le.Uint32(b[4:]))
+	tags := map[uint16][]byte{}
+	for i := range int(le.Uint16(b[ifd:])) {
+		e := b[ifd+2+12*i:][:12]
+		tags[le.Uint16(e)] = e
+	}
+	if e := tags[262]; e == nil || le.Uint16(e[8:]) != 5 {
+		t.Error("not separated")
+	}
+	if e := tags[332]; e == nil || le.Uint16(e[8:]) != 1 {
+		t.Error("no CMYK ink set")
+	}
+	if e := tags[34675]; e == nil || !bytes.Equal(b[le.Uint32(e[8:]):][:le.Uint32(e[4:])], icc) {
+		t.Error("profile not embedded")
+	}
+	for _, c := range []struct {
+		out         string
+		transparent bool
+		gray        bool
+	}{{"p.png", false, false}, {"p.tif", true, false}, {"p.tif", false, true}} {
+		if err := run(in, cera.OpenOptions{}, 72, 1, filepath.Join(dir, c.out), c.transparent, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, "encode", 0, c.gray, true); err == nil {
+			t.Errorf("-cmyk %+v was written", c)
+		}
 	}
 }

@@ -46,7 +46,7 @@ func TestPNGModes(t *testing.T) {
 		for _, mode := range []string{"stdlib", "encode", "stream"} {
 			name := fmt.Sprintf("%s, transparent %v, %s", tc.file, tc.transparent, mode)
 			out := filepath.Join(t.TempDir(), "p-%d.png")
-			if err := run(in, cera.OpenOptions{}, 150, tc.page, out, tc.transparent, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, mode, 0, false); err != nil {
+			if err := run(in, cera.OpenOptions{}, 150, tc.page, out, tc.transparent, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, mode, 0, false, false); err != nil {
 				t.Fatalf("%s: %v", name, err)
 			}
 			got := decode(t, fmt.Sprintf(out, tc.page))

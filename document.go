@@ -158,7 +158,7 @@ func open(read func(pdf.Options) (*pdf.Document, error), opt OpenOptions) (doc *
 		if err != nil {
 			return nil, fmt.Errorf("cera: CMYKProfile: %w", err)
 		}
-		devCMYK = &colorSpace{kind: csCMYK, n: 4, cmyk: t}
+		devCMYK = &colorSpace{kind: csCMYK, n: 4, cmyk: t, icc: func() []byte { return opt.CMYKProfile }}
 	}
 	if opt.NaiveCMYK {
 		devCMYK = spaceCMYKNaive

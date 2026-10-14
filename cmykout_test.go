@@ -1,6 +1,7 @@
 package cera
 
 import (
+	"bytes"
 	"context"
 	"image"
 	"os"
@@ -185,5 +186,42 @@ func TestRenderCMYKRegion(t *testing.T) {
 	}
 	if len(bands) == 0 || bands[0].Min != region.Min || bands[len(bands)-1].Max != region.Max {
 		t.Errorf("bands %v of region %v", bands, region)
+	}
+}
+
+// TestPageCMYKProfile returns the profile RenderCMYK draws a page in: the
+// caller's, the page's output intent's over the document's, none for the
+// bundled one.
+func TestPageCMYKProfile(t *testing.T) {
+	toy, swop := readToyProfile(t), swopProfileFile(t)
+	bad := bytes.Clone(toy)
+	copy(bad[132+12+4:], []byte{0xff, 0xff, 0xff, 0xff}) // A2B0 out of range
+	copy(bad[132+24+4:], []byte{0xff, 0xff, 0xff, 0xff}) // A2B1 too
+	pages := pageIntentPDF(intent("GTS_PDFX", 101), [3]string{intent("GTS_PDFX", 100), "", intent("GTS_PDFX", 102)}, toy, swop, bad)
+	for _, tt := range []struct {
+		name string
+		data []byte
+		opt  OpenOptions
+		want [3][]byte
+	}{
+		{"intents", pages, OpenOptions{}, [3][]byte{toy, swop, swop}},
+		{"caller's", pages, OpenOptions{CMYKProfile: toy}, [3][]byte{toy, toy, toy}},
+		{"naive", pages, OpenOptions{NaiveCMYK: true}, [3][]byte{}},
+		{"ignored", pages, OpenOptions{IgnoreOutputIntent: true}, [3][]byte{}},
+		{"bundled", pageIntentPDF("", [3]string{}), OpenOptions{}, [3][]byte{}},
+	} {
+		doc, err := OpenWith(tt.data, tt.opt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, want := range tt.want {
+			p, err := doc.Page(i)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := p.CMYKProfile(); !bytes.Equal(got, want) || (got == nil) != (want == nil) {
+				t.Errorf("%s, page %d: %d bytes, want %d", tt.name, i, len(got), len(want))
+			}
+		}
 	}
 }
