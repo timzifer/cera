@@ -129,7 +129,7 @@ func (d *Document) readShading(o pdf.Object, res pdf.Dict) *shadingEntry {
 		sh.BBox, sh.HasBBox = bb, true
 	}
 	if bg := d.floats(dict.Get("Background")); len(bg) >= cs.n && cs.n > 0 {
-		r, g, b := cs.rgb(bg)
+		r, g, b := d.colorOf(cs, bg)
 		sh.Background = premul(r, g, b, 1)
 	}
 	switch kind {
@@ -144,7 +144,7 @@ func (d *Document) readShading(o pdf.Object, res pdf.Dict) *shadingEntry {
 		if m := d.floats(dict.Get("Matrix")); len(m) == 6 {
 			sh.Matrix = Matrix(m)
 		}
-		sh.Texture = functionTexture(cs, fn, sh.Domain)
+		sh.Texture = functionTexture(d, cs, fn, sh.Domain)
 	case 2, 3:
 		c := d.floats(dict.Get("Coords"))
 		if fn == nil || len(c) < 2*kind {
@@ -158,7 +158,7 @@ func (d *Document) readShading(o pdf.Object, res pdf.Dict) *shadingEntry {
 		if a, ok := d.resolve(dict.Get("Extend")).Array(); ok && len(a) == 2 {
 			sh.Extend = [2]bool{d.boolean(a[0]), d.boolean(a[1])}
 		}
-		sh.Ramp, sh.Knots = knottedRamp(cs, fn, t0, t1)
+		sh.Ramp, sh.Knots = knottedRamp(d, cs, fn, t0, t1)
 	default:
 		if !isStream {
 			return e
@@ -184,20 +184,20 @@ func (d *Document) readShading(o pdf.Object, res pdf.Dict) *shadingEntry {
 
 // shadeColor converts the outputs of a shading function (or a colour) in
 // cs to an opaque packed colour.
-func shadeColor(cs *colorSpace, v []float64) uint32 {
+func shadeColor(d *Document, cs *colorSpace, v []float64) uint32 {
 	var c [maxComps]float64
 	copy(c[:cs.n], v)
-	r, g, b := cs.rgb(c[:cs.n])
+	r, g, b := d.colorOf(cs, c[:cs.n])
 	return pack(unit8(r), unit8(g), unit8(b), 255)
 }
 
 // ramp tabulates fn from t0 to t1.
-func ramp(cs *colorSpace, fn function, t0, t1 float64) stilus.Ramp {
+func ramp(d *Document, cs *colorSpace, fn function, t0, t1 float64) stilus.Ramp {
 	r := make(stilus.Ramp, rampSize)
 	var in [1]float64
 	for i := range r {
 		in[0] = t0 + (t1-t0)*float64(i)/float64(rampSize-1)
-		r[i] = shadeColor(cs, fn.eval(in[:]))
+		r[i] = shadeColor(d, cs, fn.eval(in[:]))
 	}
 	return r
 }
@@ -205,7 +205,7 @@ func ramp(cs *colorSpace, fn function, t0, t1 float64) stilus.Ramp {
 // knottedRamp tabulates fn from t0 to t1 like ramp, with knots at the
 // bounds of its stitching functions if it has any: each bound twice, with
 // the colours on either side, between evenly spaced samples.
-func knottedRamp(cs *colorSpace, fn function, t0, t1 float64) (stilus.Ramp, []float32) {
+func knottedRamp(d *Document, cs *colorSpace, fn function, t0, t1 float64) (stilus.Ramp, []float32) {
 	var ks []float64
 	var breaks []float64
 	stitchBounds(fn, &breaks)
@@ -217,14 +217,14 @@ func knottedRamp(cs *colorSpace, fn function, t0, t1 float64) (stilus.Ramp, []fl
 		}
 	}
 	if len(ks) == 0 {
-		return ramp(cs, fn, t0, t1), nil
+		return ramp(d, cs, fn, t0, t1), nil
 	}
 	slices.Sort(ks)
 	ks = slices.Compact(ks)
 	var in [1]float64
 	at := func(t float64) uint32 {
 		in[0] = t
-		return shadeColor(cs, fn.eval(in[:]))
+		return shadeColor(d, cs, fn.eval(in[:]))
 	}
 	r := make(stilus.Ramp, 0, rampSize+2*len(ks))
 	knots := make([]float32, 0, cap(r))
@@ -301,7 +301,7 @@ func (sh *Shading) meshShader(m Matrix, alpha uint8) *stilus.MeshShader {
 }
 
 // functionTexture samples a function-based shading over its domain.
-func functionTexture(cs *colorSpace, fn function, dom Rect) *stilus.Texture {
+func functionTexture(d *Document, cs *colorSpace, fn function, dom Rect) *stilus.Texture {
 	n := functionTexSize
 	p := stilus.Plane{Kind: stilus.PlaneRGBA, W: n, H: n, Stride: n, Pix32: make([]uint32, n*n)}
 	var in [2]float64
@@ -309,7 +309,7 @@ func functionTexture(cs *colorSpace, fn function, dom Rect) *stilus.Texture {
 		in[1] = dom.Y0 + (float64(j)+0.5)/float64(n)*dom.Dy()
 		for i := range n {
 			in[0] = dom.X0 + (float64(i)+0.5)/float64(n)*dom.Dx()
-			p.Pix32[j*n+i] = shadeColor(cs, fn.eval(in[:]))
+			p.Pix32[j*n+i] = shadeColor(d, cs, fn.eval(in[:]))
 		}
 	}
 	return stilus.NewTexture(p)
@@ -317,6 +317,7 @@ func functionTexture(cs *colorSpace, fn function, dom Rect) *stilus.Texture {
 
 // meshReader reads the packed vertices of a mesh shading.
 type meshReader struct {
+	d      *Document // converts the colours
 	data   []byte
 	at     int // bit
 	bad    bool
@@ -380,14 +381,14 @@ func (r *meshReader) color(v *stilus.MeshVertex) {
 		v.T = float32(t)
 		return
 	}
-	v.C = shadeColor(r.cs, c[:r.ncomp])
+	v.C = shadeColor(r.d, r.cs, c[:r.ncomp])
 }
 
 // readMesh reads the vertices of a mesh shading (types 4 to 7) into
 // triangles.
 func (d *Document) readMesh(sh *Shading, s *pdf.Stream, cs *colorSpace, fn function) (ok, capped bool) {
 	dict := s.Dict
-	r := &meshReader{cs: cs, ncomp: cs.n, param: fn != nil}
+	r := &meshReader{d: d, cs: cs, ncomp: cs.n, param: fn != nil}
 	if fn != nil {
 		r.ncomp = 1
 	}
@@ -413,7 +414,7 @@ func (d *Document) readMesh(sh *Shading, s *pdf.Stream, cs *colorSpace, fn funct
 	}
 	if fn != nil {
 		r.t0, r.t1 = r.decode[4], r.decode[5]
-		sh.Ramp = ramp(cs, fn, r.t0, r.t1)
+		sh.Ramp = ramp(d, cs, fn, r.t0, r.t1)
 	}
 	r.data = d.r.Decode(s).Data
 	switch sh.Type {

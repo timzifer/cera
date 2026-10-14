@@ -186,7 +186,7 @@ func (in *interp) paintPattern(stroke bool, box image.Rectangle) {
 				in.st.Errors++
 				return
 			}
-			r, g, b := cs.base.rgb(comps[:cs.base.n])
+			r, g, b := in.doc.colorOf(cs.base, comps[:cs.base.n])
 			col = premul(r, g, b, alpha)
 		}
 		in.tiling(tp, p.e, p.m, cs.base, comps[:], col, a, box)
@@ -386,7 +386,7 @@ func (in *interp) makeTile(p *tilingPattern, pm Matrix) *Tile {
 		return nil
 	}
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	dev := &RasterDevice{C: stilus.NewCanvas(img)}
+	dev := &RasterDevice{C: stilus.NewCanvas(img), proj: in.doc.proj}
 	dev.Reset(img, img.Rect)
 
 	sub := recorders.Get().(*interp)

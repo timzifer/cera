@@ -89,7 +89,7 @@ func (in *interp) softMask(o pdf.Object, res pdf.Dict) *softMask {
 				}
 			}
 			if cs.kind != csPattern && len(bc) >= cs.n {
-				r, g, b := cs.rgb(bc)
+				r, g, b := doc.maskDoc().colorOf(cs, bc)
 				m.sm.Backdrop = premul(r, g, b, 1)
 			}
 		}
@@ -164,7 +164,13 @@ func (in *interp) drawSoftMask(r Rect, m Matrix) {
 		in.stack = append(in.stack, in.gs)
 		base := len(in.stack)
 		in.initState(sm.ctm)
+		doc := in.doc
+		if sm.sm.Luminosity {
+			// Drawn in grey, the same in each pass of a CMYK render.
+			in.doc = doc.maskDoc()
+		}
 		in.runForm(sm.form, sm.res, depth)
+		in.doc = doc
 		in.unwind(base)
 		in.restore()
 		in.td, in.mcd = td, mcd

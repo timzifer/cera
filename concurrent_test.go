@@ -223,7 +223,7 @@ func TestColdConcurrentRecording(t *testing.T) {
 	for i := range n {
 		wg.Go(func() {
 			<-start
-			lists[i], reused[i] = p.list(1, false, &limit{ctx: context.Background()})
+			lists[i], reused[i] = p.list(1, false, projRGB, &limit{ctx: context.Background()})
 		})
 	}
 	close(start)
@@ -251,8 +251,8 @@ func TestColdConcurrentRecording(t *testing.T) {
 	}
 	// Other keys are recorded on their own.
 	var other [3]*displayList
-	for i, k := range []listKey{{2, false}, {1, true}, {2, false}} {
-		wg.Go(func() { other[i], _ = p.list(k.scale, k.overprint, &limit{ctx: context.Background()}) })
+	for i, k := range []listKey{{2, false, projRGB}, {1, true, projRGB}, {2, false, projRGB}} {
+		wg.Go(func() { other[i], _ = p.list(k.scale, k.overprint, projRGB, &limit{ctx: context.Background()}) })
 	}
 	wg.Wait()
 	if other[0] != other[2] || other[0] == other[1] || other[0].scale != 2 || !other[1].overprint {
@@ -268,16 +268,16 @@ func TestColdConcurrentRecording(t *testing.T) {
 func TestRecordingLeaderCancelled(t *testing.T) {
 	doc, _ := Open(bigListPDF(200000))
 	p, _ := doc.Page(0)
-	key := listKey{1, false}
+	key := listKey{1, false, projRGB}
 	ctx, cancel := context.WithCancel(context.Background())
 	var leader *displayList
 	var wg sync.WaitGroup
-	wg.Go(func() { leader, _ = p.list(1, false, &limit{ctx: ctx}) })
+	wg.Go(func() { leader, _ = p.list(1, false, projRGB, &limit{ctx: ctx}) })
 	waitFor(t, "the recording", func() bool { busy, _ := p.flight(key); return busy })
 	const n = 4
 	var lists [n]*displayList
 	for i := range n {
-		wg.Go(func() { lists[i], _ = p.list(1, false, &limit{ctx: context.Background()}) })
+		wg.Go(func() { lists[i], _ = p.list(1, false, projRGB, &limit{ctx: context.Background()}) })
 	}
 	waitFor(t, "the waiters", func() bool { _, w := p.flight(key); return w == n })
 	cancel()
@@ -307,21 +307,21 @@ func TestRecordingLeaderCancelled(t *testing.T) {
 func TestRecordingWaiterGivesUp(t *testing.T) {
 	doc, _ := Open(bigListPDF(200000))
 	p, _ := doc.Page(0)
-	key := listKey{1, false}
+	key := listKey{1, false, projRGB}
 	var leader *displayList
 	var wg sync.WaitGroup
-	wg.Go(func() { leader, _ = p.list(1, false, &limit{ctx: context.Background()}) })
+	wg.Go(func() { leader, _ = p.list(1, false, projRGB, &limit{ctx: context.Background()}) })
 	waitFor(t, "the recording", func() bool { busy, _ := p.flight(key); return busy })
 	ctx, cancel := context.WithCancel(context.Background())
 	got := make(chan *displayList)
 	go func() {
-		dl, _ := p.list(1, false, &limit{ctx: ctx})
+		dl, _ := p.list(1, false, projRGB, &limit{ctx: ctx})
 		got <- dl
 	}()
 	waitFor(t, "the waiter", func() bool { busy, w := p.flight(key); return !busy || w == 1 })
 	deadline := make(chan *displayList)
 	go func() {
-		dl, _ := p.list(1, false, &limit{ctx: context.Background(), deadline: time.Now().Add(time.Millisecond)})
+		dl, _ := p.list(1, false, projRGB, &limit{ctx: context.Background(), deadline: time.Now().Add(time.Millisecond)})
 		deadline <- dl
 	}()
 	cancel()

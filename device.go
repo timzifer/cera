@@ -249,6 +249,9 @@ type RasterDevice struct {
 	img    imageDraw
 	shade  shadeDraw
 	t      layers
+	// proj is what the colours drawn are projected to: groups of inks
+	// blend subtractively (cmykout.go).
+	proj proj
 }
 
 // Reset targets the device, and its canvas, at region of dst. Groups need

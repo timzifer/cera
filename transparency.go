@@ -445,6 +445,11 @@ func (d *RasterDevice) composite(l *layer, dst *image.RGBA) {
 	t := &d.t
 	c := &t.comp
 	*c = stilus.LayerShader{Src: &l.img, Dst: dst, Alpha: l.g.Alpha, Blend: l.g.Blend}
+	if d.proj.inked() && !t.inMask() {
+		// Inks blend on their complements; the black pass takes black
+		// as PDF has it for the non-separable modes.
+		c.Subtractive, c.Black = true, d.proj == projK
+	}
 	if l.g.Masked {
 		t.alpha = *l.mask.alpha()
 		c.Mask = &t.alpha
@@ -455,6 +460,17 @@ func (d *RasterDevice) composite(l *layer, dst *image.RGBA) {
 	d.fillArea(l.area, c)
 	*c = stilus.LayerShader{}
 	t.alpha = image.Alpha{}
+}
+
+// inMask reports whether the canvas draws into a soft mask, whose
+// colours are grey and blend as they are.
+func (t *layers) inMask() bool {
+	for i := range t.stack {
+		if t.stack[i].isMask {
+			return true
+		}
+	}
+	return false
 }
 
 // fillArea fills the pixels of a with shader s through the canvas.

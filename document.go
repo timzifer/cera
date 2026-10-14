@@ -87,7 +87,7 @@ type docShared struct {
 	// The views of pages with an output intent of their own (Page.cmykDoc):
 	// by DeviceCMYK, and by page.
 	viewMu    sync.Mutex
-	views     map[csEntry]*Document
+	views     map[viewKey]*Document
 	pageViews map[pdf.Ref]*Document
 }
 
@@ -99,6 +99,7 @@ type docShared struct {
 type cmykView struct {
 	devCMYK   *colorSpace // DeviceCMYK as the options or the page convert it; nil: as the document says, see deviceCMYK
 	devApprox string      // what devCMYK is counted as
+	proj      proj        // what colours are projected to (cmykout.go)
 
 	id uint64 // of the view's images in imgs
 	// Decodes in progress by reference.

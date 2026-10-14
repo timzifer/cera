@@ -152,6 +152,27 @@ type Profile struct {
 	A2B   Transform  // CMYK to the PCS
 	PCS   PCS        // how A2B encodes the PCS
 	Black [3]float64 // XYZ, D50
+	// B2A is the PCS to CMYK table of the profile, nil where it has none
+	// that is read (the bundled profile keeps none): the relative
+	// colorimetric one (B2A1), or the perceptual (B2A0). B2APCS is how it
+	// encodes the PCS.
+	B2A    Transform
+	B2APCS PCS
+}
+
+// Ink converts XYZ (D50) to inks in [0, 1] through B2A, relative
+// colorimetric; ok is false for a profile without B2A.
+func (p *Profile) Ink(xyz [3]float64) (ink [4]float64, ok bool) {
+	if p == nil || p.B2A == nil {
+		return ink, false
+	}
+	L, a, b := XYZToLab(xyz)
+	in := p.B2APCS.encodeLab(L, a, b)
+	p.B2A.Eval(in[:], ink[:])
+	for i := range ink {
+		ink[i] = min(max(ink[i], 0), 1)
+	}
+	return ink, true
 }
 
 // The legacy 16-bit Lab encoding of ICC v2 lut16 tables: L* 0..100 over
