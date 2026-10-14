@@ -379,11 +379,9 @@ func (e *Editor) flatLook(p *Page, a *Annotation, w *Widget, objs *[]pdf.Object,
 			return pdf.Null, Matrix{}, pdf.Dict{}, false
 		}
 		content, res := d.widgetContent(nil, w, wv, W, H, e.gen)
-		// The renderer does not clip a generated appearance. A box that
-		// ended at the widget's edge would clip its border there, and the
-		// edge of the clip and the edge of the border, both antialiased,
-		// would lighten it.
-		return made(Rect{-1, -1, W + 1, H + 1}, res, content), wm.Mul(m), gs, true
+		// Clipped to the widget's box, as the renderer clips it and the
+		// stream SetFields writes.
+		return made(Rect{0, 0, W, H}, res, content), wm.Mul(m), gs, true
 	case gen:
 		pad := d.annotPad(a)
 		box := Rect{a.Rect.X0 - pad, a.Rect.Y0 - pad, a.Rect.X1 + pad, a.Rect.Y1 + pad}

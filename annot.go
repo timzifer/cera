@@ -652,6 +652,14 @@ func (in *interp) annotation(p *Page, a *Annotation, flags AnnotFlags, base Matr
 	}
 	switch {
 	case gen && w != nil:
+		// Clipped to the widget's box, as the appearance stream it is
+		// written as (Editor.SetFields) and flattened to is: its border
+		// lies on the edge of the box, and an antialiased clip there
+		// lightens it where the box is off the pixels (#222).
+		if m, W, H := widgetMatrix(w); W > 0 && H > 0 {
+			in.dev.ClipRect(Rect{0, 0, W, H}, m.Mul(ctm))
+			in.gs.clips++
+		}
 		var res pdf.Dict
 		in.annotBuf, res = in.generateWidget(in.annotBuf[:0], w, wv)
 		in.exec(in.annotBuf, res, 1)
@@ -661,9 +669,7 @@ func (in *interp) annotation(p *Page, a *Annotation, flags AnnotFlags, base Matr
 		in.exec(in.annotBuf, res, 1)
 	default:
 		in.gs.ctm = appearanceMatrix(doc, ap, a.Rect).Mul(ctm)
-		in.pixelBox = true
 		in.form(ap, pdf.Dict{}, 0)
-		in.pixelBox = false
 	}
 	in.unwind(0)
 	in.popClips(in.gs.clips)
