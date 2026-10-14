@@ -242,7 +242,8 @@ over it stay valid (`Update`).
 - Pages: imported from any document (`ImportPages`, with their fields on
   request), deleted, moved, turned
 - `Editor.ImportPagesWith`: imported pages bring their outline entries,
-  named destinations and page labels
+  named destinations, page labels and structure elements, so that a
+  tagged document stays tagged
 - `Editor.AddPage` and `Editor.Draw`: blank pages, and drawings over or
   under the content of any page — paths, images (JPEG as it is, others
   Flate with a soft mask), text in the standard 14 fonts and in embedded
@@ -283,10 +284,10 @@ over it stay valid (`Update`).
   (`Compress`), thumbnails, `/PieceInfo` and the metadata of objects
   dropped (`Drop`). Images are not resampled and fonts not subset
 
-Not done, each with its issue: the structure tree of imported pages
-(#183), what a redaction leaves (#198), destinations on resized pages
-(#205), images and fonts when a file is made smaller (#201, #202),
-timestamps and validation data in signatures (#193).
+Not done, each with its issue: what a redaction leaves (#198),
+destinations on resized pages (#205), images and fonts when a file is
+made smaller (#201, #202), timestamps and validation data in signatures
+(#193).
 
 ### Command line
 
@@ -366,4 +367,4 @@ Not counted, because no page is drawn differently for it:
 | signatures | revocation and long-term validation (`/DSS`, OCSP, CRLs); timestamps when signing (#193) | integrity, what was appended, and the chain against the caller's roots |
 | encryption | public-key security handlers, AES-GCM (#161) | the file does not open |
 | output | pages in the CMYK of the document (#209), in another RGB than sRGB (#210); overprint per colorant (#155) | sRGB or grey; overprint simulated on request |
-| tagged PDF | writing structure: imported pages come untagged (#183) | the structure tree of a document is read and kept |
+| tagged PDF | structure for what the editor adds (drawings, new pages, fields, annotations): it comes untagged | the structure tree of a document is read and kept; imported pages bring theirs on request |

@@ -22,13 +22,16 @@ func Rotation(o pdf.Object, extra int) int {
 // annots copies the annotations of a page that still make sense alone.
 // Each copy of a page gets copies of its annotations, since an annotation
 // belongs to one page. They are moved with a page whose geometry moves.
-func (x *source) annots(o pdf.Object, fields bool, geo *Geometry) pdf.Array {
+// Those of the first copy (first) keep their place in a structure tree
+// that is brought.
+func (x *source) annots(o pdf.Object, fields, first bool, geo *Geometry) pdf.Array {
 	arr, _ := x.d.Resolve(o).Array()
 	type kept struct {
 		dict   pdf.Dict
 		num    pdfwrite.Ref // output number; 0 for an annotation written in place
 		widget bool         // the widget of a field it brings
 		parent pdf.Ref      // its field in the tree; zero at the root
+		src    int32        // its source number; 0 for a direct one
 	}
 	var keep []kept
 	local := map[int32]pdfwrite.Ref{} // source annotation → its copy on this page
@@ -47,6 +50,7 @@ func (x *source) annots(o pdf.Object, fields bool, geo *Geometry) pdf.Array {
 				continue
 			}
 			k.num = x.b.w.Alloc()
+			k.src = r.Num
 			local[r.Num] = k.num
 			if fields && x.fieldWidget(r) {
 				k.widget = true
@@ -97,6 +101,14 @@ func (x *source) annots(o pdf.Object, fields bool, geo *Geometry) pdf.Array {
 			// A field that is its own widget, at the root.
 			entries = append(entries, x.rootEntries(k.dict)...)
 			x.fieldCopy().roots = append(x.fieldCopy().roots, k.num)
+		}
+		if first && x.st != nil && k.src != 0 {
+			x.st.annotOut[k.src] = k.num
+			if sp, ok := x.d.Resolve(k.dict.Get("StructParent")).Int(); ok {
+				if nk, ok := x.structKey(sp); ok {
+					entries = append(entries, pdf.Entry{Key: "StructParent", Val: pdf.Integer(nk)})
+				}
+			}
 		}
 		dict := pdf.NewDict(entries...)
 		if k.num == 0 {

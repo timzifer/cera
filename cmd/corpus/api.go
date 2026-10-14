@@ -420,6 +420,69 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		_, err = c.apiRender(od, doc.NumPages())
 		r.check("sheets: render", err)
 	})
+	r.step("import structure", func() {
+		// The pages looked at, imported with their structure into the
+		// document itself, opened a second time: the tree gains a part
+		// with as much content on the copies as the pages have.
+		if doc.Structure() == nil {
+			return
+		}
+		again, err := cera.OpenWith(data, opt)
+		if err != nil {
+			return
+		}
+		e := doc.Edit()
+		var pages []cera.EditPage
+		for i := range n {
+			pages = append(pages, cera.EditPage{Index: i})
+		}
+		if !r.check("import structure", e.ImportPagesWith(e.NumPages(), again, cera.ImportOptions{Structure: true}, pages...)) {
+			return
+		}
+		var out bytes.Buffer
+		if !r.check("import structure: save", e.Save(&out)) {
+			return
+		}
+		od, err := cera.OpenWith(out.Bytes(), opt)
+		if err != nil {
+			r.differ("import structure: the file does not open again: %v", err)
+			return
+		}
+		r.saved++
+		if od.Structure() == nil {
+			r.differ("import structure: the result is untagged")
+			return
+		}
+		// Marked content by page, of a tree; truncated trees are not
+		// compared.
+		count := func(t *cera.StructTree) map[int]int {
+			got := map[int]int{}
+			var walk func(e *cera.StructElem)
+			walk = func(e *cera.StructElem) {
+				for _, k := range e.Kids {
+					if k.Elem != nil {
+						walk(k.Elem)
+					} else if k.MCID >= 0 {
+						got[k.Page]++
+					}
+				}
+			}
+			for _, e := range t.Elems {
+				walk(e)
+			}
+			return got
+		}
+		if doc.Structure().Truncated || od.Structure().Truncated {
+			return
+		}
+		was, is := count(doc.Structure()), count(od.Structure())
+		for i := range n {
+			if was[i] != is[doc.NumPages()+i] || was[i] != is[i] {
+				r.differ("import structure: page %d has %d marked contents in the tree, its copy %d, the page itself %d", i+1, was[i], is[doc.NumPages()+i], is[i])
+				return
+			}
+		}
+	})
 	r.step("linearise", func() {
 		// Laid out for a reader that gets the file piece by piece: the
 		// first object says so and how long the file is, and the document

@@ -93,6 +93,13 @@ type ImportOptions struct {
 	// Labels keeps the page labels of the imported pages: the numbers
 	// printed on them.
 	Labels bool
+	// Structure brings the elements of the source's structure tree whose
+	// content is on imported pages, with the elements above them, so that
+	// a tagged document stays tagged (PDF/UA). Where the result has a
+	// tree, they follow its elements in a Part under its Document element
+	// (or its root); a result without one takes the first tree brought as
+	// its own. A page imported twice is tagged once, its first copy.
+	Structure bool
 }
 
 // Editor records the pages of a document being edited or put together.
@@ -196,7 +203,7 @@ func (e *Editor) ImportPages(at int, src *Document, pages ...EditPage) error {
 // the result when it is written is left out. Pages of the edited document
 // imported into itself bring nothing more: it has all that already.
 //
-// The structure tree is not brought: imported pages are untagged.
+// Without [ImportOptions.Structure] imported pages are untagged.
 func (e *Editor) ImportPagesWith(at int, src *Document, opt ImportOptions, pages ...EditPage) error {
 	if at < 0 || at > len(e.pages) {
 		return fmt.Errorf("cera: insert position %d is out of range [0, %d]", at, len(e.pages))
@@ -219,12 +226,13 @@ func (e *Editor) ImportPagesWith(at int, src *Document, opt ImportOptions, pages
 		add[i].id = e.newID()
 	}
 	e.pages = append(e.pages[:at], append(add, e.pages[at:]...)...)
-	if src != e.base && (opt.Outline || opt.Destinations) {
+	if src != e.base && (opt.Outline || opt.Destinations || opt.Structure) {
 		if e.imports == nil {
 			e.imports = map[*Document]ImportOptions{}
 		}
 		had := e.imports[src]
 		had.Outline, had.Destinations = had.Outline || opt.Outline, had.Destinations || opt.Destinations
+		had.Structure = had.Structure || opt.Structure
 		if opt.Outline {
 			had.OutlineTitle = opt.OutlineTitle
 		}
@@ -390,7 +398,9 @@ func (e *Editor) plan() pdfedit.Doc {
 		if doc.Imports == nil {
 			doc.Imports = map[*pdf.Document]pdfedit.Import{}
 		}
-		doc.Imports[src.r] = pdfedit.Import{Outline: opt.Outline, OutlineTitle: opt.OutlineTitle, Destinations: opt.Destinations}
+		doc.Imports[src.r] = pdfedit.Import{
+			Outline: opt.Outline, OutlineTitle: opt.OutlineTitle, Destinations: opt.Destinations, Structure: opt.Structure,
+		}
 	}
 	if e.meta != nil {
 		e.metaPatches(&doc)

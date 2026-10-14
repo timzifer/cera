@@ -24,6 +24,9 @@ type Import struct {
 	// Destinations brings the source's named destinations on imported
 	// pages, a name the output has renamed name_2, name_3 and so on.
 	Destinations bool
+	// Structure brings the elements of the source's structure tree whose
+	// content is on imported pages (structure.go).
+	Structure bool
 }
 
 // Limits of what is read of a source's outline and names.

@@ -230,6 +230,9 @@ type builder struct {
 	// all that are the same, by their sums; docIDs numbers the documents.
 	joined map[sum]pdfwrite.Ref
 	docIDs map[*pdf.Document]uint64
+	// st is the structure tree of the output where imported pages bring
+	// theirs (structure.go).
+	st *structMerge
 }
 
 type srcKey struct {
@@ -266,6 +269,8 @@ type source struct {
 	pr      *pruner
 	sums    map[int32]sum
 	summing map[int32]bool
+	// st is the structure tree the source's pages bring.
+	st *srcStruct
 }
 
 func newBuilder(doc Doc, upd *pdf.UpdateBase) *builder {
@@ -373,6 +378,9 @@ func (x *source) ref(r pdf.Ref) pdfwrite.Ref {
 	if n, ok := x.pageOut[r.Num]; ok {
 		return n
 	}
+	if n, ok := x.structRef(r.Num); ok {
+		return n
+	}
 	if x.shared != nil {
 		if n := x.shared.ref(r); n != x.b.catalog {
 			return n
@@ -457,6 +465,9 @@ func (b *builder) build() error {
 	if b.doc.Prune && b.upd == nil {
 		b.prunePages()
 	}
+	// Before the pages: their keys of the structure tree, and the forms
+	// they draw with theirs.
+	b.prepareStructure()
 	// Pages are made once every page has its number, so links between
 	// them can point at the copies.
 	for i, p := range b.doc.Pages {
@@ -488,6 +499,7 @@ func (b *builder) build() error {
 	if len(b.doc.Imports) > 0 {
 		b.mergeDests()
 	}
+	b.writeStructure()
 	b.form = b.formDict()
 
 	b.w.Set(b.pages, pdf.NewDict(
@@ -695,6 +707,14 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 				if b.dropDests {
 					continue
 				}
+			case "MarkInfo":
+				if b.st != nil {
+					continue // below
+				}
+			case "StructTreeRoot":
+				if b.st != nil && b.st.lead != nil {
+					continue // a tree the edited document has not as an object of its own
+				}
 			}
 			entries = append(entries, pdf.Entry{Key: k, Val: x.im.Map(v)})
 		}
@@ -731,6 +751,12 @@ func (b *builder) catalogDict() (pdf.Dict, error) {
 	}
 	if !b.form.IsNull() {
 		entries = append(entries, pdf.Entry{Key: "AcroForm", Val: b.form})
+	}
+	if b.st != nil {
+		if b.st.lead != nil {
+			entries = append(entries, pdf.Entry{Key: "StructTreeRoot", Val: b.st.root.Object()})
+		}
+		entries = append(entries, pdf.Entry{Key: "MarkInfo", Val: b.markInfo()})
 	}
 	if b.upd != nil {
 		// An update keeps the header: a newer version goes into the
@@ -863,8 +889,13 @@ func (x *source) page(p Page, i int, first bool) (pdf.Dict, error) {
 		entries = append(entries, pdf.Entry{Key: "Rotate", Val: pdf.Integer(int64(rot))})
 	}
 	if !x.own {
-		if annots := x.annots(src.Get("Annots"), p.Fields && first, p.Geo); len(annots) > 0 {
+		if annots := x.annots(src.Get("Annots"), p.Fields && first, first, p.Geo); len(annots) > 0 {
 			entries = append(entries, pdf.Entry{Key: "Annots", Val: annots.Object()})
+		}
+		if r, ok := x.d.PageRef(p.Index + 1); ok && first && x.st != nil {
+			if k, ok := x.st.pageKey[r.Num]; ok {
+				entries = append(entries, pdf.Entry{Key: "StructParents", Val: pdf.Integer(k)})
+			}
 		}
 	}
 	return pdf.NewDict(entries...), nil
