@@ -486,6 +486,12 @@ type SaveOptions struct {
 	// Drop names parts of the document that are left out.
 	Drop Drop
 
+	// SubsetFonts writes the font programs embedded whole with the
+	// glyphs the pages show only, and tags their names as subsets:
+	// TrueType programs and CFF programs keyed by name. The fonts of the
+	// form, which a viewer writes typed text with, stay whole.
+	SubsetFonts bool
+
 	// Images, when set, makes the images smaller, at a loss: resampled
 	// where they are drawn finer than needed, photographs stored as JPEG,
 	// bilevel images as CCITT Group 4.
@@ -565,6 +571,11 @@ func (e *Editor) SaveWith(w io.Writer, opt SaveOptions) (err error) {
 	doc.Prune, doc.Join, doc.Compress = opt.PruneResources, opt.JoinDuplicates, opt.Compress
 	if opt.Images != nil {
 		if err := e.imagePlan(&doc, opt.Images); err != nil {
+			return err
+		}
+	}
+	if opt.SubsetFonts {
+		if err := e.fontPlan(&doc); err != nil {
 			return err
 		}
 	}

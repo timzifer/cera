@@ -293,12 +293,13 @@ over it stay valid (`Update`).
   images resampled where they are drawn finer than a resolution, measured
   where each is drawn largest, photographs in grey or RGB as JPEG, images
   of one bit a pixel as CCITT Group 4 (written by cera's own encoder),
-  each in its colour space and only where that is smaller. Fonts are not
-  subset
+  each in its colour space and only where that is smaller; font programs
+  embedded whole subset to the glyphs the pages show (`SubsetFonts`:
+  TrueType and name-keyed CFF, glyph numbers kept, read back and checked
+  glyph by glyph; the form's fonts stay whole)
 
 Not done, each with its issue: what a redaction leaves (#198),
-destinations on resized pages (#205), fonts embedded whole when a file
-is made smaller (#202).
+destinations on resized pages (#205).
 
 ### Command line
 

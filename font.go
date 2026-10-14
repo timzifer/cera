@@ -189,7 +189,11 @@ func (d *Document) font(o pdf.Object) *Font {
 	return f
 }
 
-func (d *Document) loadFont(dict pdf.Dict) *Font {
+func (d *Document) loadFont(dict pdf.Dict) *Font { return d.loadFontWith(dict, "", nil) }
+
+// loadFontWith is loadFont with the program data, of key, in place of the
+// one the font embeds, when data is not nil.
+func (d *Document) loadFontWith(dict pdf.Dict, key pdf.Name, data []byte) *Font {
 	pf := pdffont.Read(d.r, dict)
 	f := &Font{id: fontIDs.Add(1), pdf: pf, ascent: 0.8, descent: -0.2}
 	for i := range f.gids {
@@ -211,7 +215,11 @@ func (d *Document) loadFont(dict pdf.Dict) *Font {
 	if !f.composite() {
 		f.std = stdAlphabet(f.name)
 	}
-	if key, data, ok := pf.Program(); ok {
+	ok := data != nil
+	if !ok {
+		key, data, ok = pf.Program()
+	}
+	if ok {
 		if p, err := readProgram(key, data); err == nil {
 			f.attach(p)
 			if key == "FontFile3" {

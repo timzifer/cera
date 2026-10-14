@@ -505,6 +505,45 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 			reopen(name, out.Bytes(), true)
 		}
 	})
+	r.step("subset fonts", func() {
+		// The programs embedded whole written with the glyphs shown: the
+		// pages look and read as they did.
+		var out bytes.Buffer
+		if !r.check("subset fonts", doc.Edit().SaveWith(&out, cera.SaveOptions{SubsetFonts: true})) {
+			return
+		}
+		od := reopen("subset fonts", out.Bytes(), true)
+		if od == nil || od.NumPages() != doc.NumPages() {
+			return
+		}
+		for i := range n {
+			if i > 0 {
+				a, err := c.apiRender(doc, i)
+				if err != nil || a == nil {
+					continue
+				}
+				b, err := c.apiRender(od, i)
+				if !r.check(fmt.Sprintf("subset fonts: render page %d", i+1), err) || b == nil {
+					continue
+				}
+				if share := pixelShare(a, b); share > apiPixelShare {
+					r.differ("subset fonts: page %d differs in %.2f %% of its pixels", i+1, 100*share)
+				}
+			}
+			pa, err1 := doc.Page(i)
+			pb, err2 := od.Page(i)
+			if err1 != nil || err2 != nil {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+			ta, err1 := pa.Text(ctx)
+			tb, err2 := pb.Text(ctx)
+			cancel()
+			if err1 == nil && err2 == nil && ta.String() != tb.String() {
+				r.differ("subset fonts: page %d reads otherwise", i+1)
+			}
+		}
+	})
 	r.step("images", func() {
 		// The images made smaller, at a loss: the pages looked at are as
 		// bright as they were, the file opens and is no larger.
