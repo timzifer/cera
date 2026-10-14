@@ -38,7 +38,7 @@ func newSigner(t *testing.T, name string, key crypto.Signer) testSigner {
 		Subject:               pkix.Name{CommonName: name},
 		NotBefore:             time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		NotAfter:              time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		IsCA:                  true,
 		BasicConstraintsValid: true,
 	}

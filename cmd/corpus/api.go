@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/timzifer/cera"
+	"github.com/timzifer/cera/internal/cms"
 	"github.com/timzifer/cera/internal/corpus"
 )
 
@@ -686,8 +687,16 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 		if err != nil {
 			return
 		}
+		// With a timestamp of a test authority, the signer's own (B-T).
+		stamp := func(_ context.Context, digest []byte) ([]byte, error) {
+			info, err := cms.TimestampInfo(digest, time.Now())
+			if err != nil {
+				return nil, err
+			}
+			return cms.SignContent(info, true, signer.cert, signer.key, time.Now())
+		}
 		var out bytes.Buffer
-		if !r.check("sign", doc.Edit().Sign(&out, cera.SignOptions{Key: signer.key, Certificate: signer.cert})) {
+		if !r.check("sign", doc.Edit().Sign(&out, cera.SignOptions{Key: signer.key, Certificate: signer.cert, Timestamp: stamp})) {
 			return
 		}
 		if !bytes.HasPrefix(out.Bytes(), data) {
@@ -704,8 +713,36 @@ func (c runConfig) api(data []byte, password, rel string) apiResult {
 			return
 		}
 		last := &sigs[len(sigs)-1]
-		if st, err := last.Verify(cera.VerifyOptions{}); err != nil || !st.Intact || !last.CoversWholeFile || st.Changes.Any() {
+		st, err := last.Verify(cera.VerifyOptions{})
+		if err != nil || !st.Intact || !last.CoversWholeFile || st.Changes.Any() || !st.Timestamped {
 			r.differ("sign: the signature does not hold: %+v, %v", st, err)
+			return
+		}
+		// Its validation data, and a document timestamp over it (B-LTA):
+		// the signature still holds, and sees no change.
+		e := od.Edit()
+		if !r.check("sign: validation", e.AddValidation(last, cera.Validation{Certificates: st.Certificates})) {
+			return
+		}
+		out.Reset()
+		if !r.check("sign: document timestamp", e.Timestamp(context.Background(), &out, stamp)) {
+			return
+		}
+		ld := reopen("sign: document timestamp", out.Bytes(), true)
+		if ld == nil {
+			return
+		}
+		sigs = ld.Signatures()
+		if len(sigs) < 2 {
+			r.differ("sign: the stamped file has %d signatures", len(sigs))
+			return
+		}
+		first, stamped := &sigs[len(sigs)-2], &sigs[len(sigs)-1]
+		if st, err := first.Verify(cera.VerifyOptions{}); err != nil || !st.Intact || st.Changes.Any() || !st.ChangesAllowed {
+			r.differ("sign: the signature after the document timestamp: %+v, %v", st, err)
+		}
+		if st, err := stamped.Verify(cera.VerifyOptions{}); err != nil || !st.Intact || !stamped.CoversWholeFile || !st.Timestamped {
+			r.differ("sign: the document timestamp does not hold: %+v, %v", st, err)
 		}
 	})
 	r.step("flatten", func() {

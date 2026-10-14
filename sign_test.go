@@ -109,11 +109,12 @@ func TestSign(t *testing.T) {
 	}
 
 	// Signed again, by another: both hold, and the first says that a
-	// signature was added, which it allows.
+	// signature was added, which it allows. The link of the page, to a
+	// page whose annotations the field changes, is no annotation changed.
 	twice := signWith(t, sd.Edit(), signed, signOptions(bob))
 	td := editOpen(t, twice)
 	first, st := intact(t, td, 0, ada)
-	if first.CoversWholeFile || !st.Changes.Signed || st.Changes.Other || st.Changes.FormFilled || !st.ChangesAllowed {
+	if first.CoversWholeFile || !st.Changes.Signed || st.Changes.Other || st.Changes.FormFilled || st.Changes.Annotated || !st.ChangesAllowed {
 		t.Errorf("the first signature after the second: %+v", st)
 	}
 	second, st := intact(t, td, 1, bob)

@@ -1,6 +1,7 @@
 package cms
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
@@ -160,4 +161,99 @@ func sign(contentType asn1.ObjectIdentifier, content, digest []byte, cert *x509.
 		ContentType: oidSignedData,
 		Content:     asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: inner},
 	})
+}
+
+// AddTimestamp adds to signed data der, of one signer, a timestamp token
+// (RFC 3161) over its signature value as the unsigned attribute
+// signature-time-stamp, which makes a CAdES signature B-T. token returns
+// the token for the SHA-256 digest of the value: a TimeStampToken, or
+// the TimeStampResp of a timestamp authority that holds one. It fails
+// when the token does not stamp that digest or its authority did not sign
+// it.
+func AddTimestamp(der []byte, token func(digest []byte) ([]byte, error)) ([]byte, error) {
+	var ci contentInfo
+	if _, err := asn1.Unmarshal(der, &ci); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrSyntax, err)
+	}
+	var sd signedData
+	if _, err := asn1.Unmarshal(ci.Content.Bytes, &sd); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrSyntax, err)
+	}
+	if len(sd.SignerInfos) != 1 {
+		return nil, fmt.Errorf("%w: %d signers", ErrSyntax, len(sd.SignerInfos))
+	}
+	si := &sd.SignerInfos[0]
+	digest := sha256.Sum256(si.Signature)
+	got, err := token(digest[:])
+	if err != nil {
+		return nil, err
+	}
+	tok, err := Token(got)
+	if err != nil {
+		return nil, err
+	}
+	if err := Stamps(tok, digest[:]); err != nil {
+		return nil, err
+	}
+	set, err := asn1.MarshalWithParams([]attributeOut{{Type: oidTimeStampToken, Values: []asn1.RawValue{{FullBytes: tok}}}}, "set")
+	if err != nil {
+		return nil, err
+	}
+	set[0] = 0xa1 // [1] IMPLICIT in the signer info
+	si.UnsignedAttrs = asn1.RawValue{FullBytes: set}
+	inner, err := asn1.Marshal(sd)
+	if err != nil {
+		return nil, err
+	}
+	return asn1.Marshal(contentInfo{
+		ContentType: oidSignedData,
+		Content:     asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: inner},
+	})
+}
+
+// Token returns the timestamp token b is or holds: b itself, a
+// TimeStampToken (a ContentInfo of signed data), or the token of a
+// TimeStampResp whose status grants it (RFC 3161, 2.4.2), without what
+// follows it.
+func Token(b []byte) ([]byte, error) {
+	var raw asn1.RawValue
+	if _, err := asn1.Unmarshal(b, &raw); err != nil {
+		return nil, fmt.Errorf("%w: timestamp token: %v", ErrSyntax, err)
+	}
+	var ci contentInfo
+	if _, err := asn1.Unmarshal(raw.FullBytes, &ci); err == nil && ci.ContentType.Equal(oidSignedData) {
+		return raw.FullBytes, nil
+	}
+	// A response: the status, and the token when it is granted.
+	var resp struct {
+		Status struct {
+			Status int
+			Rest   asn1.RawValue `asn1:"optional"`
+			More   asn1.RawValue `asn1:"optional"`
+		}
+		Token asn1.RawValue `asn1:"optional"`
+	}
+	if _, err := asn1.Unmarshal(raw.FullBytes, &resp); err != nil {
+		return nil, fmt.Errorf("%w: neither a timestamp token nor a response: %v", ErrSyntax, err)
+	}
+	if s := resp.Status.Status; s != 0 && s != 1 {
+		return nil, fmt.Errorf("cms: the timestamp authority refused, status %d", s)
+	}
+	if len(resp.Token.FullBytes) == 0 {
+		return nil, fmt.Errorf("%w: the response holds no token", ErrSyntax)
+	}
+	return resp.Token.FullBytes, nil
+}
+
+// Stamps checks that tok is a timestamp token its authority signed over
+// the SHA-256 digest.
+func Stamps(tok, digest []byte) error {
+	ts, err := ParseTimestamp(tok)
+	if err != nil {
+		return err
+	}
+	if ts.Hash != crypto.SHA256 || !bytes.Equal(ts.Digest, digest) {
+		return fmt.Errorf("%w: the timestamp token stamps another digest", ErrDigest)
+	}
+	return nil
 }

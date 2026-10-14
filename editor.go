@@ -138,6 +138,8 @@ type Editor struct {
 	meta *Metadata
 	// sign is the signature being made, while Sign writes.
 	sign *signPlan
+	// validation is the validation data AddValidation recorded.
+	validation []validationFor
 	// addFields are the fields added and the widgets added to fields of
 	// the edited document, by AddField, and delFields the names of its
 	// fields that are removed, by RemoveField.
@@ -411,6 +413,9 @@ func (e *Editor) plan() pdfedit.Doc {
 	e.planErr = nil
 	if e.base != nil && e.redacts() {
 		e.planErr = e.redactPlan(&doc)
+	}
+	if e.base != nil {
+		e.dssPlan(&doc)
 	}
 	cf := e.canvasForms(&doc)
 	e.drawPlan(&doc, cf)

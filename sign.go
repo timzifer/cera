@@ -2,6 +2,7 @@ package cera
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rsa"
@@ -68,7 +69,26 @@ type SignOptions struct {
 	// Lock names the fields that may not change once the signature is
 	// made; nil locks none.
 	Lock *FieldLock
+
+	// Timestamp, when set, gets a timestamp token over the signature
+	// value from a timestamp authority, which goes into the signature as
+	// the time it was made by (PAdES B-T): the time is then not only the
+	// signer's word.
+	Timestamp TimestampFunc
 }
+
+// TimestampFunc gets a timestamp token (RFC 3161) for the SHA-256 digest
+// it is given from a timestamp authority: the TimeStampToken of the
+// authority's response, or the response (TimeStampResp) itself. cera does
+// no network I/O of its own: the function makes the round trip, with the
+// request (TimeStampReq) of the digest, a nonce and the certificate of
+// the authority asked for (certReq), as the authority wants it.
+type TimestampFunc func(ctx context.Context, digest []byte) ([]byte, error)
+
+// timestampRoom is the room a document leaves for a timestamp token, with
+// the certificates of its authority: tokens of public authorities take 2
+// to 8 KB.
+const timestampRoom = 16 << 10
 
 // FieldLock names the fields a signature locks (PDF 2.0, 12.7.5.5).
 type FieldLock struct {
@@ -99,6 +119,8 @@ type signPlan struct {
 	m      Matrix
 	room   int // bytes left for the signature
 	sig    *pdfedit.Sig
+	// stamp says that the signature is a document timestamp.
+	stamp bool
 }
 
 // Sign writes the edited document's file to w with an update that holds
@@ -106,8 +128,8 @@ type signPlan struct {
 // signature over all of it: an approval signature, or with
 // [SignOptions.Certify] a certification. Signatures the document has stay
 // valid. The signature is a PAdES baseline signature (B-B,
-// ETSI.CAdES.detached) without a timestamp: its time is the signer's
-// word.
+// ETSI.CAdES.detached); without [SignOptions.Timestamp] its time is the
+// signer's word, with it the signature is B-T.
 //
 // The pages cannot change with a signature: an editor that deleted,
 // moved, turned, imported or drew on pages, or flattens the form, is
@@ -119,19 +141,86 @@ type signPlan struct {
 //
 // To go on after signing, open what was written: the editor still edits
 // the document as it was.
-func (e *Editor) Sign(w io.Writer, opt SignOptions) (err error) {
+func (e *Editor) Sign(w io.Writer, opt SignOptions) error {
+	return e.SignContext(context.Background(), w, opt)
+}
+
+// SignContext is Sign with a context, which the timestamp authority is
+// asked with ([SignOptions.Timestamp]). The signature is then B-T, and
+// Sign returns the errors of the authority's function, and those of a
+// token that does not stamp the signature.
+func (e *Editor) SignContext(ctx context.Context, w io.Writer, opt SignOptions) (err error) {
 	defer recoverPanic(&err)
-	if err := e.updatable(); err != nil {
-		return err
-	}
 	sp, err := e.signCheck(opt)
 	if err != nil {
+		return err
+	}
+	return e.signed(w, sp, func(digest []byte) ([]byte, error) {
+		der, err := cms.SignCAdES(digest, opt.Certificate, opt.Key, opt.Chain...)
+		if err != nil {
+			return nil, fmt.Errorf("cera: signing: %w", err)
+		}
+		if opt.Timestamp == nil {
+			return der, nil
+		}
+		der, err = cms.AddTimestamp(der, func(digest []byte) ([]byte, error) { return opt.Timestamp(ctx, digest) })
+		if err != nil {
+			return nil, fmt.Errorf("cera: timestamp: %w", err)
+		}
+		return der, nil
+	})
+}
+
+// Timestamp writes the edited document's file to w with an update that
+// holds the changes of the editor and a document timestamp
+// (ETSI.RFC3161, PDF 2.0, 12.8.5): a timestamp token over all of it, from
+// the authority ts asks, in an invisible signature field. It says that
+// the document existed as it is at the time of the token. After
+// validation data ([Editor.AddValidation]) it makes the signatures before
+// it PAdES B-LTA: the data is then covered by the timestamp. A document
+// timestamp and the validation data are no change by the rules of a
+// certification (PDF 2.0, 12.8.2.2.2), so even a document certified to
+// allow none may get them.
+//
+// The pages cannot change with it, as with [Editor.Sign], and Timestamp
+// returns the errors Sign does, those of ts, and an error for a token
+// that does not stamp the document.
+func (e *Editor) Timestamp(ctx context.Context, w io.Writer, ts TimestampFunc) (err error) {
+	defer recoverPanic(&err)
+	if ts == nil {
+		return errors.New("cera: a timestamp needs a timestamp authority")
+	}
+	sp, err := e.signTarget(SignOptions{}, true)
+	if err != nil {
+		return err
+	}
+	sp.room = timestampRoom
+	return e.signed(w, sp, func(digest []byte) ([]byte, error) {
+		got, err := ts(ctx, digest)
+		if err != nil {
+			return nil, fmt.Errorf("cera: timestamp: %w", err)
+		}
+		tok, err := cms.Token(got)
+		if err == nil {
+			err = cms.Stamps(tok, digest)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("cera: timestamp: %w", err)
+		}
+		return tok, nil
+	})
+}
+
+// signed writes the update of the editor with the signature sp, whose
+// contents sign returns for the SHA-256 digest of the bytes it covers.
+func (e *Editor) signed(w io.Writer, sp *signPlan, sign func(digest []byte) ([]byte, error)) error {
+	if err := e.updatable(); err != nil {
 		return err
 	}
 	e.sign = sp
 	defer func() { e.sign = nil }()
 	var buf bytes.Buffer
-	err = pdfedit.Update(&buf, e.plan())
+	err := pdfedit.Update(&buf, e.plan())
 	switch {
 	case errors.Is(err, pdfedit.ErrRepaired):
 		return fmt.Errorf("%w: %v", ErrNoUpdate, err)
@@ -153,9 +242,9 @@ func (e *Editor) Sign(w io.Writer, opt SignOptions) (err error) {
 	h := sha256.New()
 	h.Write(out[:c[0]])
 	h.Write(out[c[1]:])
-	der, err := cms.SignCAdES(h.Sum(nil), opt.Certificate, opt.Key, opt.Chain...)
+	der, err := sign(h.Sum(nil))
 	if err != nil {
-		return fmt.Errorf("cera: signing: %w", err)
+		return err
 	}
 	if int64(2*len(der)) > c[1]-c[0]-2 {
 		return ErrSignatureRoom
@@ -168,7 +257,6 @@ func (e *Editor) Sign(w io.Writer, opt SignOptions) (err error) {
 // signCheck reports why the editor cannot sign as opt says, and else
 // returns the signature to make.
 func (e *Editor) signCheck(opt SignOptions) (*signPlan, error) {
-	d := e.base
 	if opt.Key == nil || opt.Certificate == nil {
 		return nil, errors.New("cera: a signature needs a key and its certificate")
 	}
@@ -190,10 +278,29 @@ func (e *Editor) signCheck(opt SignOptions) (*signPlan, error) {
 	if l := opt.Lock; l != nil && l.Action != "All" && l.Action != "Include" && l.Action != "Exclude" {
 		return nil, fmt.Errorf("cera: field lock %q: want All, Include or Exclude", l.Action)
 	}
+	sp, err := e.signTarget(opt, false)
+	if err != nil {
+		return nil, err
+	}
+	sp.room = cms.Room(opt.Certificate, opt.Chain...)
+	if opt.Timestamp != nil {
+		sp.room += timestampRoom
+	}
+	return sp, nil
+}
+
+// signTarget reports why the editor cannot write a signature, or with
+// stamp a document timestamp, into the field opt names, and else returns
+// the signature to make, without its room.
+func (e *Editor) signTarget(opt SignOptions, stamp bool) (*signPlan, error) {
+	d := e.base
+	if d == nil {
+		return nil, fmt.Errorf("%w: %v", ErrNoUpdate, pdfedit.ErrNoBase)
+	}
 	if e.pagesChanged() || e.drawsOn() || e.resized() || e.outlined() || e.labelsSet || e.flatten {
 		return nil, errors.New("cera: a signature is not written with changes of the pages or a flattened form: update the document first, then sign the result")
 	}
-	if !e.unguarded {
+	if !e.unguarded && !stamp {
 		sg := d.signing()
 		if sg.mdp == 1 {
 			return nil, ErrCertified
@@ -215,7 +322,7 @@ func (e *Editor) signCheck(opt SignOptions) (*signPlan, error) {
 	if e.formed() {
 		return nil, errors.New("cera: a signature is not written with fields added or removed: update the document first, then sign the result")
 	}
-	sp := &signPlan{opt: opt, name: opt.Field, room: cms.Room(opt.Certificate, opt.Chain...)}
+	sp := &signPlan{opt: opt, name: opt.Field, stamp: stamp}
 	if sp.opt.Time.IsZero() {
 		sp.opt.Time = time.Now()
 	}
@@ -308,6 +415,11 @@ func (e *Editor) signPlan(doc *pdfedit.Doc, cf *canvasForms) {
 		{Key: "ByteRange", Val: pdf.Array{pdf.Integer(0), pdf.Integer(0), pdf.Integer(0), pdf.Integer(0)}.Object()},
 		{Key: "Contents", Val: pdf.String(make([]byte, sp.room))},
 		{Key: "M", Val: pdf.String([]byte(pdfDate(o.Time)))},
+	}
+	if sp.stamp {
+		// The time is the token's.
+		sig = sig[:5]
+		sig[0].Val, sig[2].Val = name("DocTimeStamp"), name("ETSI.RFC3161")
 	}
 	for _, t := range []struct {
 		key pdf.Name

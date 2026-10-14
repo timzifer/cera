@@ -230,7 +230,13 @@ displayed page:
 - `Editor.Sign`: approval and certification signatures (PAdES B-B,
   `ETSI.CAdES.detached`) by an RSA or ECDSA key behind `crypto.Signer`,
   in a field of the form or a new one, invisible or with an appearance
-  drawn on a canvas, with field locks; no timestamps or validation data
+  drawn on a canvas, with field locks; with a timestamp authority's
+  token (`SignOptions.Timestamp`, B-T)
+- `Editor.Timestamp`: document timestamps (`ETSI.RFC3161`);
+  `Editor.AddValidation`: certificates, OCSP responses and CRLs the
+  caller fetched, in the document security store (`/DSS`, `/VRI`; B-LT,
+  B-LTA with a document timestamp after it). cera does no network I/O:
+  the caller reaches the authority and the responders
 
 ### Editing
 
@@ -286,8 +292,7 @@ over it stay valid (`Update`).
 
 Not done, each with its issue: what a redaction leaves (#198),
 destinations on resized pages (#205), images and fonts when a file is
-made smaller (#201, #202), timestamps and validation data in signatures
-(#193).
+made smaller (#201, #202).
 
 ### Command line
 
@@ -364,7 +369,7 @@ Not counted, because no page is drawn differently for it:
 | scripts | JavaScript is never run: of form fields (but for Acrobat's form functions, see Forms), of links, bookmarks and buttons | the action is reported by its type (`LinkTarget.Action`, `WidgetAction`) |
 | forms | XFA | the AcroForm the file has beside it (`xfa`) |
 | text | text whose font says neither what its codes stand for nor has a known encoding | the characters with their boxes and codes, `Text` empty |
-| signatures | revocation and long-term validation (`/DSS`, OCSP, CRLs); timestamps when signing (#193) | integrity, what was appended, and the chain against the caller's roots |
+| signatures | revocation when verifying (OCSP, CRLs, also those of `/DSS`); EdDSA and RSASSA-PSS keys when signing | integrity, what was appended, and the chain against the caller's roots |
 | encryption | public-key security handlers, AES-GCM (#161) | the file does not open |
 | output | pages in the CMYK of the document (#209), in another RGB than sRGB (#210); overprint per colorant (#155) | sRGB or grey; overprint simulated on request |
 | tagged PDF | structure for what the editor adds (drawings, new pages, fields, annotations): it comes untagged | the structure tree of a document is read and kept; imported pages bring theirs on request |
