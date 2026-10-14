@@ -238,6 +238,9 @@ type builder struct {
 	// st is the structure tree of the output where imported pages bring
 	// theirs (structure.go).
 	st *structMerge
+	// pageGeo holds the geometry of the pages of the output that move,
+	// by their numbers.
+	pageGeo map[pdfwrite.Ref]*Geometry
 }
 
 type srcKey struct {
@@ -464,8 +467,17 @@ func (b *builder) build() error {
 			x.pageOut[r.Num] = out[i]
 		}
 	}
+	for i, p := range b.doc.Pages {
+		if p.Geo != nil && p.Geo.Moves {
+			if b.pageGeo == nil {
+				b.pageGeo = map[pdfwrite.Ref]*Geometry{}
+			}
+			b.pageGeo[out[i]] = p.Geo
+		}
+	}
 	// Before the changed objects of the edited document are written.
 	b.movePages()
+	b.moveDests()
 	if b.doc.Base != nil {
 		x := b.bySrc[srcKey{b.doc.Base, true}]
 		x.pruneDeleted()

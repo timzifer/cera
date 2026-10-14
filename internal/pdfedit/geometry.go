@@ -1,6 +1,7 @@
 package pdfedit
 
 import (
+	"bytes"
 	"math"
 	"slices"
 	"strconv"
@@ -66,8 +67,10 @@ func (g *Geometry) points(o pdf.Object, resolve func(pdf.Object) pdf.Object) (pd
 // annot returns the annotation dictionary d moved with its page: its
 // rectangle, and the points that say where it is drawn — of a markup, a
 // line, a polygon, an ink annotation, a callout. Its appearance follows
-// the rectangle. What is measured in the annotation's own terms stays: the
-// width of a border, the size of the text of a field.
+// the rectangle. What it measures in its own terms is scaled as the page
+// is, by the mean of the two directions: the width and dashes of its
+// border, the leader lines of a line annotation, and the size of the text
+// of its own /DA (a field's that it inherits stays).
 func (g *Geometry) annot(d pdf.Dict, resolve func(pdf.Object) pdf.Object) pdf.Dict {
 	if g == nil || !g.Moves {
 		return d
@@ -97,6 +100,54 @@ func (g *Geometry) annot(d pdf.Dict, resolve func(pdf.Object) pdf.Object) pdf.Di
 			}
 		}
 		d = d.With("InkList", out.Object())
+	}
+	if k := math.Sqrt(math.Abs(g.M[0]*g.M[3] - g.M[1]*g.M[2])); k > 0 && math.Abs(k-1) > 1e-9 {
+		scaled := func(o pdf.Object) (pdf.Object, bool) {
+			v, ok := numbers(o, resolve)
+			if !ok {
+				return o, false
+			}
+			out := make(pdf.Array, len(v))
+			for i, x := range v {
+				out[i] = round4(x * k)
+			}
+			return out.Object(), true
+		}
+		one := func(o pdf.Object) (pdf.Object, bool) {
+			v, ok := resolve(o).Float()
+			if !ok || math.IsNaN(v) || math.IsInf(v, 0) {
+				return o, false
+			}
+			return round4(v * k), true
+		}
+		// /Border: corner radii, width, and a dash array.
+		if a, ok := resolve(d.Get("Border")).Array(); ok && len(a) >= 3 {
+			out := slices.Clone(a)
+			for i := range 3 {
+				out[i], _ = one(a[i])
+			}
+			if len(a) > 3 {
+				out[3], _ = scaled(a[3])
+			}
+			d = d.With("Border", out.Object())
+		}
+		if bs, ok := d.Get("BS").Dict(); ok && d.Get("BS").Kind() == pdf.KindDict {
+			if v, ok := one(bs.Get("W")); ok {
+				bs = bs.With("W", v)
+			}
+			if v, ok := scaled(bs.Get("D")); ok {
+				bs = bs.With("D", v)
+			}
+			d = d.With("BS", bs.Object())
+		}
+		for _, key := range [...]pdf.Name{"LL", "LLE", "LLO"} {
+			if v, ok := one(d.Get(key)); ok && d.Has(key) {
+				d = d.With(key, v)
+			}
+		}
+		if s, ok := resolve(d.Get("DA")).Str(); ok {
+			d = d.With("DA", pdf.String(scaleDA(s, k)))
+		}
 	}
 	// The differences between the rectangle and what is drawn in it:
 	// left, top, right and bottom, or left, bottom, right and top — the
@@ -302,4 +353,224 @@ func (b *builder) movePages() {
 		}
 		b.pageAnnots[i] = out.Object()
 	}
+}
+
+// dest moves an explicit destination (PDF 2.0, 12.3.2.2) that leads to the
+// page: the coordinates of /XYZ, /FitH, /FitV, /FitR, /FitBH and /FitBV;
+// the zoom stays. A coordinate of its own (/FitH's top) moves only where
+// the matrix keeps the axes apart. It reports false where nothing moved.
+func (g *Geometry) dest(a pdf.Array, resolve func(pdf.Object) pdf.Object) (pdf.Array, bool) {
+	if g == nil || !g.Moves || len(a) < 2 {
+		return a, false
+	}
+	mode, _ := resolve(a[1]).Name()
+	num := func(i int) (float64, bool) {
+		if i >= len(a) {
+			return 0, false
+		}
+		v, ok := resolve(a[i]).Float()
+		return v, ok && !math.IsNaN(v) && !math.IsInf(v, 0)
+	}
+	axes := g.M[1] == 0 && g.M[2] == 0
+	out := slices.Clone(a)
+	switch mode {
+	case "XYZ":
+		x, okx := num(2)
+		y, oky := num(3)
+		switch {
+		case okx && oky:
+			nx, ny := g.point(x, y)
+			out[2], out[3] = round4(nx), round4(ny)
+		case okx && axes:
+			out[2] = round4(g.M[0]*x + g.M[4])
+		case oky && axes:
+			out[3] = round4(g.M[3]*y + g.M[5])
+		default:
+			return a, false
+		}
+	case "FitH", "FitBH":
+		y, ok := num(2)
+		if !ok || !axes {
+			return a, false
+		}
+		out[2] = round4(g.M[3]*y + g.M[5])
+	case "FitV", "FitBV":
+		x, ok := num(2)
+		if !ok || !axes {
+			return a, false
+		}
+		out[2] = round4(g.M[0]*x + g.M[4])
+	case "FitR":
+		var v [4]float64
+		for i := range v {
+			var ok bool
+			if v[i], ok = num(2 + i); !ok {
+				return a, false
+			}
+		}
+		x0, y0, x1, y1 := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
+		for _, c := range [4][2]float64{{v[0], v[1]}, {v[2], v[1]}, {v[0], v[3]}, {v[2], v[3]}} {
+			x, y := g.point(c[0], c[1])
+			x0, y0, x1, y1 = min(x0, x), min(y0, y), max(x1, x), max(y1, y)
+		}
+		out[2], out[3], out[4], out[5] = round4(x0), round4(y0), round4(x1), round4(y1)
+	default:
+		return a, false
+	}
+	return out, true
+}
+
+// moveDest moves an explicit destination of the source to the geometry of
+// the page it leads to in the output; false where nothing moved.
+func (x *source) moveDest(a pdf.Array) (pdf.Array, bool) {
+	if len(a) == 0 || x.b.pageGeo == nil {
+		return a, false
+	}
+	r, ok := a[0].Ref()
+	if !ok {
+		return a, false
+	}
+	if g := x.b.pageGeo[x.pageTarget(r)]; g != nil {
+		return g.dest(a, x.d.Resolve)
+	}
+	return a, false
+}
+
+// maxDestWalk bounds the objects moveDests looks at.
+const maxDestWalk = 1 << 18
+
+// moveDests moves the destinations of the edited document that lead to
+// pages whose geometry moves: of the outline, the named destinations,
+// /OpenAction, the actions of fields, and links and other annotations on
+// the pages of the output. Each object that holds one is changed: an
+// update keeps the others.
+func (b *builder) moveDests() {
+	x := b.own()
+	if x == nil || b.pageGeo == nil {
+		return
+	}
+	root, ok := x.d.Trailer().Get("Root").Ref()
+	if !ok {
+		return
+	}
+	// Keys not followed: what holds no destination, or no object that
+	// does — content, resources, the page tree, the structure tree.
+	skip := map[pdf.Name]bool{
+		"Parent": true, "P": true, "Pages": true, "Resources": true, "Contents": true,
+		"StructTreeRoot": true, "Metadata": true, "AP": true, "DR": true, "Font": true, "XObject": true,
+		"Popup": true, "IRT": true, "StructParent": true, "Info": true, "Encrypt": true,
+	}
+	seen := map[int32]bool{}
+	var queue []pdf.Ref
+	push := func(o pdf.Object) {
+		if r, ok := o.Ref(); ok && r.Gen != newGen && !seen[r.Num] && len(seen) < maxDestWalk {
+			seen[r.Num] = true
+			queue = append(queue, r)
+		}
+	}
+	// walk returns o with its destinations moved, and the objects it
+	// names queued.
+	var walk func(o pdf.Object, depth int) (pdf.Object, bool)
+	walk = func(o pdf.Object, depth int) (pdf.Object, bool) {
+		if depth > 32 {
+			return o, false
+		}
+		switch o.Kind() {
+		case pdf.KindRef:
+			push(o)
+		case pdf.KindArray:
+			a, _ := o.Array()
+			if len(a) >= 2 {
+				if _, isPage := a[0].Ref(); isPage {
+					if _, isName := x.d.Resolve(a[1]).Name(); isName {
+						if m, ok := x.moveDest(a); ok {
+							return m.Object(), true
+						}
+						return o, false
+					}
+				}
+			}
+			var out pdf.Array
+			for i, e := range a {
+				if v, ch := walk(e, depth+1); ch {
+					if out == nil {
+						out = slices.Clone(a)
+					}
+					out[i] = v
+				}
+			}
+			if out != nil {
+				return out.Object(), true
+			}
+		case pdf.KindDict:
+			d, _ := o.Dict()
+			if t, _ := x.d.Resolve(d.Get("Type")).Name(); t == "Page" || t == "Pages" {
+				return o, false // reached by a destination, not followed
+			}
+			changed := false
+			for k, v := range d.All() {
+				if skip[k] {
+					continue
+				}
+				if nv, ch := walk(v, depth+1); ch {
+					d, changed = d.With(k, nv), true
+				}
+			}
+			if changed {
+				return d.Object(), true
+			}
+		}
+		return o, false
+	}
+	cat, _ := x.obj(root).Dict()
+	for _, k := range []pdf.Name{"OpenAction", "Dests", "Names", "Outlines", "AcroForm", "AA"} {
+		if v, ch := walk(cat.Get(k), 0); ch {
+			b.change(x, root, pdf.Entry{Key: k, Val: v})
+		}
+	}
+	// The annotations of the pages that are written.
+	for _, p := range b.doc.Pages {
+		if p.Src != b.doc.Base || !p.Own {
+			continue
+		}
+		if page, err := x.pageDict(p); err == nil {
+			arr, _ := x.resolve(page.Get("Annots")).Array()
+			for _, e := range arr {
+				push(e)
+			}
+		}
+	}
+	for len(queue) > 0 {
+		r := queue[0]
+		queue = queue[1:]
+		o := x.obj(r)
+		if o.Kind() == pdf.KindStream {
+			continue
+		}
+		if v, ch := walk(o, 0); ch {
+			b.patched[r.Num] = v
+			if b.upd == nil {
+				if n, ok := x.im.Copied(r); ok {
+					b.w.Set(n, x.im.Map(v))
+				}
+			}
+		}
+	}
+}
+
+// scaleDA returns a default appearance string with its font size, the
+// number before Tf, scaled by k. A size of 0, as large as fits, stays.
+func scaleDA(da []byte, k float64) []byte {
+	f := bytes.Fields(da)
+	for i := 1; i < len(f); i++ {
+		if string(f[i]) != "Tf" {
+			continue
+		}
+		v, err := strconv.ParseFloat(string(f[i-1]), 64)
+		if err != nil || v == 0 {
+			continue
+		}
+		f[i-1] = strconv.AppendFloat(nil, math.Round(v*k*1e4)/1e4, 'f', -1, 64)
+	}
+	return bytes.Join(f, []byte(" "))
 }

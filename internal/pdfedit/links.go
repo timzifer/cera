@@ -150,6 +150,7 @@ func (x *source) link(ad pdf.Dict) (pdf.Dict, bool) {
 	if x.pageTarget(r) == 0 {
 		return ad, false
 	}
+	a, _ = x.moveDest(a)
 	var entries []pdf.Entry
 	for k, v := range ad.All() {
 		if k != "A" && k != "Dest" {

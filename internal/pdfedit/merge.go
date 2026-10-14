@@ -87,6 +87,7 @@ func (x *source) outlineItems(first pdf.Object, depth int, seen map[int32]bool, 
 		leads := false
 		if a := x.explicit(dest); len(a) > 0 {
 			if r, ok := a[0].Ref(); ok && x.pageTarget(r) != 0 {
+				a, _ = x.moveDest(a)
 				item.entries = append(item.entries, pdf.Entry{Key: "Dest", Val: x.im.Map(a.Object())})
 				leads = true
 			}
@@ -338,7 +339,14 @@ func (b *builder) mergeDests() {
 		for _, d := range x.dests() {
 			if !taken[string(d.name)] {
 				taken[string(d.name)] = true
-				all = append(all, dest{d.name, x.im.Map(d.val)})
+				// An array in the tree, which the tree's node holds:
+				// moved with its page here.
+				v := d.val
+				if a, ok := v.Array(); ok && v.Kind() == pdf.KindArray {
+					a, _ = x.moveDest(a)
+					v = a.Object()
+				}
+				all = append(all, dest{d.name, x.im.Map(v)})
 			}
 		}
 	}
@@ -366,6 +374,7 @@ func (b *builder) mergeDests() {
 				name = fmt.Appendf(nil, "%s_%d", d.name, i)
 			}
 			taken[string(name)] = true
+			a, _ = x.moveDest(a)
 			all = append(all, dest{name, x.im.Map(a.Object())})
 			added = true
 		}

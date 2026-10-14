@@ -256,7 +256,9 @@ over it stay valid (`Update`).
   subsets of TrueType and OpenType fonts, other pages as forms; opacity
   and blend modes
 - `Editor.SetPageBox`, `ResizePage` (a page on another format: content as
-  a form through a matrix, annotations and boxes with it) and `AddSheets`
+  a form through a matrix, annotations and boxes with it, their borders
+  and own font sizes scaled, and the destinations that lead to it, of
+  links, the outline, named destinations and /OpenAction) and `AddSheets`
   (n-up, imposition)
 - Form values written with their appearances (`SetFields`), the form or
   all annotations made part of the pages (`Flatten`,
@@ -298,8 +300,9 @@ over it stay valid (`Update`).
   TrueType and name-keyed CFF, glyph numbers kept, read back and checked
   glyph by glyph; the form's fonts stay whole)
 
-Not done, each with its issue: what a redaction leaves (#198),
-destinations on resized pages (#205).
+Not done, each with its issue: what a redaction leaves (#198), what a
+resized page leaves (#205: the editor's own coordinates, tagged pages
+with patterns, rotation as geometry).
 
 ### Command line
 
