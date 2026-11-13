@@ -181,7 +181,10 @@ func TestTextIndexFind(t *testing.T) {
 		}
 	}
 	// Stopping early.
-	for m := range x.Find(ctx, "gamma", SearchOptions{}, DocPos{}, false) {
+	for m, err := range x.Find(ctx, "gamma", SearchOptions{}, DocPos{}, false) {
+		if err != nil {
+			t.Fatal(err)
+		}
 		if m.Page != 1 || m.Quote.Exact != "gamma" || m.Quote.Prefix != "beta " {
 			t.Errorf("first gamma %+v", m)
 		}
