@@ -1029,7 +1029,7 @@ func (l *displayList) drawItems(dev Device, ds *drawState, idx []int32, r image.
 				continue
 			}
 		}
-		if it.op == dlBeginGroup && rd != nil && rd.t.base != nil && l.groups[it.style].alone {
+		if it.op == dlBeginGroup && rd != nil && rd.t.on() && l.groups[it.style].alone {
 			l.drawAlone(rd, ds, idx[k:], r, vis)
 		}
 		l.drawItem(dev, ds, it)

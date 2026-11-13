@@ -242,8 +242,14 @@ func (p *Page) Render(ctx context.Context, dst *image.RGBA, opt RenderOptions) e
 }
 
 // render is Render with the colours projected to pr.
-func (p *Page) render(ctx context.Context, dst *image.RGBA, opt RenderOptions, pr proj) (err error) {
-	region := dst.Bounds()
+func (p *Page) render(ctx context.Context, dst *image.RGBA, opt RenderOptions, pr proj) error {
+	d := dest{img: dst}
+	return p.renderTo(ctx, &d, opt, pr)
+}
+
+// renderTo is render onto an image or a surface.
+func (p *Page) renderTo(ctx context.Context, dst *dest, opt RenderOptions, pr proj) (err error) {
+	region := dst.bounds()
 	if !opt.Region.Empty() {
 		region = region.Intersect(opt.Region)
 	}
@@ -255,6 +261,11 @@ func (p *Page) render(ctx context.Context, dst *image.RGBA, opt RenderOptions, p
 			opt.Band(region)
 		}
 	}()
+	defer func() {
+		if err == nil {
+			err = dst.err
+		}
+	}()
 	defer recoverPanic(&err)
 	// The display list fills the background band by band, each just
 	// before it is drawn; until it takes over, an early return or a panic
@@ -262,7 +273,7 @@ func (p *Page) render(ctx context.Context, dst *image.RGBA, opt RenderOptions, p
 	fill := true
 	defer func() {
 		if fill {
-			fillRegion(dst, region, opt.Background)
+			dst.fill(region, opt.Background)
 		}
 	}()
 	st := opt.Stats
@@ -790,13 +801,13 @@ func (p *Page) Release() {
 // touch it. With iso set, each band is drawn onto a transparent image
 // first and then composited onto dst, which holds the background. Images
 // are magnified with filter.
-func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.RGBA, fill bool, band func(image.Rectangle), workers int, vis *Visibility, af *annotFilter, lim *limit, iso bool, filter ImageFilter) error {
+func (l *displayList) render(dst *dest, region image.Rectangle, bg color.RGBA, fill bool, band func(image.Rectangle), workers int, vis *Visibility, af *annotFilter, lim *limit, iso bool, filter ImageFilter) error {
 	b0, b1 := l.bandRange(region)
 	// The periodic checks come after hundreds of items; a short list
 	// would otherwise be drawn whole after the deadline.
 	if b0 >= b1 || lim.expired() {
 		if fill {
-			fillRegion(dst, region, bg)
+			dst.fill(region, bg)
 		}
 		if band != nil {
 			band(region)
@@ -808,7 +819,7 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.R
 	}
 	if fill {
 		// The bands cover the page; the rest of region is filled now.
-		fillOutside(dst, region, l.bounds, bg)
+		dst.fillOutside(region, l.bounds, bg)
 	}
 	in := region.Intersect(l.bounds)
 	if band != nil {
@@ -821,6 +832,10 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.R
 		}
 	}
 	workers, whole := l.plan(region, b0, b1, workers)
+	if dst.surf != nil {
+		// A surface is drawn from one goroutine, in one pass.
+		workers, whole = 1, true
+	}
 	j := jobs.Get().(*job)
 	if vis == nil {
 		vis = &noLayers
@@ -828,8 +843,8 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.R
 	// A cheap page drawn in one pass touches few of its pixels after the
 	// fill; a large one is filled past the caches. A list drawn over
 	// another (a widget showing a form value) fills nothing.
-	stream := fill && whole && 4*region.Dx()*region.Dy() >= streamFill && l.workersFor(region) == 1
-	*j = job{l: l, dst: dst, region: region, bg: bg, fill: fill, stream: stream, band: band, lim: lim, b0: b0, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf, told: j.told}
+	stream := fill && whole && dst.surf == nil && 4*region.Dx()*region.Dy() >= streamFill && l.workersFor(region) == 1
+	*j = job{l: l, dst: *dst, region: region, bg: bg, fill: fill, stream: stream, band: band, lim: lim, b0: b0, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf, told: j.told}
 	j.alone = af.alone && l.annots >= 0
 	if whole {
 		j.idx, j.buf = l.regionItems(j.buf, b0, b1)
@@ -852,7 +867,7 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.R
 		if fill {
 			// Bands left after a deadline or a panic get the background.
 			for b := int(j.next.Load()); b < b1; b++ {
-				fillRegion(dst, l.band(b).Intersect(region), bg)
+				j.dst.fill(l.band(b).Intersect(region), bg)
 			}
 		}
 		if band != nil {
@@ -864,6 +879,7 @@ func (l *displayList) render(dst *image.RGBA, region image.Rectangle, bg color.R
 			}
 		}
 	}
+	dst.report(j.dst.err)
 	err := j.err
 	if err == nil && lim.hit.Load() {
 		err = ErrDeadline
@@ -935,7 +951,7 @@ const streamFill = 2 << 20
 // job is one render of a display list, shared by its workers.
 type job struct {
 	l      *displayList
-	dst    *image.RGBA
+	dst    dest
 	region image.Rectangle
 	bg     color.RGBA // with fill, set in each part before it is drawn
 	fill   bool
@@ -1023,11 +1039,15 @@ func rows(r image.Rectangle, y0, y1 int) image.Rectangle {
 // paint draws r, band b of the list or, if b < 0, the items j.idx.
 func (j *job) paint(pt *painter, b int, r image.Rectangle) {
 	if j.stream {
-		fillRegionStream(j.dst, r, j.bg)
+		fillRegionStream(j.dst.img, r, j.bg)
 	} else if j.fill {
-		fillRegion(j.dst, r, j.bg)
+		j.dst.fill(r, j.bg)
 	}
-	dst := j.dst
+	if j.dst.surf != nil {
+		j.paintSurface(pt, b, r)
+		return
+	}
+	dst := j.dst.img
 	if j.iso {
 		n := 4 * r.Dx() * r.Dy()
 		if cap(pt.page.Pix) < n {
@@ -1036,9 +1056,39 @@ func (j *job) paint(pt *painter, b int, r image.Rectangle) {
 		pt.page = image.RGBA{Pix: pt.page.Pix[:n], Stride: 4 * r.Dx(), Rect: r}
 		clear(pt.page.Pix)
 		dst = &pt.page
-		defer compositeOver(j.dst, &pt.page)
+		defer compositeOver(j.dst.img, &pt.page)
 	}
 	pt.dev.Reset(dst, r)
+	j.draw(pt, b, r)
+}
+
+// paintSurface draws r onto the job's surface: onto a transparent layer
+// composited onto it with j.iso.
+func (j *job) paintSurface(pt *painter, b int, r image.Rectangle) {
+	s := j.dst.surf
+	if !j.iso {
+		pt.dev.ResetSurface(s, r)
+		j.draw(pt, b, r)
+		return
+	}
+	layer, err := s.NewLayer()
+	if err != nil {
+		j.report(err)
+		return
+	}
+	defer s.Release(layer)
+	pt.dev.ResetSurface(layer, r)
+	j.draw(pt, b, r)
+	pt.dev.ResetSurface(s, r)
+	pt.dev.fillArea(r, s.Composite(&Composite{Layer: layer, Alpha: 255, Blend: stilus.BlendNormal}))
+	if err := pt.dev.Err(); err != nil {
+		j.report(err)
+	}
+}
+
+// draw draws r, band b of the list or, if b < 0, the items j.idx, with
+// the painter's device targeted at r.
+func (j *job) draw(pt *painter, b int, r image.Rectangle) {
 	pt.dev.ImageFilter = j.filter
 	pt.dev.proj = j.l.proj
 	var ok bool
@@ -1104,19 +1154,6 @@ func (p *Page) deviceMatrix(scale float64) Matrix {
 		return Matrix{0, -s, -s, 0, b.Y1 * s, b.X1 * s}
 	}
 	return Matrix{s, 0, 0, -s, -b.X0 * s, b.Y1 * s}
-}
-
-// fillOutside fills the parts of r outside in with c.
-func fillOutside(dst *image.RGBA, r, in image.Rectangle, c color.RGBA) {
-	in = in.Intersect(r)
-	if in.Empty() {
-		fillRegion(dst, r, c)
-		return
-	}
-	fillRegion(dst, image.Rect(r.Min.X, r.Min.Y, r.Max.X, in.Min.Y), c)
-	fillRegion(dst, image.Rect(r.Min.X, in.Max.Y, r.Max.X, r.Max.Y), c)
-	fillRegion(dst, image.Rect(r.Min.X, in.Min.Y, in.Min.X, in.Max.Y), c)
-	fillRegion(dst, image.Rect(in.Max.X, in.Min.Y, r.Max.X, in.Max.Y), c)
 }
 
 // fillRegion sets every pixel of r in dst to c by doubling copies.

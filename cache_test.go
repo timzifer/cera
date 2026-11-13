@@ -186,7 +186,7 @@ func TestSetPoolLimits(t *testing.T) {
 		t.Errorf("%d layer buffers, %d bytes kept by default", len(l.free), l.freeBytes)
 	}
 	SetPoolLimits(PoolLimits{LayerBytes: 16})
-	l.reset(nil, image.Rectangle{})
+	l.reset(nil, nil, image.Rectangle{})
 	if len(l.free) != 0 || l.freeBytes != 0 {
 		t.Errorf("%d layer buffers, %d bytes kept past a lowered bound", len(l.free), l.freeBytes)
 	}

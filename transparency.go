@@ -36,10 +36,18 @@ import (
 // its alpha over the greatest opacity drawn into it.
 //
 // Layer buffers are kept by the device and reused.
+//
+// A device drawing onto a Surface draws an isolated group without a soft
+// mask that is no knockout group, below layers of the surface only, into
+// a layer of the surface, which composites it. Other groups and soft
+// masks are drawn into images as above; one that reads its backdrop from
+// the surface reads a copy of it, back, taken when it begins, and a
+// non-isolated one is composited onto that copy, which is written back.
 
 // layers is the transparency state of a raster device.
 type layers struct {
 	base   *image.RGBA // nil: no Reset, groups are drawn directly
+	surf   Surface     // instead of base: ResetSurface
 	region image.Rectangle
 	stack  []layer
 	done   layer // the layer being composited, popped
@@ -63,6 +71,7 @@ type layers struct {
 	err       error // of the canvas before a retarget
 
 	comp  stilus.LayerShader
+	scomp Composite   // comp of a layer of surf
 	alpha image.Alpha // the soft mask of comp
 	rect  Path
 	paint Paint
@@ -79,7 +88,12 @@ type clipRec struct {
 }
 
 type layer struct {
-	img  image.RGBA
+	img image.RGBA
+	// surf, instead of img, is a layer of the device's surface.
+	surf Surface
+	// back is the backdrop below the layer, copied from the surface the
+	// layer is drawn over, for a group drawn into img that reads it.
+	back image.RGBA
 	area image.Rectangle
 	g    Group
 	iso  bool      // drawn isolated
@@ -109,7 +123,7 @@ type softPlane struct {
 
 var opaque = Paint{Color: color.RGBA{255, 255, 255, 255}}
 
-func (t *layers) reset(dst *image.RGBA, region image.Rectangle) {
+func (t *layers) reset(dst *image.RGBA, surf Surface, region image.Rectangle) {
 	// The bound may have been lowered since the buffers were kept.
 	for lim := int(freeLayerBytes.Load()); t.freeBytes > lim && len(t.free) > 0; {
 		last := len(t.free) - 1
@@ -130,10 +144,24 @@ func (t *layers) reset(dst *image.RGBA, region image.Rectangle) {
 	t.alone, t.aloneNext = image.RGBA{}, false
 	t.knockout = false
 	t.err = nil
-	t.base, t.region = dst, region
+	t.base, t.surf, t.region = dst, surf, region
+}
+
+// on reports whether the device was targeted with Reset or ResetSurface.
+func (t *layers) on() bool { return t.base != nil || t.surf != nil }
+
+// fail records err, if it is the first.
+func (t *layers) fail(err error) {
+	if err != nil && t.err == nil {
+		t.err = err
+	}
 }
 
 func (t *layers) drop(l *layer) {
+	if l.surf != nil {
+		t.surf.Release(l.surf)
+	}
+	t.release(l.back.Pix)
 	t.release(l.img.Pix)
 	t.release(l.ko.Pix)
 	t.release(l.shape.Pix)
@@ -181,7 +209,7 @@ func (t *layers) image(area image.Rectangle) image.RGBA {
 }
 
 func (t *layers) pushClip(p *Path, r Rect, m Matrix, rule FillRule, rect bool, st *StrokeStyle) {
-	if t.base == nil {
+	if !t.on() {
 		return
 	}
 	c := clipRec{rect: rect, r: r, m: m, rule: rule}
@@ -201,7 +229,7 @@ func (t *layers) pushClip(p *Path, r Rect, m Matrix, rule FillRule, rect bool, s
 
 func (t *layers) popClip() {
 	n := len(t.clips)
-	if t.base == nil || n == 0 || (len(t.stack) > 0 && n <= t.stack[len(t.stack)-1].clips) {
+	if !t.on() || n == 0 || (len(t.stack) > 0 && n <= t.stack[len(t.stack)-1].clips) {
 		return
 	}
 	t.truncClips(n - 1)
@@ -215,16 +243,38 @@ func (t *layers) truncClips(n int) {
 	}
 }
 
-// target returns what the canvas draws into for layer i (-1: the base).
+// target returns what the canvas draws into for layer i (-1: the base),
+// nil for a surface (surfaceOf).
 func (t *layers) target(i int) *image.RGBA {
 	if i < 0 {
 		return t.base
 	}
 	l := &t.stack[i]
-	if l.knockout() {
+	switch {
+	case l.surf != nil:
+		return nil
+	case l.knockout():
 		return &l.ko
 	}
 	return &l.img
+}
+
+// surfaceOf returns the surface the canvas draws onto for layer i (-1:
+// the base), nil for an image (target).
+func (t *layers) surfaceOf(i int) Surface {
+	if i < 0 {
+		return t.surf
+	}
+	return t.stack[i].surf
+}
+
+// backdrop returns the image of what layer i is drawn over: the layer
+// below, or the copy of it if that is a surface.
+func (t *layers) backdrop(i int) *image.RGBA {
+	if t.surfaceOf(i-1) != nil {
+		return &t.stack[i].back
+	}
+	return t.target(i - 1)
 }
 
 // clipsOf returns the index of the first clip opened in layer i.
@@ -260,7 +310,11 @@ func (d *RasterDevice) retargetOn(i int, dst *image.RGBA) {
 	if i >= 0 {
 		region = t.stack[i].area
 	}
-	d.C.Reset(dst, region)
+	if dst != nil {
+		d.C.Reset(dst, region)
+	} else {
+		d.C.ResetCompositor(t.surfaceOf(i), region)
+	}
 	for k := t.clipsOf(i); k < len(t.clips); k++ {
 		c := &t.clips[k]
 		if c.rect {
@@ -314,13 +368,29 @@ func (d *RasterDevice) BeginGroup(r Rect, m Matrix, g *Group) {
 		t.aloneNext = false
 		l.alonePass, l.iso, l.g.Masked = true, true, false
 	}
-	if t.base == nil {
+	if !t.on() {
 		l.pass = true
 		return
 	}
+	below := t.surfaceOf(parent)
+	if below != nil && l.iso && !g.Knockout && !l.g.Masked && !l.alonePass {
+		s, err := t.surf.NewLayer()
+		if err == nil {
+			l.surf = s
+			d.retarget(len(t.stack) - 1)
+			return
+		}
+		t.fail(err) // drawn into an image instead
+	}
 	l.img = t.image(area)
 	if !l.iso {
-		copyRect(&l.img, t.target(parent), area)
+		if below != nil {
+			l.back = t.image(area)
+			if !area.Empty() {
+				t.fail(below.Read(&l.back))
+			}
+		}
+		copyRect(&l.img, t.backdrop(len(t.stack)-1), area)
 		if g.alone && t.alone.Rect == area && t.alone.Pix != nil {
 			l.alone, t.alone = t.alone, image.RGBA{}
 			l.initial = t.image(area)
@@ -357,9 +427,14 @@ func (d *RasterDevice) EndGroup() {
 	}
 	if !l.area.Empty() && l.g.Alpha != 0 && l.ink != 0 && (!l.g.Masked || l.mask.pix != nil) {
 		dst := t.target(parent)
-		if l.iso || l.alone.Pix != nil {
-			d.composite(l, dst)
-		} else {
+		switch {
+		case l.iso || l.alone.Pix != nil:
+			d.composite(l, dst, parent)
+		case dst == nil:
+			// Onto the copy of the surface's backdrop, written back.
+			d.interpolate(l, &l.back, parent)
+			t.fail(t.surfaceOf(parent).Write(&l.back))
+		default:
 			d.interpolate(l, dst, parent)
 		}
 		if t.knockout {
@@ -375,7 +450,7 @@ func (d *RasterDevice) BeginMask(r Rect, m Matrix, sm *SoftMask) {
 	area := d.area(r, m)
 	l := t.push()
 	l.isMask, l.sm, l.area, l.clips, l.iso = true, *sm, area, len(t.clips), true
-	if t.base == nil {
+	if !t.on() {
 		// Mask content must not reach the canvas.
 		l.pass = true
 		d.C.ClipRect(stilus.Rect{}, stilus.Identity)
@@ -439,10 +514,19 @@ func copyRect(dst, src *image.RGBA, r image.Rectangle) {
 	}
 }
 
-// composite draws isolated layer l onto dst, the canvas's target, through
-// the canvas's clips.
-func (d *RasterDevice) composite(l *layer, dst *image.RGBA) {
+// composite draws isolated layer l onto dst, the canvas's target (nil: the
+// surface of layer parent), through the canvas's clips.
+func (d *RasterDevice) composite(l *layer, dst *image.RGBA, parent int) {
 	t := &d.t
+	if l.surf != nil {
+		t.scomp = Composite{Layer: l.surf, Alpha: l.g.Alpha, Blend: l.g.Blend}
+		if d.proj.inked() && !t.inMask() {
+			t.scomp.Subtractive, t.scomp.Black = true, d.proj == projK
+		}
+		d.fillArea(l.area, t.surfaceOf(parent).Composite(&t.scomp))
+		t.scomp = Composite{}
+		return
+	}
 	c := &t.comp
 	*c = stilus.LayerShader{Src: &l.img, Dst: dst, Alpha: l.g.Alpha, Blend: l.g.Blend}
 	if d.proj.inked() && !t.inMask() {
@@ -458,6 +542,11 @@ func (d *RasterDevice) composite(l *layer, dst *image.RGBA) {
 		c.Initial, c.Alone = &l.initial, &l.alone
 	}
 	d.fillArea(l.area, c)
+	if dst == nil {
+		// The surface reads the images by its flush; they are released
+		// next.
+		t.fail(t.surfaceOf(parent).Flush())
+	}
 	*c = stilus.LayerShader{}
 	t.alpha = image.Alpha{}
 }
@@ -576,7 +665,7 @@ func (d *RasterDevice) koPrepare(box image.Rectangle, shape bool) image.Rectangl
 		if l.iso {
 			clear(row)
 		} else {
-			b := t.target(top - 1)
+			b := t.backdrop(top)
 			copy(row, b.Pix[b.PixOffset(box.Min.X, y):][:n])
 		}
 		if shape {
@@ -605,7 +694,7 @@ func (d *RasterDevice) koMerge(box image.Rectangle, src *image.RGBA, ink uint8) 
 	}
 	var b0 *image.RGBA
 	if !l.iso {
-		b0 = t.target(top - 1)
+		b0 = t.backdrop(top)
 	}
 	n := 4 * box.Dx()
 	in := uint32(ink)
