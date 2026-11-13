@@ -216,7 +216,8 @@ type painter struct {
 	canvas *stilus.Canvas
 	dev    RasterDevice
 	ds     drawState
-	page   image.RGBA // a transparent band, for a page that blends
+	page   image.RGBA  // a transparent band, for a page that blends
+	band   bandSurface // the worker's part of a surface drawn in bands
 }
 
 // noImage is what idle painters point at.
@@ -832,9 +833,12 @@ func (l *displayList) render(dst *dest, region image.Rectangle, bg color.RGBA, f
 		}
 	}
 	workers, whole := l.plan(region, b0, b1, workers)
+	var comps []stilus.Compositor
 	if dst.surf != nil {
-		// A surface is drawn from one goroutine, in one pass.
-		workers, whole = 1, true
+		comps, workers, whole = l.surfaceBands(dst, in, bg, fill, workers, whole)
+		if comps != nil {
+			fill = false // the region is filled
+		}
 	}
 	j := jobs.Get().(*job)
 	if vis == nil {
@@ -844,11 +848,11 @@ func (l *displayList) render(dst *dest, region image.Rectangle, bg color.RGBA, f
 	// fill; a large one is filled past the caches. A list drawn over
 	// another (a widget showing a form value) fills nothing.
 	stream := fill && whole && dst.surf == nil && 4*region.Dx()*region.Dy() >= streamFill && l.workersFor(region) == 1
-	*j = job{l: l, dst: *dst, region: region, bg: bg, fill: fill, stream: stream, band: band, lim: lim, b0: b0, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf, told: j.told}
+	*j = job{l: l, dst: *dst, comps: comps, region: region, bg: bg, fill: fill, stream: stream, band: band, lim: lim, b0: b0, b1: b1, iso: iso, filter: filter, vis: l.visibleTags(j.vis, vis, af), buf: j.buf, told: j.told}
 	j.alone = af.alone && l.annots >= 0
 	if whole {
 		j.idx, j.buf = l.regionItems(j.buf, b0, b1)
-		j.work(true)
+		j.work(true, 0)
 		if band != nil {
 			band(rows(region, in.Min.Y, in.Max.Y))
 		}
@@ -859,10 +863,10 @@ func (l *displayList) render(dst *dest, region image.Rectangle, bg color.RGBA, f
 		// The caller draws bands too.
 		j.next.Store(int32(b0))
 		j.wg.Add(workers - 1)
-		for range workers - 1 {
-			go j.helper()
+		for w := range workers - 1 {
+			go j.helper(w + 1)
 		}
-		j.work(false)
+		j.work(false, 0)
 		j.wg.Wait()
 		if fill {
 			// Bands left after a deadline or a panic get the background.
@@ -952,6 +956,7 @@ const streamFill = 2 << 20
 type job struct {
 	l      *displayList
 	dst    dest
+	comps  []stilus.Compositor // per worker, a surface drawn in bands
 	region image.Rectangle
 	bg     color.RGBA // with fill, set in each part before it is drawn
 	fill   bool
@@ -982,15 +987,19 @@ func (j *job) report(err error) {
 	j.mu.Unlock()
 }
 
-// helper draws bands beside the caller.
-func (j *job) helper() {
+// helper draws bands beside the caller, as worker w.
+func (j *job) helper(w int) {
 	defer j.wg.Done()
-	j.work(false)
+	j.work(false, w)
 }
 
-// work draws the whole region in one pass, or bands until none are left.
-func (j *job) work(whole bool) {
+// work draws the whole region in one pass, or bands until none are left,
+// as worker w (0: the caller).
+func (j *job) work(whole bool, w int) {
 	pt := painters.Get().(*painter)
+	if j.comps != nil {
+		pt.band = bandSurface{Surface: j.dst.surf, c: j.comps[w]}
+	}
 	defer func() {
 		if v := recover(); v != nil {
 			// A painter that panicked may hold inconsistent state.
@@ -998,6 +1007,7 @@ func (j *job) work(whole bool) {
 			j.lim.hit.Store(true) // stop the other workers
 		} else {
 			pt.dev.Reset(noImage, noImage.Rect) // do not keep dst alive
+			pt.band = bandSurface{}
 			putGlyphCache(pt.dev.glyphs)
 			pt.dev.glyphs = nil
 			painters.Put(pt)
@@ -1066,6 +1076,11 @@ func (j *job) paint(pt *painter, b int, r image.Rectangle) {
 // composited onto it with j.iso.
 func (j *job) paintSurface(pt *painter, b int, r image.Rectangle) {
 	s := j.dst.surf
+	if j.comps != nil {
+		pt.dev.ResetSurface(&pt.band, r)
+		j.draw(pt, b, r)
+		return
+	}
 	if !j.iso {
 		pt.dev.ResetSurface(s, r)
 		j.draw(pt, b, r)
