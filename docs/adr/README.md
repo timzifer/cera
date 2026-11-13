@@ -30,7 +30,7 @@ they depend on.
 | [0008](0008-font-fallbacks.md) | Font fallbacks and vertical writing | M8 | accepted |
 | [0009](0009-transparency-remainders.md) | Remaining approximations: `/Matte`, `AIS`, non-isolated blending, Type 3 clips | M8 | accepted |
 | [0010](0010-accuracy-and-robustness.md) | Accuracy against PDFium and robustness budgets | M8 | accepted |
-| [0011](0011-gpu-backend.md) | GPU backend on stilus/gpu | M9 | proposed (revised) |
+| [0011](0011-gpu-backend.md) | GPU backend on stilus/gpu | M9 | accepted |
 | [0012](0012-own-pdf-reader.md) | Own PDF reader and font layer | M8½ | accepted |
 | [0013](0013-editing-documents.md) | Editing documents: `Document.Edit` | M9 | accepted |
 | [0014](0014-text-interaction.md) | Text interaction: selection, search, links and highlights | M9 | accepted |

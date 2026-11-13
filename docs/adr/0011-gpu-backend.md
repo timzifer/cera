@@ -1,6 +1,6 @@
 # 0011. GPU backend on stilus/gpu
 
-- Status: proposed (revised 2026-11-13)
+- Status: accepted (revised 2026-11-13)
 - Date: 2026-10-01
 - Milestone: M9
 
