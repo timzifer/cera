@@ -21,6 +21,7 @@ type imageSurface struct {
 	made   int           // made by NewLayer
 	reads  int
 	writes int
+	bands  int // the most compositors Bands made
 	ls     stilus.LayerShader
 }
 
@@ -70,6 +71,26 @@ func (s *imageSurface) Write(src *image.RGBA) error {
 }
 
 func (s *imageSurface) Flush() error { return nil }
+
+// Bands implements BandSurface: compositors drawing into the image, one
+// band each.
+func (s *imageSurface) Bands(n int) ([]stilus.Compositor, error) {
+	s.bands = max(s.bands, n)
+	c := make([]stilus.Compositor, n)
+	for i := range c {
+		c[i] = imageBand{s.img}
+	}
+	return c, nil
+}
+
+type imageBand struct{ img *image.RGBA }
+
+func (b imageBand) Blitter(p *stilus.Paint) stilus.Blitter {
+	if p.Shader == nil {
+		return stilus.NewSolidBlitter(b.img, p.Color)
+	}
+	return stilus.NewShaderBlitter(b.img, p.Shader)
+}
 
 func (s *imageSurface) NewLayer() (Surface, error) {
 	t := s.top()
@@ -158,6 +179,42 @@ func TestRenderSurfaceLayers(t *testing.T) {
 		}
 		if s.made < c.layers || s.reads != c.reads || s.writes != c.writes {
 			t.Errorf("%s: %d layers, %d reads, %d writes", c.name, s.made, s.reads, s.writes)
+		}
+	}
+}
+
+// A page without groups is drawn onto a BandSurface in bands, by several
+// workers at once; one with groups in one pass.
+func TestRenderSurfaceBands(t *testing.T) {
+	pages := surfacePages()
+	for _, c := range []struct {
+		name  string
+		bands bool
+	}{{"contours-3000", true}, {"joins-caps", true}, {"short-20000-0.35mm", true}, {"mixed", false}, {"paints", false}} {
+		doc, _ := Open(pages[c.name])
+		p, _ := doc.Page(0)
+		scale := 3.0
+		if p.Box.X1 > 1000 {
+			scale = 1
+		}
+		full := p.Bounds(scale)
+		region := image.Rect(full.Dx()/5, full.Dy()/4, full.Dx()*3/4, full.Dy()*4/5)
+		for _, r := range []image.Rectangle{{}, region} {
+			opt := RenderOptions{Scale: scale, Background: white, Region: r, Workers: 4}
+			want := image.NewRGBA(full)
+			if err := p.Render(context.Background(), want, opt); err != nil {
+				t.Fatal(err)
+			}
+			s := newImageSurface(full)
+			if err := p.RenderSurface(context.Background(), s, opt); err != nil {
+				t.Fatal(err)
+			}
+			if (s.bands > 1) != c.bands {
+				t.Errorf("%s: %d bands", c.name, s.bands)
+			}
+			if d := maxDiff(t, want, s.img, full); d > 2 {
+				t.Errorf("%s, region %v: RenderSurface in bands differs from Render by %d", c.name, r, d)
+			}
 		}
 	}
 }

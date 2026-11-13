@@ -49,9 +49,11 @@ type Surface struct {
 	err   error        // the first error of a flush in Release
 	stage []byte       // Write's rows, aligned
 	buf   *wgpu.Buffer // Write's buffer
+	recs  []*sgpu.Recorder
+	comps []stilus.Compositor
 }
 
-var _ cera.Surface = (*Surface)(nil)
+var _ cera.BandSurface = (*Surface)(nil)
 
 // NewSurface returns a surface over t, a target of dev. The surface does
 // not own t.
@@ -212,6 +214,23 @@ func (s *Surface) Composite(c *cera.Composite) stilus.Shader {
 	return l
 }
 
+// Bands implements cera.BandSurface with recorders of the target, kept
+// for the next render. A layer has no bands.
+func (s *Surface) Bands(n int) ([]stilus.Compositor, error) {
+	if s.root != nil {
+		return nil, errors.New("cera/gpu: a layer has no bands")
+	}
+	for len(s.recs) < n {
+		r, err := s.t.NewRecorder()
+		if err != nil {
+			return nil, err
+		}
+		s.recs = append(s.recs, r)
+		s.comps = append(s.comps, r)
+	}
+	return s.comps[:n], nil
+}
+
 // Flush implements cera.Surface: it draws what was recorded onto the
 // target and reports the first layer that could not be drawn. Flush the
 // surface RenderSurface drew onto before reading or presenting its target.
@@ -230,16 +249,24 @@ func (s *Surface) Flush() error {
 			return err
 		}
 	}
+	for _, r := range s.recs {
+		if err := r.Err(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-// Close releases the targets of the surface's layers; the surface's own
-// target is the caller's.
+// Close releases the targets of the surface's layers and its recorders;
+// the surface's own target is the caller's.
 func (s *Surface) Close() {
 	for _, l := range s.made {
 		l.t.Close()
 	}
-	s.made, s.free, s.err = nil, nil, nil
+	for _, r := range s.recs {
+		r.Close()
+	}
+	s.made, s.free, s.err, s.recs, s.comps = nil, nil, nil, nil, nil
 	if s.buf != nil {
 		s.buf.Release()
 		s.buf = nil

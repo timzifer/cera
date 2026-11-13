@@ -151,3 +151,95 @@ func TestRenderSurfaceMatchesRender(t *testing.T) {
 		})
 	}
 }
+
+// Pages without groups are drawn in bands, through recorders, by four
+// workers at once, twice onto the same surface; within 2/255 of the CPU.
+func TestRenderSurfaceBands(t *testing.T) {
+	d := device(t)
+	soft := os.Getenv("CERA_GPU_FALLBACK") == "1"
+	all := pages(false)
+	names := []string{"contours-3000", "joins-caps", "short-20000-0.35mm", "mixed"}
+	if soft || testing.Short() {
+		names = []string{"joins-caps", "mixed"}
+	}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			doc, _ := cera.Open(all[name])
+			p, _ := doc.Page(0)
+			scale := 3.0
+			if p.Box.X1 > 1000 {
+				scale = 0.5
+				if soft {
+					scale = 0.25
+				}
+			}
+			full := p.Bounds(scale)
+			tg, err := d.NewTarget(full.Dx(), full.Dy())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tg.Close()
+			s := NewSurface(d, tg)
+			defer s.Close()
+			opt := cera.RenderOptions{Scale: scale, Background: white, Workers: 4}
+			want := image.NewRGBA(full)
+			if err := p.Render(context.Background(), want, opt); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := p.RenderSurface(context.Background(), s, opt); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Flush(); err != nil {
+					t.Fatal(err)
+				}
+				got := image.NewRGBA(full)
+				if err := s.Read(got); err != nil {
+					t.Fatal(err)
+				}
+				if diff := maxDiff(want, got); diff > 2 {
+					t.Errorf("the GPU in bands differs from the CPU by %d", diff)
+				}
+			}
+			t.Logf("%d recorders", len(s.recs))
+		})
+	}
+}
+
+// BenchmarkRenderSurface draws scenes at A3, 150 dpi, onto the GPU with
+// readback, in one pass and in bands, beside Render on the CPU.
+func BenchmarkRenderSurface(b *testing.B) {
+	d := device(b)
+	all := pages(false)
+	scale := 150.0 / 72
+	for _, name := range []string{"contours-3000", "short-20000-0.35mm", "hatch-2000-0.35mm", "fills-subpixel"} {
+		doc, _ := cera.Open(all[name])
+		p, _ := doc.Page(0)
+		full := p.Bounds(scale)
+		got := image.NewRGBA(full)
+		b.Run(name+"/cpu", func(b *testing.B) {
+			for b.Loop() {
+				p.Render(context.Background(), got, cera.RenderOptions{Scale: scale, Background: white})
+			}
+		})
+		tg, err := d.NewTarget(full.Dx(), full.Dy())
+		if err != nil {
+			b.Fatal(err)
+		}
+		s := NewSurface(d, tg)
+		for _, w := range []int{1, 4, 8} {
+			b.Run(name+"/gpu-"+string(rune('0'+w)), func(b *testing.B) {
+				for b.Loop() {
+					if err := p.RenderSurface(context.Background(), s, cera.RenderOptions{Scale: scale, Background: white, Workers: w}); err != nil {
+						b.Fatal(err)
+					}
+					if err := s.Read(got); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+		s.Close()
+		tg.Close()
+	}
+}
