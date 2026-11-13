@@ -258,8 +258,15 @@ type RasterDevice struct {
 // it: a device whose canvas was targeted directly draws their content
 // without compositing it and does not draw soft masks.
 func (d *RasterDevice) Reset(dst *image.RGBA, region image.Rectangle) {
-	d.t.reset(dst, region)
+	d.t.reset(dst, nil, region)
 	d.C.Reset(dst, region)
+}
+
+// ResetSurface targets the device, and its canvas, at region of dst, as
+// Reset does an image (see Surface).
+func (d *RasterDevice) ResetSurface(dst Surface, region image.Rectangle) {
+	d.t.reset(nil, dst, region)
+	d.C.ResetCompositor(dst, region)
 }
 
 // Err returns the first error of the canvas since Reset.

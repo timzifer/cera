@@ -142,3 +142,35 @@ What cera itself does to pixels, outside the canvas, is what remains
 - **A `GPUDevice` implementing `Device` next to `RasterDevice`**: would
   duplicate clip, text and group handling that the raster device already
   has; the destination is the only thing that differs.
+
+## Progress
+
+**Step 1: surfaces** (`cera.Surface`, `Page.RenderSurface`, the module
+`github.com/timzifer/cera/gpu`). The sketch of decision 5 became an
+interface in the core module rather than a renderer type in the GPU
+module: `Surface` is a `stilus.Compositor` with what the raster device
+does to pixels besides drawing (`Fill`, `Read`, `Write`, `Flush`), layers
+(`NewLayer`, `Release`) and their composition (`Composite`). The GPU module
+implements it over a `gpu.Target` with `gpu.Layer`; the tests of the core
+module implement it over an image and hold `RenderSurface` against
+`Render` within 1/255 without a GPU.
+
+- Isolated groups without a soft mask that are no knockout groups, below
+  layers of the surface only, are drawn into layers of the surface. Every
+  other group and soft mask is drawn on the CPU as before and composited
+  with `LayerShader` and images; a non-isolated one reads its backdrop
+  once (`Read`) and is written back (`Write`). The page drawn into a
+  transparent layer when it blends is a layer of the surface.
+- Layers are targets of the surface's size: stilus targets have no
+  origin, and a group's pixels are device pixels of the page. A target
+  as large as its layer would need targets with an origin in stilus.
+- A page is drawn in one pass from one goroutine; recorders per band
+  (decision 4) are the next step, and `RenderCMYK` onto two targets.
+- `Queue.WriteTexture` right after the pass that clears a target was
+  lost on Metal (gogpu/wgpu v0.34.14); `Write` goes through a buffer
+  and a copy of its own.
+- `gpu.TestRenderSurfaceMatchesRender`: every kind of group and soft mask,
+  text, a gradient, an image and stilus's synthetic scenes, on paper,
+  transparent and onto a region, within 2/255 of the CPU on Metal (Apple
+  M4) and on wgpu's software adapter; CI runs it on Vulkan through
+  lavapipe and builds the module for js/wasm.

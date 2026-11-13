@@ -339,6 +339,46 @@ jobs:
           go vet ./...
           go test -race ./...
 
+  # The GPU surface is a module of its own (ADR 0011), so that cera depends
+  # on no wgpu. Runners have no GPU: the pages are drawn on Mesa's lavapipe
+  # through Vulkan, and on wgpu's software adapter; the module builds for
+  # js/wasm (the browser's WebGPU).
+  gpu:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gpu
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: gpu/go.mod
+          cache-dependency-path: gpu/go.sum
+      - name: go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: lavapipe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+          vulkaninfo --summary
+      - name: Vet and test on Vulkan
+        env:
+          CERA_GPU_BACKEND: vulkan
+          CERA_GPU_REQUIRE: "1"
+        run: |
+          go vet ./...
+          go test -v ./... 2>&1 | tee test.log | grep -E '^(---|    ---|ok|FAIL|PASS)|adapter:|differs|panic'
+          ! grep -q '^FAIL' test.log
+      - name: Test on the software adapter
+        env:
+          CERA_GPU_FALLBACK: "1"
+          CERA_GPU_REQUIRE: "1"
+        run: go test -short ./...
+      - name: js/wasm
+        run: GOOS=js GOARCH=wasm go build ./...
+
   # The command line is a module of its own, so that cera depends on no PNG
   # encoder: it writes PNGs with calamus.
   cli:
@@ -426,7 +466,7 @@ jobs:
   # The single required status check for main (see .github/rulesets).
   ci-ok:
     if: always()
-    needs: [lint, test, coverage, cross, fuzz, readerdiff, corpus, accuracy, bench, fyneform, cjk, system-fonts, cli]
+    needs: [lint, test, coverage, cross, fuzz, readerdiff, corpus, accuracy, bench, fyneform, gpu, cjk, system-fonts, cli]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed
