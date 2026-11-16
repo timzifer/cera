@@ -8,14 +8,16 @@ github.com/fortytw2/leaktest v1.3.0 h1:u8491cBMTQ8ft8aeV+adlcytMZylmA5nnwwkRZjI8
 github.com/fortytw2/leaktest v1.3.0/go.mod h1:jDsjWgpAGjm2CA7WthBh/CdZYEPF31XHquHwclZch5g=
 github.com/go-images/jpeg v0.3.0 h1:i6CGNbN2YNEz8stBI0hXjN6UwVGwQ9zCh8LvFeD8fHg=
 github.com/go-images/jpeg v0.3.0/go.mod h1:3eUjtNscxUULLUH88DvMN8OKTq2C0/0AjubOjAHoHHk=
-github.com/go-images/jpeg2000 v0.13.3 h1:GSnkQWQ72ANwfi/xYWt3za9Nfss+C1iBbk4uubLWYHw=
-github.com/go-images/jpeg2000 v0.13.3/go.mod h1:r07D0wUJxBPZcsLTkLFt3OkL3DubrH6DsmRjJRnZYlo=
+github.com/go-images/jpeg2000 v0.14.0 h1:/nH3l5r95E7OkNZCfq7gmoDQvJzVAhmSw6rd2Ifk7jo=
+github.com/go-images/jpeg2000 v0.14.0/go.mod h1:4/Pp3Jp2es5lA8/Ema8F7dFwl0vZprCj9MyznIz9Gdc=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
 github.com/go-logr/logr v1.4.3/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
 github.com/go-opentype/fonts v0.12.0 h1:gjYYkbDZBK3JHpraakgGNnXdkGq8oADerhDYjC22ILQ=
 github.com/go-opentype/fonts v0.12.0/go.mod h1:Kiep7ojxxaR2ALFeB/akcFHQyl1gG5OLIobp8EzaZSA=
 github.com/go-opentype/opentype v0.15.0 h1:ioE3eCbNZavlk/w073J3uX5FKjqhgOHQw+wZZdJ+gE4=
 github.com/go-opentype/opentype v0.15.0/go.mod h1:ZB31jTJl2mhPESXYMuUW+p36UrOabw/2+6mtyh/vNnI=
+github.com/go-simd/highway v0.0.13 h1:BSex+I3TnOzbPfU59wvBzn1ZsULiq7oEpgALA7BGlHo=
+github.com/go-simd/highway v0.0.13/go.mod h1:9azxZ9KzseClxeRCx++28rwHQEL1uiAM/AC+ErA+Lv8=
 github.com/go-task/slim-sprig/v3 v3.0.0 h1:sUs3vkvUymDpBKi3qH1YSqBQk9+9D/8M2mN1vB6EwHI=
 github.com/go-task/slim-sprig/v3 v3.0.0/go.mod h1:W848ghGpv3Qj3dhTPRyJypKRiqCdHZiAzKg9hl15HA8=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
@@ -41,8 +43,6 @@ github.com/tannevaled/gobig2 v0.2.0 h1:yx97/ltljALrIWDFVqHjPUIjAp3bfUUhH8Z8UROvN
 github.com/tannevaled/gobig2 v0.2.0/go.mod h1:X0S1H+N35kg6zYgVYRqGMsGj3C35zs+iA2r1MXyPcV4=
 github.com/tetratelabs/wazero v1.12.0 h1:DuWcpNu/FzgEXgGBDp8J1Spc+CWOvvtvVyjKlaZopYU=
 github.com/tetratelabs/wazero v1.12.0/go.mod h1:LvKtzl2RqO4gyF27BiXU+nKAjcV8f38U+kP/q2vgxh0=
-github.com/timzifer/go-highway v0.0.13-timzifer.1 h1:+DREnc494whho5HlwAkjX1m09fxDLdG3n0hYRBm6AFY=
-github.com/timzifer/go-highway v0.0.13-timzifer.1/go.mod h1:ZXPijqyP0TXlwJXJClrFCdp4q+zlQNAMZ3ncCROV648=
 github.com/timzifer/stilus v0.20.0 h1:GsqwnnwdoHqtNvEgHnvIiekAiKrrQqpujfjWBKZwTng=
 github.com/timzifer/stilus v0.20.0/go.mod h1:J8uybarHVrCcMUgRwrEkZOw5USCYqbIcfqjTGm2pB2o=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
