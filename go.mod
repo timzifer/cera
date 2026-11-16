@@ -9,7 +9,7 @@ require (
 	github.com/go-opentype/fonts v0.12.0
 	github.com/go-opentype/opentype v0.15.0
 	github.com/tannevaled/gobig2 v0.2.0
-	github.com/timzifer/stilus v0.19.1-0.20261116063130-06a38856d8b7
+	github.com/timzifer/stilus v0.20.0
 	golang.org/x/text v0.42.0
 )
 
