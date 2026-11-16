@@ -8,7 +8,6 @@ require (
 )
 
 require (
-	github.com/ajroetker/go-highway v0.0.12 // indirect
 	github.com/andybalholm/brotli v1.2.6 // indirect
 	github.com/anthonynsimon/bild v0.14.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
@@ -17,9 +16,10 @@ require (
 	github.com/fyne-io/oksvg v0.2.0 // indirect
 	github.com/go-gl/gl v0.0.0-20260331235117-4566fea9a276 // indirect
 	github.com/go-images/jpeg v0.3.0 // indirect
-	github.com/go-images/jpeg2000 v0.13.3 // indirect
+	github.com/go-images/jpeg2000 v0.14.0 // indirect
 	github.com/go-opentype/fonts v0.12.0 // indirect
 	github.com/go-opentype/opentype v0.15.0 // indirect
+	github.com/go-simd/highway v0.0.13 // indirect
 	github.com/go-text/render v0.2.1 // indirect
 	github.com/go-text/typesetting v0.3.4 // indirect
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect
@@ -45,5 +45,3 @@ require (
 // Until a release of cera carries the form API (ADR 0006), the adapter
 // builds against the cera next to it.
 replace github.com/timzifer/cera => ../..
-
-replace github.com/ajroetker/go-highway => github.com/timzifer/go-highway v0.0.13-timzifer.1

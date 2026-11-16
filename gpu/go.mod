@@ -10,12 +10,12 @@ require (
 )
 
 require (
-	github.com/ajroetker/go-highway v0.0.12 // indirect
 	github.com/andybalholm/brotli v1.2.6 // indirect
 	github.com/go-images/jpeg v0.3.0 // indirect
-	github.com/go-images/jpeg2000 v0.13.3 // indirect
+	github.com/go-images/jpeg2000 v0.14.0 // indirect
 	github.com/go-opentype/fonts v0.12.0 // indirect
 	github.com/go-opentype/opentype v0.15.0 // indirect
+	github.com/go-simd/highway v0.0.13 // indirect
 	github.com/go-webgpu/goffi v0.6.8 // indirect
 	github.com/go-webgpu/webgpu v0.5.5 // indirect
 	github.com/gogpu/gpucontext v0.32.0 // indirect
@@ -28,5 +28,3 @@ require (
 
 // The GPU surface builds against the cera next to it (ADR 0011).
 replace github.com/timzifer/cera => ../
-
-replace github.com/ajroetker/go-highway => github.com/timzifer/go-highway v0.0.13-timzifer.1
