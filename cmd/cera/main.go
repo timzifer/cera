@@ -70,6 +70,7 @@ func main() {
 	annots := flag.String("annots", "view", "annotations to draw: view, print or none")
 	pageBox := flag.String("box", "crop", "box of the page to draw: crop, media, bleed, trim or art")
 	imageFilter := flag.String("image-filter", "nearest", "how magnified images without /Interpolate are sampled: nearest or smooth (bilinearly below 2× magnification)")
+	fullHairlines := flag.Bool("full-hairlines", false, "draw strokes thinner than a pixel one pixel wide, as PDFium does, rather than at their width")
 	cmykProfile := flag.String("cmyk-profile", "", "ICC profile `file` DeviceCMYK is converted through instead of the bundled SWOP profile")
 	naiveCMYK := flag.Bool("naive-cmyk", false, "convert CMYK naively, as device values, without a profile")
 	ignoreIntent := flag.Bool("ignore-output-intent", false, "convert DeviceCMYK through the bundled SWOP profile also where the document has an output intent")
@@ -123,13 +124,13 @@ func main() {
 		}
 		opt.CMYKProfile = b
 	}
-	if err := run(flag.Arg(0), opt, *dpi, *page, *out, *transparent, *timeout, *verbose, *workers, mode, box, filter, fields, *pngMode, *quality, *gray); err != nil {
+	if err := run(flag.Arg(0), opt, *dpi, *page, *out, *transparent, *timeout, *verbose, *workers, mode, box, filter, *fullHairlines, fields, *pngMode, *quality, *gray); err != nil {
 		fmt.Fprintln(os.Stderr, "cera:", err)
 		os.Exit(1)
 	}
 }
 
-func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, box cera.PageBox, filter cera.ImageFilter, fields []string, pngMode string, quality int, gray bool) error {
+func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, transparent bool, timeout time.Duration, verbose bool, workers int, annots cera.AnnotMode, box cera.PageBox, filter cera.ImageFilter, fullHairlines bool, fields []string, pngMode string, quality int, gray bool) error {
 	format := strings.ToLower(filepath.Ext(out))
 	switch format {
 	case ".png", ".tif", ".tiff", ".webp":
@@ -181,6 +182,7 @@ func run(in string, opt cera.OpenOptions, dpi float64, page int, out string, tra
 		ropt := cera.RenderOptions{
 			Scale: dpi / 72, Background: bg, Deadline: time.Now().Add(timeout), Stats: &st,
 			Workers: workers, Annotations: annots, Form: form, ImageFilter: filter,
+			FullHairlines: fullHairlines,
 		}
 		var img image.Image
 		var sw *streamPNG

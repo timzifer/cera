@@ -24,8 +24,8 @@ github.com/tannevaled/gobig2 v0.2.0 h1:yx97/ltljALrIWDFVqHjPUIjAp3bfUUhH8Z8UROvN
 github.com/tannevaled/gobig2 v0.2.0/go.mod h1:X0S1H+N35kg6zYgVYRqGMsGj3C35zs+iA2r1MXyPcV4=
 github.com/timzifer/go-highway v0.0.13-timzifer.1 h1:+DREnc494whho5HlwAkjX1m09fxDLdG3n0hYRBm6AFY=
 github.com/timzifer/go-highway v0.0.13-timzifer.1/go.mod h1:ZXPijqyP0TXlwJXJClrFCdp4q+zlQNAMZ3ncCROV648=
-github.com/timzifer/stilus v0.19.0 h1:KgOwrdJStW4RscuE5GW9bkVnCt88gHH5GxveZhAxezM=
-github.com/timzifer/stilus v0.19.0/go.mod h1:J8uybarHVrCcMUgRwrEkZOw5USCYqbIcfqjTGm2pB2o=
+github.com/timzifer/stilus v0.19.1-0.20261116063130-06a38856d8b7 h1:SrzpjNgi7ZFjaO/Po3qSONjiZvStz2ThvEvV87+6UJE=
+github.com/timzifer/stilus v0.19.1-0.20261116063130-06a38856d8b7/go.mod h1:J8uybarHVrCcMUgRwrEkZOw5USCYqbIcfqjTGm2pB2o=
 github.com/timzifer/stilus/gpu v0.8.1 h1:7mY7eMc/uV5yxTh+BkMHS1jQixu4jMdwWy/qkaaCIpY=
 github.com/timzifer/stilus/gpu v0.8.1/go.mod h1:ixAqpgl/VMyqHq+CiBHda8rNTBwk2Y23W9MvrOGN0wM=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=

@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	github.com/gogpu/wgpu v0.34.14
 	github.com/timzifer/cera v0.0.0
-	github.com/timzifer/stilus v0.19.0
+	github.com/timzifer/stilus v0.19.1-0.20261116063130-06a38856d8b7
 	github.com/timzifer/stilus/gpu v0.8.1
 )
 
