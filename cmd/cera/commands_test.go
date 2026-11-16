@@ -249,7 +249,7 @@ func TestFormats(t *testing.T) {
 	for ext, magic := range map[string]string{"jpg": "\xff\xd8\xff", "tif": "II*\x00", "webp": "RIFF", "png": "\x89PNG"} {
 		for _, gray := range []bool{false, true} {
 			out := filepath.Join(dir, "p-%d."+ext)
-			if err := run(in, cera.OpenOptions{}, 72, 2, out, false, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, "encode", 80, gray); err != nil {
+			if err := run(in, cera.OpenOptions{}, 72, 2, out, false, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, false, nil, "encode", 80, gray); err != nil {
 				t.Fatalf("%s, grey %v: %v", ext, gray, err)
 			}
 			b, err := os.ReadFile(fmt.Sprintf(out, 2))
@@ -258,10 +258,10 @@ func TestFormats(t *testing.T) {
 			}
 		}
 	}
-	if err := run(in, cera.OpenOptions{}, 72, 1, filepath.Join(dir, "p.jpg"), true, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, "encode", 0, false); err == nil {
+	if err := run(in, cera.OpenOptions{}, 72, 1, filepath.Join(dir, "p.jpg"), true, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, false, nil, "encode", 0, false); err == nil {
 		t.Error("a transparent JPEG was written")
 	}
-	if err := run(in, cera.OpenOptions{}, 72, 1, filepath.Join(dir, "p.bmp"), false, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, nil, "encode", 0, false); err == nil {
+	if err := run(in, cera.OpenOptions{}, 72, 1, filepath.Join(dir, "p.bmp"), false, time.Minute, false, 0, cera.AnnotsView, cera.BoxCrop, cera.ImageNearest, false, nil, "encode", 0, false); err == nil {
 		t.Error("a format nobody writes was written")
 	}
 }

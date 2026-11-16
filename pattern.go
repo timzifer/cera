@@ -392,6 +392,7 @@ func (in *interp) makeTile(p *tilingPattern, pm Matrix) *Tile {
 	sub := recorders.Get().(*interp)
 	sub.reset(in.doc, dev, in.st, in.lim)
 	sub.ocVis, sub.ocZoom = in.ocVis, in.ocZoom
+	sub.fullHairlines = in.fullHairlines
 	sub.devBox, sub.patDepth, sub.tileBytes = img.Rect, in.patDepth+1, in.tileBytes
 	toTile := stilus.Scale(float64(w)/p.xstep, float64(h)/p.ystep)
 	// The cell is drawn at every offset by whole steps at which its box

@@ -146,11 +146,11 @@ type displayList struct {
 	allItems []int32
 
 	// What the list was recorded for, and what recording did.
-	scale     float64
-	overprint bool // simulated
-	proj      proj // what colours are projected to (cmykout.go)
-	stats     Stats
-	complete  bool
+	scale    float64
+	rec      recOpts // simulated overprint, full hairlines
+	proj     proj    // what colours are projected to (cmykout.go)
+	stats    Stats
+	complete bool
 	// cost estimates the drawing of the whole list in nanoseconds on one
 	// core; see itemCost.
 	cost float64
@@ -262,8 +262,9 @@ func (l *displayList) StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Pain
 	}
 	it := dlItem{op: dlStroke, color: paint.Color, m: m, bbox: bb, style: l.style(st), tag: l.tag}
 	l.addPath(&it, p)
-	// Strokes thinner than a device pixel are drawn one pixel wide, as
-	// PDFium does, by design rather than as their union.
+	// Hairlines (width 0, or thinner than a device pixel with
+	// FullHairlines) are drawn one pixel wide, by design rather than as
+	// their union.
 	l.join(it, len(p.Points), !stilus.IsHairline(m, st))
 }
 
@@ -280,7 +281,8 @@ func (l *displayList) StrokePath(p *Path, m Matrix, st *StrokeStyle, paint *Pain
 // if its windings cannot cancel those of the others: NonZero, every
 // subpath turning always the same way, and all of them the same way
 // (stilus reverses a path that winds against the others). Hairlines,
-// drawn one device pixel wide whatever their width, do not join. The
+// drawn one device pixel wide whatever their width (stilus.IsHairline),
+// do not join; thin strokes drawn at their width do. The
 // display list feeds the raster device only; Page.Run sees every
 // operation on its own.
 //
@@ -606,7 +608,7 @@ func (l *displayList) style(st *StrokeStyle) int32 {
 		s := &l.styles[n-1]
 		if s.st.Width == st.Width && s.st.Cap == st.Cap && s.st.Join == st.Join &&
 			s.st.MiterLimit == st.MiterLimit && s.st.DashPhase == st.DashPhase &&
-			equalFloats(l.dashes[s.d0:s.d1], st.Dash) {
+			s.st.FullHairlines == st.FullHairlines && equalFloats(l.dashes[s.d0:s.d1], st.Dash) {
 			return int32(n - 1)
 		}
 	}

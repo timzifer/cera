@@ -335,8 +335,11 @@ func (c config) renderCera(doc *cera.Document, i int) (*image.RGBA, cera.Stats, 
 	}
 	img := image.NewRGBA(b)
 	t0 := time.Now()
+	// Thin strokes one pixel wide, as PDFium draws them, so that the
+	// comparison measures the drawing and not that convention.
 	err = p.Render(context.Background(), img, cera.RenderOptions{
 		Scale: c.scale, Background: white, Stats: &st, Deadline: time.Now().Add(c.timeout), Workers: c.workers,
+		FullHairlines: true,
 	})
 	return img, st, ms(time.Since(t0)), err
 }

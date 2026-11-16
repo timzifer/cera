@@ -123,6 +123,14 @@ type interp struct {
 
 	// overprint simulates overprint (RenderOptions.SimulateOverprint).
 	overprint bool
+	// fullHairlines draws thin strokes as hairlines
+	// (RenderOptions.FullHairlines): every stroke style it emits says so.
+	fullHairlines bool
+}
+
+// setRec applies the recording options rec.
+func (in *interp) setRec(rec recOpts) {
+	in.overprint, in.fullHairlines = rec.overprint, rec.fullHairlines
 }
 
 func (in *interp) reset(doc *Document, dev Device, st *Stats, lim *limit) {
@@ -158,7 +166,7 @@ func (in *interp) initState(ctm Matrix) {
 		ctm:    ctm,
 		fillCS: spaceGray, strokeCS: spaceGray,
 		fillAlpha: 1, strokeAlp: 1,
-		style: StrokeStyle{Width: 1, MiterLimit: 10},
+		style: StrokeStyle{Width: 1, MiterLimit: 10, FullHairlines: in.fullHairlines},
 		text:  textState{scale: 1},
 	}
 }
