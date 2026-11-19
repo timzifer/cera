@@ -164,8 +164,8 @@ module implement it over an image and hold `RenderSurface` against
 - Layers are targets of the surface's size: stilus targets have no
   origin, and a group's pixels are device pixels of the page. A target
   as large as its layer would need targets with an origin in stilus.
-- A page is drawn in one pass from one goroutine; recorders per band
-  (decision 4) are the next step, and `RenderCMYK` onto two targets.
+- A page is drawn in one pass from one goroutine (bands: step 2);
+  `RenderCMYK` onto two targets is to come.
 - `Queue.WriteTexture` right after the pass that clears a target was
   lost on Metal (gogpu/wgpu v0.34.14); `Write` goes through a buffer
   and a copy of its own.
@@ -174,3 +174,31 @@ module implement it over an image and hold `RenderSurface` against
   transparent and onto a region, within 2/255 of the CPU on Metal (Apple
   M4) and on wgpu's software adapter; CI runs it on Vulkan through
   lavapipe and builds the module for js/wasm.
+
+**Step 2: bands through recorders** (`cera.BandSurface`, `gpu.Surface.Bands`).
+A surface that several goroutines draw onto at once hands out one
+compositor per worker (`gpu.Recorder`s of the target, kept across
+renders); the workers take bands as `Render`'s do. While recorders
+record, nothing else may use the target, so a list is drawn in bands
+only if it needs nothing but drawing: no transparency groups or soft
+masks (their layers are read, written or flushed mid-band) and no
+blending with the background (the page would be a layer). Other lists
+are drawn in one pass as in step 1. The region is filled once before
+the bands start.
+
+`gpu.TestRenderSurfaceBands`: four workers, twice onto the same surface,
+within 2/255 of the CPU, race-free. `gpu.BenchmarkRenderSurface`, A3 at
+150 dpi with readback, Apple M4 (10 cores), CPU `Render` with all
+workers / GPU in one pass / 4 bands / 8 bands:
+
+| scene | CPU | GPU 1 | GPU 4 | GPU 8 |
+|---|---:|---:|---:|---:|
+| contours-3000 | 8.5 ms | 33.2 ms | 15.1 ms | 12.4 ms |
+| short-20000-0.35mm | 5.1 ms | 17.9 ms | 10.0 ms | 8.2 ms |
+| hatch-2000-0.35mm | 7.1 ms | 31.7 ms | 13.4 ms | 10.6 ms |
+| fills-subpixel | 0.8 ms | 3.8 ms | 2.6 ms | 2.9 ms |
+
+Bands make the GPU path two to three times faster than one pass; with
+readback of 17 MB per page it stays behind the CPU on all cores. A
+viewer presents the target without readback; the 4K bench of decision 6
+is to measure that.

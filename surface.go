@@ -2,6 +2,7 @@ package cera
 
 import (
 	"context"
+	"errors"
 	"image"
 	"image/color"
 
@@ -64,14 +65,65 @@ type Composite struct {
 	Subtractive, Black bool
 }
 
+// A BandSurface is a Surface that several goroutines draw onto at once,
+// one band each, such as a GPU target through recorders (stilus
+// gpu.Recorder).
+type BandSurface interface {
+	Surface
+	// Bands returns n compositors drawing onto the surface, one per
+	// goroutine. While they are used, nothing else draws onto the
+	// surface; what they drew is drawn by the next Flush.
+	Bands(n int) ([]stilus.Compositor, error)
+}
+
 // RenderSurface draws the page onto dst, as Render draws it into an image
 // with the bounds of dst. Region, Background, Deadline, Stats, Layers,
-// Annotations, Form, Band and the other options apply as there; Workers
-// is ignored: the page is drawn in one pass.
+// Annotations, Form, Band and the other options apply as there. The page
+// is drawn in one pass, or, if dst is a BandSurface, in bands by up to
+// Workers goroutines when it has no transparency groups and soft masks
+// and does not blend with the background. Band reports parts as they are
+// recorded; the surface draws them at its next Flush.
 func (p *Page) RenderSurface(ctx context.Context, dst Surface, opt RenderOptions) error {
-	opt.Workers = 1
 	return p.renderTo(ctx, &dest{surf: dst}, opt, projRGB)
 }
+
+// surfaceBands returns the compositors of the workers drawing the list
+// onto a surface in bands, with how many and whether in one pass, as
+// planned; nil for one pass from the calling goroutine. The bands draw
+// onto the surface at once, so the list must not need what a recorder
+// cannot do: groups and soft masks read and composite layers, and a page
+// that blends is drawn into one. The region in is filled first.
+func (l *displayList) surfaceBands(dst *dest, in image.Rectangle, bg color.RGBA, fill bool, workers int, whole bool) ([]stilus.Compositor, int, bool) {
+	bs, ok := dst.surf.(BandSurface)
+	if !ok || whole || workers < 2 || l.blends || len(l.groups) > 0 || len(l.masks) > 0 {
+		return nil, 1, true
+	}
+	comps, err := bs.Bands(workers)
+	if err != nil || len(comps) < workers {
+		return nil, 1, true
+	}
+	if fill {
+		dst.fill(in, bg)
+	}
+	return comps, workers, false
+}
+
+// bandSurface is a worker's part of a surface drawn in bands: its
+// compositor, and none of the surface's operations, which would use it
+// while other workers draw onto it.
+type bandSurface struct {
+	Surface
+	c stilus.Compositor
+}
+
+var errBands = errors.New("cera: a surface drawn in bands has no layers")
+
+func (s *bandSurface) Blitter(p *stilus.Paint) stilus.Blitter { return s.c.Blitter(p) }
+func (s *bandSurface) Fill(image.Rectangle, color.RGBA) error { return errBands }
+func (s *bandSurface) Read(*image.RGBA) error                 { return errBands }
+func (s *bandSurface) Write(*image.RGBA) error                { return errBands }
+func (s *bandSurface) Flush() error                           { return errBands }
+func (s *bandSurface) NewLayer() (Surface, error)             { return nil, errBands }
 
 // dest is what a render draws onto: an image or a surface.
 type dest struct {
